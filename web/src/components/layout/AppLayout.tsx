@@ -24,6 +24,7 @@ import {
   Server,
   Database,
   Bug,
+  Hexagon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../../hooks/useAuth';
@@ -169,10 +170,10 @@ function NavLeaf({ item, end }: { item: NavLeaf; end?: boolean }) {
       end={end}
       className={({ isActive }) =>
         clsx(
-          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
+          'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
           isActive
-            ? 'bg-blue-600 text-white'
-            : 'text-gray-400 hover:text-white hover:bg-gray-700',
+            ? 'bg-gradient-to-r from-[#1D4ED8] to-[#2563EB] text-white shadow-lg shadow-blue-900/40'
+            : 'text-[#D8E6FF] hover:text-white hover:bg-white/5',
         )
       }
     >
@@ -189,7 +190,7 @@ function NavSectionRow({
     <div>
       <button
         onClick={onToggle}
-        className="flex items-center w-full px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 hover:text-gray-300 transition-colors"
+        className="flex items-center w-full px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#8EA6C8] hover:text-[#D8E6FF] transition-colors"
       >
         <span className="flex-1 text-left">{section.title}</span>
         <ChevronRight size={12} className={clsx('transition-transform duration-150 shrink-0', isOpen && 'rotate-90')} />
@@ -220,22 +221,26 @@ export function AppLayout() {
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Sidebar */}
-      <aside className="flex flex-col w-64 bg-slate-900 shrink-0">
+      <aside className="sidebar-ocean relative flex flex-col w-[280px] shrink-0 text-white">
+        {/* Realistic ocean wave photo, faded into the navy gradient */}
+        <div className="sidebar-wave-img" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-64 bg-gradient-to-t from-[#031327]/80 via-[#072245]/25 to-transparent" />
+
         {/* Logo */}
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-700">
-          <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-blue-600">
-            <Shield size={18} className="text-white" />
+        <div className="relative z-10 flex items-center gap-3 px-5 py-5 border-b border-white/10">
+          <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg shadow-blue-900/50">
+            <Hexagon size={20} className="text-white" />
           </div>
           <div>
             <span className="text-white font-bold text-lg leading-none">Cloud Scanner</span>
-            <span className="block text-gray-500 text-xs mt-0.5">Security Platform</span>
+            <span className="block text-[#8EA6C8] text-xs mt-1">Security Platform</span>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto no-scrollbar">
+        <nav className="relative z-10 flex-1 px-3 py-4 space-y-0.5 overflow-y-auto no-scrollbar">
           <NavLeaf item={dashboardItem} end />
-          <div className="my-2 border-t border-gray-700" />
+          <div className="my-2 border-t border-white/10" />
           {navSections.map((section) => (
             <NavSectionRow
               key={section.id}
@@ -246,22 +251,11 @@ export function AppLayout() {
           ))}
         </nav>
 
-        {/* User Section */}
-        <div className="px-3 py-4 border-t border-gray-700">
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg">
-            <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
-              {user?.email?.[0]?.toUpperCase() ?? 'U'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">
-                {user?.email ?? 'User'}
-              </p>
-              <p className="text-gray-500 text-xs">{user?.role ?? ''}</p>
-            </div>
-          </div>
+        {/* Sign Out (profile detail moved to the top bar) */}
+        <div className="relative z-10 px-3 py-4 border-t border-white/10">
           <button
             onClick={logout}
-            className="mt-1 flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-700 transition-colors duration-150"
+            className="flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm text-[#D8E6FF] hover:text-white hover:bg-white/5 transition-colors duration-150"
           >
             <LogOut size={16} />
             Sign Out
@@ -280,6 +274,17 @@ export function AppLayout() {
             </div>
           )}
           <h1 className="text-base font-semibold text-gray-900">{crumb.page}</h1>
+
+          {/* Profile (top-right) */}
+          <div className="ml-auto flex items-center gap-3">
+            <div className="text-right leading-tight hidden sm:block">
+              <p className="text-sm font-medium text-gray-900 truncate max-w-[200px]">{user?.email ?? 'User'}</p>
+              <p className="text-xs text-gray-500">{user?.role ?? ''}</p>
+            </div>
+            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0 shadow-md shadow-blue-900/30">
+              {user?.email?.[0]?.toUpperCase() ?? 'U'}
+            </div>
+          </div>
         </header>
 
         {/* Page Content */}
