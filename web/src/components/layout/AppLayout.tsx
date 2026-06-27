@@ -109,6 +109,21 @@ function sectionForPath(pathname: string): string | null {
   return null;
 }
 
+/** Section-aware breadcrumb: { section?, page } derived from the nav definition. */
+function getBreadcrumb(pathname: string): { section: string | null; page: string } {
+  for (const s of navSections) {
+    for (const it of s.items) {
+      if (pathname === it.to || pathname.startsWith(it.to + '/')) {
+        return { section: s.title, page: it.label };
+      }
+    }
+  }
+  if (pathname === '/dashboard' || pathname === '/') return { section: null, page: 'Dashboard' };
+  const secId = sectionForPath(pathname);
+  const section = navSections.find((s) => s.id === secId)?.title ?? null;
+  return { section, page: getPageTitle(pathname) };
+}
+
 // ─── Page title map ───────────────────────────────────────────────────────────
 
 function getPageTitle(pathname: string): string {
@@ -157,7 +172,7 @@ function NavLeaf({ item, end }: { item: NavLeaf; end?: boolean }) {
           'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
           isActive
             ? 'bg-blue-600 text-white'
-            : 'text-gray-400 hover:text-white hover:bg-gray-800',
+            : 'text-gray-400 hover:text-white hover:bg-gray-700',
         )
       }
     >
@@ -193,7 +208,7 @@ function NavSectionRow({
 export function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
-  const pageTitle = getPageTitle(location.pathname);
+  const crumb = getBreadcrumb(location.pathname);
 
   // Accordion: one section open at a time, auto-expands the active section on nav.
   const activeSection = sectionForPath(location.pathname);
@@ -205,9 +220,9 @@ export function AppLayout() {
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Sidebar */}
-      <aside className="flex flex-col w-64 bg-gray-900 shrink-0">
+      <aside className="flex flex-col w-64 bg-slate-900 shrink-0">
         {/* Logo */}
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-800">
+        <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-700">
           <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-blue-600">
             <Shield size={18} className="text-white" />
           </div>
@@ -218,9 +233,9 @@ export function AppLayout() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto no-scrollbar">
           <NavLeaf item={dashboardItem} end />
-          <div className="my-2 border-t border-gray-800" />
+          <div className="my-2 border-t border-gray-700" />
           {navSections.map((section) => (
             <NavSectionRow
               key={section.id}
@@ -232,7 +247,7 @@ export function AppLayout() {
         </nav>
 
         {/* User Section */}
-        <div className="px-3 py-4 border-t border-gray-800">
+        <div className="px-3 py-4 border-t border-gray-700">
           <div className="flex items-center gap-3 px-3 py-2 rounded-lg">
             <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
               {user?.email?.[0]?.toUpperCase() ?? 'U'}
@@ -246,7 +261,7 @@ export function AppLayout() {
           </div>
           <button
             onClick={logout}
-            className="mt-1 flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors duration-150"
+            className="mt-1 flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-700 transition-colors duration-150"
           >
             <LogOut size={16} />
             Sign Out
@@ -258,11 +273,13 @@ export function AppLayout() {
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Top Bar */}
         <header className="flex items-center gap-2 px-6 py-4 bg-white border-b border-gray-200 shrink-0">
-          <div className="flex items-center gap-1 text-gray-400 text-sm">
-            <span>Cloud Scanner</span>
-            <ChevronRight size={14} />
-          </div>
-          <h1 className="text-base font-semibold text-gray-900">{pageTitle}</h1>
+          {crumb.section && (
+            <div className="flex items-center gap-1 text-gray-400 text-sm">
+              <span>{crumb.section}</span>
+              <ChevronRight size={14} />
+            </div>
+          )}
+          <h1 className="text-base font-semibold text-gray-900">{crumb.page}</h1>
         </header>
 
         {/* Page Content */}
