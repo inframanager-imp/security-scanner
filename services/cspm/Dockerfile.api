@@ -1,0 +1,36 @@
+# ── CSPM API (Express + Prisma + BullMQ workers + Socket.IO) ──────────────────
+# Build context MUST be the aws-scanner root: the API imports the scanner engine
+# from the root  src/  via  ../../../src/...  and runs the BullMQ workers in-process.
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+# OpenSSL + CA certs are required by Prisma's query engine.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies. npm workspaces needs every workspace package.json present,
+# so we copy all three even though the web source is not used in this image.
+COPY package.json ./
+COPY api/package.json ./api/
+COPY web/package.json ./web/
+RUN npm install --no-audit --no-fund
+
+# Application source (root scanner engine + the API).
+COPY tsconfig.json ./
+COPY src ./src
+COPY api ./api
+
+# Generate the Prisma client against the API schema.
+RUN npx prisma generate --schema=api/prisma/schema.prisma
+
+# Entrypoint runs DB migrations, then boots the server (server.ts also seeds the
+# admin user and starts all workers). Run via ts-node transpile-only to avoid the
+# cross-directory dist layout problem caused by the ../../../src import.
+COPY docker/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+RUN chmod +x /usr/local/bin/api-entrypoint.sh
+
+ENV NODE_ENV=production
+EXPOSE 3001
+ENTRYPOINT ["api-entrypoint.sh"]

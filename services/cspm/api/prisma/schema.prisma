@@ -1,0 +1,1143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+enum AuthMethod {
+  ACCESS_KEY
+  ASSUME_ROLE
+}
+
+enum AzureAuthMethod {
+  SERVICE_PRINCIPAL
+  MANAGED_IDENTITY
+}
+
+enum ScanStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  MONITORING
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum FindingStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  passwordHash       String
+  role               Role                @default(VIEWER)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  sessions           Session[]
+  accounts           Account[]           @relation("CreatedBy")
+  azureSubscriptions AzureSubscription[] @relation("AzureCreatedBy")
+  gcpProjects        GcpProject[]        @relation("GcpCreatedBy")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id           String   @id @default(uuid())
+  name         String
+  awsAccountId String
+  description  String?
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Inventory pipeline state
+  inventoryStatus  InventoryStatus @default(PENDING)
+  inventoryInitAt  DateTime? // when READY was first reached
+  lastDiscoveryAt  DateTime? // last successful discovery run
+  lastConfigSyncAt DateTime? // last successful config change sync
+  pipelineError    String? // last error message if FAILED
+
+  createdBy         User                @relation("CreatedBy", fields: [createdById], references: [id])
+  credential        AwsCredential?
+  scans             Scan[]
+  configChanges     ConfigChange[]
+  resourceInventory ResourceInventory[]
+}
+
+model AwsCredential {
+  id                       String     @id @default(uuid())
+  accountId                String     @unique
+  authMethod               AuthMethod
+  encryptedAccessKeyId     String?
+  encryptedSecretAccessKey String?
+  roleArn                  String?
+  externalId               String?
+  defaultRegion            String     @default("us-east-1")
+  additionalRegions        String[]
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+  account                  Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model Scan {
+  id           String       @id @default(uuid())
+  accountId    String
+  status       ScanStatus   @default(QUEUED)
+  triggeredBy  String?
+  jobId        String?      @unique
+  services     String[]
+  regions      String[]
+  startedAt    DateTime?
+  completedAt  DateTime?
+  durationMs   Int?
+  errorMessage String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  account      Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  summary      ScanSummary?
+  findings     Finding[]
+}
+
+model ScanSummary {
+  id       String @id @default(uuid())
+  scanId   String @unique
+  critical Int    @default(0)
+  high     Int    @default(0)
+  medium   Int    @default(0)
+  low      Int    @default(0)
+  info     Int    @default(0)
+  total    Int    @default(0)
+  scan     Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+}
+
+model Finding {
+  id              String        @id @default(uuid())
+  scanId          String
+  service         String
+  severity        Severity
+  title           String
+  description     String        @db.Text
+  evidence        Json
+  remediation     String        @db.Text
+  findingStatus   FindingStatus @default(OPEN)
+  tags            String[]
+  discoveredAt    DateTime
+  // Phase 3 — risk prioritization
+  riskScore       Int? // 0–100 composite (severity × reachability × business × exploit)
+  reachability    String? // PUBLIC | INTERNAL | PRIVATE
+  businessContext Json? // tag-derived: env, dataClass, owner, etc.
+  exploitability  String? // KNOWN_EXPLOIT | POC | THEORETICAL
+  enrichedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  scan            Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+  @@index([severity])
+  @@index([service])
+  @@index([findingStatus])
+  @@index([riskScore(sort: Desc)])
+  @@index([reachability])
+}
+
+// ─── Azure Models ──────────────────────────────────────────────────────────────
+
+model AzureSubscription {
+  id             String   @id @default(uuid())
+  name           String
+  subscriptionId String
+  tenantId       String?
+  description    String?
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Inventory pipeline state
+  inventoryStatus  InventoryStatus @default(PENDING)
+  inventoryInitAt  DateTime?
+  lastDiscoveryAt  DateTime?
+  lastConfigSyncAt DateTime?
+  pipelineError    String?
+
+  createdBy         User                @relation("AzureCreatedBy", fields: [createdById], references: [id])
+  credential        AzureCredential?
+  scans             AzureScan[]
+  configChanges     ConfigChange[]
+  resourceInventory ResourceInventory[]
+}
+
+model AzureCredential {
+  id                    String            @id @default(uuid())
+  subscriptionId        String            @unique
+  authMethod            AzureAuthMethod
+  encryptedTenantId     String?
+  encryptedClientId     String?
+  encryptedClientSecret String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  subscription          AzureSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+}
+
+model AzureScan {
+  id             String            @id @default(uuid())
+  subscriptionId String
+  status         ScanStatus        @default(QUEUED)
+  jobId          String?           @unique
+  services       String[]
+  startedAt      DateTime?
+  completedAt    DateTime?
+  durationMs     Int?
+  errorMessage   String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  subscription   AzureSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  summary        AzureScanSummary?
+  findings       AzureFinding[]
+}
+
+model AzureScanSummary {
+  id       String    @id @default(uuid())
+  scanId   String    @unique
+  critical Int       @default(0)
+  high     Int       @default(0)
+  medium   Int       @default(0)
+  low      Int       @default(0)
+  info     Int       @default(0)
+  total    Int       @default(0)
+  scan     AzureScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+}
+
+model AzureFinding {
+  id              String        @id @default(uuid())
+  scanId          String
+  service         String
+  severity        Severity
+  title           String
+  description     String        @db.Text
+  evidence        Json
+  remediation     String        @db.Text
+  findingStatus   FindingStatus @default(OPEN)
+  tags            String[]
+  resourceGroup   String?
+  resourceId      String?
+  discoveredAt    DateTime
+  // Phase 3 — risk prioritization
+  riskScore       Int?
+  reachability    String?
+  businessContext Json?
+  exploitability  String?
+  enrichedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  scan            AzureScan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+  @@index([severity])
+  @@index([service])
+  @@index([findingStatus])
+  @@index([riskScore(sort: Desc)])
+  @@index([reachability])
+}
+
+// ─── Config Change Tracking ────────────────────────────────────────────────────
+
+enum InventoryStatus {
+  PENDING // no credentials yet, discovery not started
+  INITIALIZING // first discovery + config sync running
+  READY // initialized, real-time monitoring active
+  FAILED // initialization failed
+}
+
+enum ChangeCategory {
+  IAM
+  NETWORK
+  STORAGE
+  COMPUTE
+  DATABASE
+  ENCRYPTION
+  LOGGING
+  OTHER
+}
+
+enum ChangeStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+model ConfigChange {
+  id String @id @default(uuid())
+
+  // exactly one of these will be set
+  awsAccountId String?
+  azureSubId   String?
+  gcpProjectId String?
+
+  provider  String // AWS | AZURE | GCP
+  category  ChangeCategory @default(OTHER)
+  riskScore Int            @default(20)
+  severity  Severity       @default(LOW)
+
+  sourceEventId String // CloudTrail eventID / Azure eventDataId / GCP insertId
+  eventName     String
+  eventTime     DateTime
+
+  region    String?
+  actor     String?
+  actorType String?
+  sourceIp  String?
+
+  resourceType String?
+  resourceId   String?
+  resourceName String?
+
+  summary       String @db.Text
+  changeAction  String @default("MODIFIED") // CREATED | MODIFIED | DELETED
+  previousValue Json?
+  newValue      Json?
+
+  changeStatus   ChangeStatus @default(OPEN)
+  acknowledgedBy String?
+  acknowledgedAt DateTime?
+  notes          String?      @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  awsAccount Account?           @relation(fields: [awsAccountId], references: [id], onDelete: Cascade)
+  azureSub   AzureSubscription? @relation(fields: [azureSubId], references: [id], onDelete: Cascade)
+  gcpProject GcpProject?        @relation(fields: [gcpProjectId], references: [id], onDelete: Cascade)
+
+  freezeViolation Boolean @default(false) // true when change occurred during a freeze window
+
+  alertLogs       AlertLog[]
+  integrationLogs IntegrationLog[]
+  iamEscalations  IamEscalationEvent[]
+
+  @@unique([sourceEventId, provider])
+  @@index([awsAccountId, eventTime(sort: Desc)])
+  @@index([azureSubId, eventTime(sort: Desc)])
+  @@index([gcpProjectId, eventTime(sort: Desc)])
+  @@index([severity])
+  @@index([category])
+  @@index([changeStatus])
+  @@index([freezeViolation])
+}
+
+model ConfigSyncRun {
+  id            String     @id @default(uuid())
+  provider      String // AWS | AZURE | GCP
+  targetId      String // Account.id / AzureSubscription.id / GcpProject.id
+  status        ScanStatus @default(QUEUED)
+  windowStart   DateTime
+  windowEnd     DateTime
+  eventsFound   Int?
+  changesStored Int?
+  errorMessage  String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([provider, targetId, createdAt(sort: Desc)])
+}
+
+// ─── Resource Inventory ────────────────────────────────────────────────────────
+
+enum ResourceState {
+  ACTIVE
+  DELETED
+}
+
+enum DependencyType {
+  NETWORK
+  IAM
+  STORAGE
+  COMPUTE
+  DATABASE
+  IDENTITY_ASSUME // principal A can assume role B (sts:AssumeRole / OIDC trust)
+  IDENTITY_PERMITS // principal A has permissions over resource B
+  INTERNET_EXPOSURE // resource A is exposed to the internet via B (IGW, public IP, public SG)
+  ENCRYPTION_KEY // resource A is encrypted with KMS key B
+  CONTAINS_DATA // resource A contains data classified by B (DSPM link)
+  RUNS_ON // workload A runs on host/cluster B
+  OTHER
+}
+
+enum ExposureType {
+  PUBLIC_INTERNET
+  VPN_ONLY
+  PRIVATE
+}
+
+model ResourceInventory {
+  id       String @id @default(uuid())
+  provider String // AWS | AZURE | GCP
+
+  // exactly one of these FKs is set
+  awsAccountId String?
+  azureSubId   String?
+  gcpProjectId String?
+
+  nativeId      String // ARN / Azure Resource ID / GCP resource name
+  resourceType  String // e.g. AWS::EC2::Instance
+  resourceName  String?
+  region        String?
+  resourceGroup String? // Azure only
+
+  tags        Json?
+  configState Json // full current config as returned by the cloud API
+
+  state             ResourceState @default(ACTIVE)
+  // Phase 6 — DSPM data sensitivity classification (NONE | LOW | MEDIUM | HIGH | CRITICAL)
+  dataSensitivity   String?
+  discoveredAt      DateTime      @default(now()) // when scanner first found this resource
+  resourceCreatedAt DateTime? // when cloud actually created the resource (from API metadata)
+  lastSeenAt        DateTime      @default(now())
+  deletedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  awsAccount Account?           @relation(fields: [awsAccountId], references: [id], onDelete: Cascade)
+  azureSub   AzureSubscription? @relation(fields: [azureSubId], references: [id], onDelete: Cascade)
+  gcpProject GcpProject?        @relation(fields: [gcpProjectId], references: [id], onDelete: Cascade)
+
+  snapshots           ResourceSnapshot[]
+  depsFrom            ResourceDependency[]    @relation("DepFrom")
+  depsTo              ResourceDependency[]    @relation("DepTo")
+  exposurePaths       ExposurePath[]
+  workloadVulns       WorkloadVulnerability[]
+  dataClassifications DataClassification[]
+
+  @@unique([nativeId, provider])
+  @@index([awsAccountId, resourceType])
+  @@index([azureSubId, resourceType])
+  @@index([gcpProjectId, resourceType])
+  @@index([provider, state])
+  @@index([resourceType])
+  @@index([lastSeenAt(sort: Desc)])
+}
+
+model ResourceSnapshot {
+  id          String   @id @default(uuid())
+  inventoryId String
+  configState Json
+  changeType  String // CREATED | MODIFIED | DELETED
+  capturedAt  DateTime
+  createdAt   DateTime @default(now())
+
+  inventory ResourceInventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([inventoryId, capturedAt(sort: Desc)])
+}
+
+model ResourceDependency {
+  id            String         @id @default(uuid())
+  fromId        String
+  toId          String
+  depType       DependencyType @default(OTHER)
+  description   String?
+  provider      String
+  // Optional context for identity/permission edges
+  principalArn  String? // cross-account or non-inventory principal ARN, when present
+  principalType String? // USER | ROLE | GROUP | SERVICE | EXTERNAL_ACCOUNT
+  actions       String[]       @default([]) // for IDENTITY_PERMITS: which actions are allowed
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  fromResource ResourceInventory @relation("DepFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toResource   ResourceInventory @relation("DepTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, depType])
+  @@index([fromId])
+  @@index([toId])
+  @@index([depType, provider])
+}
+
+model ExposurePath {
+  id                  String       @id @default(uuid())
+  resourceInventoryId String
+  provider            String
+  exposureType        ExposureType
+  pathJson            Json // ordered list of {resourceId, resourceType, edgeType, detail}
+  entryPoint          String? // e.g. "0.0.0.0/0", "alb-arn", "cloudfront-distribution-id"
+  computedAt          DateTime     @default(now())
+  expiresAt           DateTime?
+  updatedAt           DateTime     @updatedAt
+
+  resource ResourceInventory @relation(fields: [resourceInventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceInventoryId, exposureType])
+  @@index([provider, exposureType])
+  @@index([computedAt(sort: Desc)])
+}
+
+// ─── GCP Models ────────────────────────────────────────────────────────────────
+
+enum GcpAuthMethod {
+  SERVICE_ACCOUNT_KEY
+  WORKLOAD_IDENTITY
+}
+
+model GcpProject {
+  id          String   @id @default(uuid())
+  name        String
+  projectId   String   @unique
+  description String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Inventory pipeline state
+  inventoryStatus  InventoryStatus @default(PENDING)
+  inventoryInitAt  DateTime?
+  lastDiscoveryAt  DateTime?
+  lastConfigSyncAt DateTime?
+  pipelineError    String?
+
+  createdBy         User                @relation("GcpCreatedBy", fields: [createdById], references: [id])
+  credential        GcpCredential?
+  scans             GcpScan[]
+  configChanges     ConfigChange[]
+  resourceInventory ResourceInventory[]
+}
+
+model GcpCredential {
+  id                         String        @id @default(uuid())
+  projectId                  String        @unique
+  authMethod                 GcpAuthMethod
+  encryptedServiceAccountKey String?
+  serviceAccountEmail        String?
+  createdAt                  DateTime      @default(now())
+  updatedAt                  DateTime      @updatedAt
+  project                    GcpProject    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model GcpScan {
+  id           String          @id @default(uuid())
+  projectId    String
+  status       ScanStatus      @default(QUEUED)
+  jobId        String?         @unique
+  services     String[]
+  startedAt    DateTime?
+  completedAt  DateTime?
+  durationMs   Int?
+  errorMessage String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  project      GcpProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  summary      GcpScanSummary?
+  findings     GcpFinding[]
+}
+
+model GcpScanSummary {
+  id       String  @id @default(uuid())
+  scanId   String  @unique
+  critical Int     @default(0)
+  high     Int     @default(0)
+  medium   Int     @default(0)
+  low      Int     @default(0)
+  info     Int     @default(0)
+  total    Int     @default(0)
+  scan     GcpScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+}
+
+model GcpFinding {
+  id              String        @id @default(uuid())
+  scanId          String
+  service         String
+  severity        Severity
+  title           String
+  description     String        @db.Text
+  evidence        Json
+  remediation     String        @db.Text
+  findingStatus   FindingStatus @default(OPEN)
+  tags            String[]
+  resourceName    String?
+  region          String?
+  discoveredAt    DateTime
+  // Phase 3 — risk prioritization
+  riskScore       Int?
+  reachability    String?
+  businessContext Json?
+  exploitability  String?
+  enrichedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  scan            GcpScan       @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+  @@index([severity])
+  @@index([service])
+  @@index([findingStatus])
+}
+
+// ─── Alerting ──────────────────────────────────────────────────────────────────
+
+enum AlertChannel {
+  SLACK
+  EMAIL_SMTP
+  EMAIL_O365
+  EMAIL_GMAIL
+}
+
+model AlertConfig {
+  id       String  @id @default(uuid())
+  name     String
+  isActive Boolean @default(true)
+
+  minSeverity  String   @default("HIGH")
+  categories   String[]
+  providers    String[]
+  targetIds    String[]
+  onFreezeOnly Boolean  @default(false)
+
+  channel         AlertChannel
+  encryptedConfig String
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  logs      AlertLog[]
+}
+
+model AlertLog {
+  id           String   @id @default(uuid())
+  configId     String
+  changeId     String?
+  subject      String?
+  status       String
+  errorMessage String?
+  sentAt       DateTime @default(now())
+
+  config AlertConfig   @relation(fields: [configId], references: [id], onDelete: Cascade)
+  change ConfigChange? @relation(fields: [changeId], references: [id], onDelete: SetNull)
+
+  @@index([configId, sentAt(sort: Desc)])
+  @@index([status])
+}
+
+// ─── Change Freeze Windows ────────────────────────────────────────────────────
+
+model FreezeWindow {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  providers   String[]
+  targetIds   String[]
+  daysOfWeek  Int[]
+  startTime   String
+  endTime     String
+  timezone    String    @default("UTC")
+  fixedStart  DateTime?
+  fixedEnd    DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([isActive])
+}
+
+// ─── Risk Posture Score ───────────────────────────────────────────────────────
+
+model PostureScore {
+  id               String   @id @default(uuid())
+  provider         String
+  targetId         String
+  score            Int
+  grade            String
+  criticalOpen     Int      @default(0)
+  highOpen         Int      @default(0)
+  mediumOpen       Int      @default(0)
+  lowOpen          Int      @default(0)
+  freezeViolations Int      @default(0)
+  calculatedAt     DateTime @default(now())
+
+  @@index([provider, targetId, calculatedAt(sort: Desc)])
+}
+
+// ─── Baseline & Drift Detection ───────────────────────────────────────────────
+
+model ConfigBaseline {
+  id             String   @id @default(uuid())
+  provider       String
+  targetId       String
+  name           String
+  description    String?
+  resourceCount  Int      @default(0)
+  isActive       Boolean  @default(true)
+  capturedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  currentVersion Int      @default(1)
+
+  snapshots    BaselineSnapshot[]
+  driftResults DriftResult[]
+  versions     BaselineVersion[]
+
+  @@index([provider, targetId])
+  @@index([isActive])
+}
+
+model BaselineSnapshot {
+  id           String   @id @default(uuid())
+  baselineId   String
+  nativeId     String
+  resourceType String
+  resourceName String?
+  region       String?
+  configState  Json
+  capturedAt   DateTime @default(now())
+
+  baseline ConfigBaseline @relation(fields: [baselineId], references: [id], onDelete: Cascade)
+
+  @@index([baselineId])
+  @@index([nativeId])
+}
+
+model DriftResult {
+  id              String    @id @default(uuid())
+  baselineId      String
+  firstDetectedAt DateTime  @default(now()) // never changes — set on first detection
+  detectedAt      DateTime  @default(now()) // updated on every re-scan
+  nativeId        String
+  resourceType    String
+  resourceName    String?
+  region          String?
+  driftType       String // MODIFIED | ADDED | DELETED
+  severity        String    @default("MEDIUM")
+  driftedFields   Json?
+  baselineConfig  Json?
+  currentConfig   Json?
+  lastSeenAt      DateTime? // for DELETED: last time resource was in inventory
+  status          String    @default("OPEN")
+  acknowledgedAt  DateTime?
+  resolvedAt      DateTime?
+
+  baseline ConfigBaseline @relation(fields: [baselineId], references: [id], onDelete: Cascade)
+
+  @@index([baselineId, detectedAt(sort: Desc)])
+  @@index([status])
+  @@index([driftType])
+  @@index([severity])
+}
+
+// ─── Baseline Version History ─────────────────────────────────────────────────
+
+model BaselineVersion {
+  id            String   @id @default(uuid())
+  baselineId    String
+  versionNumber Int
+  label         String? // e.g. "v3 — Refreshed 2025-04-04 by admin@co.com"
+  resourceCount Int      @default(0)
+  capturedAt    DateTime @default(now())
+  capturedBy    String? // email of requester
+
+  baseline  ConfigBaseline            @relation(fields: [baselineId], references: [id], onDelete: Cascade)
+  snapshots BaselineVersionSnapshot[]
+
+  @@unique([baselineId, versionNumber])
+  @@index([baselineId, capturedAt(sort: Desc)])
+}
+
+model BaselineVersionSnapshot {
+  id           String  @id @default(uuid())
+  versionId    String
+  nativeId     String
+  resourceType String
+  resourceName String?
+  region       String?
+  configState  Json
+
+  version BaselineVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId])
+  @@index([nativeId])
+}
+
+// ─── Approval Workflow ─────────────────────────────────────────────────────────
+
+model ApprovalRequest {
+  id              String    @id @default(uuid())
+  action          String // CAPTURE | REFRESH | REVERT
+  baselineId      String? // target baseline
+  driftId         String? // for REVERT actions
+  requestedBy     String // email
+  requestedByName String?
+  status          String    @default("PENDING") // PENDING | APPROVED | REJECTED | EXPIRED | CANCELLED | EXECUTING | COMPLETED | FAILED
+  notes           String? // requester notes
+  reviewedBy      String? // email of approver
+  reviewedByName  String?
+  reviewNotes     String? // approver notes
+  requestedAt     DateTime  @default(now())
+  reviewedAt      DateTime?
+  expiresAt       DateTime // auto-expire after 24h
+  executedAt      DateTime?
+  executionError  String?
+  metadata        Json? // stores params needed to execute the approved action
+
+  @@index([status])
+  @@index([baselineId])
+  @@index([requestedAt(sort: Desc)])
+}
+
+// ─── Scheduled Reports ────────────────────────────────────────────────────────
+
+model ReportSchedule {
+  id         String    @id @default(uuid())
+  name       String
+  provider   String?
+  targetId   String?
+  frequency  String // DAILY | WEEKLY | MONTHLY | ON_DEMAND
+  dayOfWeek  Int? // 0–6 for WEEKLY
+  dayOfMonth Int? // 1–31 for MONTHLY
+  hour       Int       @default(8)
+  sections   String[] // SUMMARY | CONFIG_CHANGES | DRIFT | COMPLIANCE | POSTURE | IAM_ESCALATION
+  recipients String[]
+  isActive   Boolean   @default(true)
+  lastRunAt  DateTime?
+  nextRunAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  runs ReportRun[]
+
+  @@index([isActive, nextRunAt])
+}
+
+model ReportRun {
+  id           String    @id @default(uuid())
+  scheduleId   String
+  status       String // RUNNING | COMPLETED | FAILED
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  errorMessage String?
+
+  schedule ReportSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, startedAt(sort: Desc)])
+  @@index([status])
+}
+
+// ─── Webhook / ServiceNow / Jira Integrations ─────────────────────────────────
+
+model IntegrationConfig {
+  id              String   @id @default(uuid())
+  name            String
+  integrationType String // WEBHOOK | SERVICENOW | JIRA
+  isActive        Boolean  @default(true)
+  minSeverity     String   @default("HIGH")
+  providers       String[]
+  targetIds       String[]
+  onFreezeOnly    Boolean  @default(false)
+  encryptedConfig String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  logs IntegrationLog[]
+
+  @@index([isActive])
+  @@index([integrationType])
+}
+
+model IntegrationLog {
+  id           String   @id @default(uuid())
+  configId     String
+  changeId     String?
+  status       String // SENT | FAILED
+  externalId   String? // ticket/incident ID from ServiceNow/Jira
+  errorMessage String?
+  sentAt       DateTime @default(now())
+
+  config IntegrationConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  change ConfigChange?     @relation(fields: [changeId], references: [id], onDelete: SetNull)
+
+  @@index([configId, sentAt(sort: Desc)])
+  @@index([status])
+}
+
+// ─── IAM Privilege Escalation Events ─────────────────────────────────────────
+
+model IamEscalationEvent {
+  id              String    @id @default(uuid())
+  provider        String
+  targetId        String
+  changeId        String?
+  escalationType  String // POLICY_ATTACH | INLINE_POLICY | ROOT_ACTIVITY | ROLE_CREATION | CREDENTIAL_CREATION | TRUST_POLICY | ACCESS_KEY | ADMIN_GROUP | PERMISSION_BOUNDARY_DELETE
+  severity        String    @default("HIGH")
+  actor           String?
+  actorType       String?
+  targetPrincipal String?
+  resourceId      String?
+  resourceType    String?
+  eventName       String
+  eventTime       DateTime
+  summary         String    @db.Text
+  details         Json?
+  status          String    @default("OPEN")
+  acknowledgedAt  DateTime?
+  resolvedAt      DateTime?
+  notes           String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  change ConfigChange? @relation(fields: [changeId], references: [id], onDelete: SetNull)
+
+  @@index([provider, targetId, eventTime(sort: Desc)])
+  @@index([escalationType])
+  @@index([status])
+  @@index([severity])
+}
+
+// ─── Compliance Evidence (auto-collected + manual) ────────────────────────────
+
+model ComplianceEvidence {
+  id                  String    @id @default(uuid())
+  frameworkId         String // NIST_800_53 | GDPR | FEDRAMP | PCI_DSS | etc.
+  controlId           String // e.g. AC-2, GDPR-Art32
+  provider            String // AWS | AZURE | GCP
+  accountId           String? // cloud account / subscription / project id (internal)
+  evidenceType        String // AUTO_FINDING | AUTO_SCAN | MANUAL
+  status              String // COMPLIANT | NON_COMPLIANT | INSUFFICIENT
+  summary             String    @db.Text
+  detail              Json?
+  sourceType          String? // Finding | Scan | ConfigChange
+  sourceId            String?
+  // Phase 4 — per-control evidence package
+  evaluatedResources  Json? // [{ resourceId, nativeId, resourceType, passed }]
+  passingCount        Int       @default(0)
+  failingCount        Int       @default(0)
+  snapshotConfigState Json? // sampled configState slice relevant to the control
+  nextEvaluationAt    DateTime?
+  collectedAt         DateTime  @default(now())
+  expiresAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([frameworkId, controlId, provider, accountId, evidenceType])
+  @@index([frameworkId, controlId])
+  @@index([provider, accountId])
+  @@index([collectedAt(sort: Desc)])
+  @@index([status])
+  @@index([nextEvaluationAt])
+}
+
+// ─── Risk Register ────────────────────────────────────────────────────────────
+
+model RiskItem {
+  id                  String    @id @default(uuid())
+  title               String
+  description         String    @db.Text
+  category            String // CONFIGURATION | VULNERABILITY | ACCESS | COMPLIANCE | OPERATIONAL | DATA
+  likelihood          Int // 1-5
+  impact              Int // 1-5
+  riskScore           Int // likelihood * impact  (1-25)
+  status              String    @default("OPEN") // OPEN | ACCEPTED | MITIGATED | CLOSED
+  owner               String?
+  dueDate             DateTime?
+  provider            String? // AWS | AZURE | GCP
+  accountId           String?
+  linkedFindingIds    Json      @default("[]")
+  linkedControlIds    Json      @default("[]")
+  mitigationPlan      String?   @db.Text
+  acceptanceRationale String?   @db.Text
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([riskScore(sort: Desc)])
+  @@index([provider, accountId])
+  @@index([category])
+}
+
+// ─── ML Anomaly Detection ─────────────────────────────────────────────────────
+
+model AnomalyBaseline {
+  id             String   @id @default(uuid())
+  provider       String // AWS | AZURE | GCP
+  accountId      String // internal account/subscription/project id
+  actorId        String // IAM user / service principal / service account / "account"
+  metricKey      String // e.g. "api_calls_per_hour" | "unique_ips_per_day" | "error_rate"
+  // EWMA state
+  ewmaMean       Float    @default(0)
+  ewmaVariance   Float    @default(0)
+  sampleCount    Int      @default(0)
+  lastValue      Float    @default(0)
+  lastUpdated    DateTime @default(now())
+  // Geo/IP knowledge
+  knownIps       Json     @default("[]") // up to 50 known IPs
+  knownCountries Json     @default("[]") // known country codes
+  knownRegions   Json     @default("[]") // known AWS regions / Azure regions
+  // Temporal pattern (hourly buckets 0-23)
+  hourlyActivity Json     @default("{}") // { "0": count, "1": count, ... }
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([provider, accountId, actorId, metricKey])
+  @@index([provider, accountId])
+  @@index([actorId])
+}
+
+model AnomalyEvent {
+  id              String    @id @default(uuid())
+  provider        String // AWS | AZURE | GCP
+  accountId       String
+  actorId         String
+  anomalyType     String // FREQUENCY | GEOGRAPHIC | TEMPORAL | ACCESS_DENIED | IMPOSSIBLE_TRAVEL | RARE_EVENT | LATERAL_MOVEMENT | DATA_EXFIL
+  severity        String // LOW | MEDIUM | HIGH | CRITICAL
+  score           Float // anomaly score 0–100
+  description     String    @db.Text
+  detail          Json // raw feature values + baseline comparison
+  sourceIp        String?
+  country         String?
+  eventName       String?
+  relatedEventIds Json      @default("[]")
+  status          String    @default("OPEN") // OPEN | ACKNOWLEDGED | RESOLVED | FALSE_POSITIVE
+  resolvedAt      DateTime?
+  notes           String?   @db.Text
+  detectedAt      DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([provider, accountId, detectedAt(sort: Desc)])
+  @@index([anomalyType])
+  @@index([severity])
+  @@index([status])
+  @@index([actorId])
+}
+
+// ─── CIEM: Principal Permissions & Attack Paths ───────────────────────────────
+
+model PrincipalPermission {
+  id             String   @id @default(uuid())
+  provider       String // AWS | AZURE | GCP
+  accountId      String // internal AwsAccount / AzureSubscription / GcpProject id
+  principalArn   String
+  principalType  String // USER | ROLE | GROUP | SERVICE | SERVICE_PRINCIPAL | SERVICE_ACCOUNT
+  action         String // e.g. "iam:PassRole" | "*" | "storage.objects.get"
+  resourceArn    String // resource the action targets (ARN / Azure ID / GCP name), "*" allowed
+  effect         String // ALLOW | DENY
+  conditionsJson Json?
+  source         String // DIRECT | GROUP | ROLE_CHAIN | INLINE | MANAGED
+  flattenedAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([provider, accountId, principalArn, action, resourceArn, effect, source])
+  @@index([provider, accountId, principalArn])
+  @@index([action])
+  @@index([resourceArn])
+}
+
+model AttackPath {
+  id             String    @id @default(uuid())
+  provider       String
+  accountId      String
+  kind           String // PRIVILEGE_ESCALATION | LATERAL_MOVEMENT | EXTERNAL_TO_ADMIN | DATA_EXFILTRATION
+  severity       String // CRITICAL | HIGH | MEDIUM | LOW
+  sourceNodeId   String? // ResourceInventory.id or principal ARN
+  sourceLabel    String // human-readable
+  sinkNodeId     String?
+  sinkLabel      String
+  pathJson       Json // ordered hops: [{ nodeId, label, edgeType, detail }]
+  summary        String    @db.Text
+  status         String    @default("OPEN") // OPEN | ACKNOWLEDGED | RESOLVED | FALSE_POSITIVE
+  firstSeenAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  notes          String?   @db.Text
+  fingerprint    String // hash of source+sink+kind for dedup
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([provider, accountId, fingerprint])
+  @@index([provider, accountId, severity])
+  @@index([kind])
+  @@index([status])
+  @@index([lastSeenAt(sort: Desc)])
+}
+
+// ─── CWPP: Workload Vulnerabilities ───────────────────────────────────────────
+
+model WorkloadVulnerability {
+  id                  String    @id @default(uuid())
+  provider            String
+  accountId           String
+  resourceInventoryId String
+  packageName         String
+  packageVersion      String
+  cveId               String
+  severity            String // CRITICAL | HIGH | MEDIUM | LOW | UNKNOWN
+  cvssScore           Float?
+  fixedVersion        String?
+  exploitAvailable    Boolean   @default(false)
+  summary             String?   @db.Text
+  reference           String?
+  sourceFeed          String // SSM_INVENTORY | INSPECTOR | AZURE_DEFENDER | GCP_OSCONFIG | OSV
+  observedAt          DateTime  @default(now())
+  status              String    @default("OPEN") // OPEN | FIXED | SUPPRESSED
+  suppressedReason    String?
+  resolvedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  resource ResourceInventory @relation(fields: [resourceInventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceInventoryId, cveId, packageName])
+  @@index([provider, accountId, severity])
+  @@index([cveId])
+  @@index([status])
+  @@index([observedAt(sort: Desc)])
+}
+
+// ─── DSPM: Data Classification ────────────────────────────────────────────────
+
+model DataClassification {
+  id                  String    @id @default(uuid())
+  provider            String
+  accountId           String
+  resourceInventoryId String
+  dataType            String // PII | PHI | PCI | SECRETS | FINANCIAL | IP
+  confidence          String // HIGH | MEDIUM | LOW
+  sampleCount         Int       @default(0)
+  totalObjectsSampled Int       @default(0)
+  evidence            Json // { regexHits: [...], samplePaths: [...], classifierVersion }
+  classifiedAt        DateTime  @default(now())
+  expiresAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  resource ResourceInventory @relation(fields: [resourceInventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceInventoryId, dataType])
+  @@index([provider, accountId, dataType])
+  @@index([confidence])
+  @@index([classifiedAt(sort: Desc)])
+}

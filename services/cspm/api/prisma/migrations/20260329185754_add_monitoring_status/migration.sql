@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "ScanStatus" ADD VALUE 'MONITORING';

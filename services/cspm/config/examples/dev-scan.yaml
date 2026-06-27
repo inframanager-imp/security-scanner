@@ -1,0 +1,21 @@
+# Example: Development Environment - Quick Scan
+
+aws:
+  region: us-east-1
+  profile: development
+
+scanner:
+  services:
+    - iam
+    - s3
+  timeout: 60000
+  parallel: 3
+
+report:
+  format: console
+
+filters:
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM

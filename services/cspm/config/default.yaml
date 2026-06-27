@@ -1,0 +1,45 @@
+# Default Configuration for AWS Scanner
+
+# AWS Settings
+aws:
+  region: us-east-1
+  regions:
+    - us-east-1
+    - us-west-2
+    - eu-west-1
+  profile: default
+
+# Scanner Settings
+scanner:
+  services:
+    - cloudtrail
+    - iam
+    - s3
+    - ec2
+    - rds
+    - kms
+    - secretsmanager
+  timeout: 300000  # milliseconds
+  parallel: 5
+  verbose: false
+  dryRun: false
+
+# Reporting
+report:
+  format: console  # json, html, csv, console
+  outputDir: ./results
+  includeMetadata: true
+
+# Filtering
+filters:
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+  services: []  # empty means all
+  tags: []       # empty means all
+
+# Caching
+cache:
+  enabled: true
+  ttl: 3600  # seconds

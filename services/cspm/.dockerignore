@@ -1,0 +1,18 @@
+# Never copy host (Windows) build artifacts / deps into the Linux images
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+.cache
+**/.cache
+*.log
+**/*.log
+results
+.git
+.gitignore
+.env
+**/.env
+.vscode
+.claude
+docs/*.pptx

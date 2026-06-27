@@ -1,0 +1,31 @@
+# Example: Scan Production Account
+
+aws:
+  region: us-east-1
+  regions:
+    - us-east-1
+    - us-west-2
+    - eu-west-1
+    - ap-southeast-1
+  profile: production
+
+scanner:
+  services:
+    - cloudtrail
+    - iam
+    - s3
+    - ec2
+    - rds
+    - kms
+    - secretsmanager
+  timeout: 600000
+  parallel: 10
+
+report:
+  format: html
+  outputDir: ./production-reports
+
+filters:
+  severity:
+    - CRITICAL
+    - HIGH

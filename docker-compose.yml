@@ -1,0 +1,98 @@
+# ── VAPT Cloud Scanner — unified platform ─────────────────────────────────────
+# CSPM (Node) + ASPM (Python) behind one nginx, sharing ONE Postgres (schemas
+# cspm + aspm) and Redis. Single UI + single login (CSPM).
+#
+# Run:    docker compose up -d --build
+# Open:   http://localhost:8080   (login: admin@example.com / Admin@123456)
+#
+# SECURITY: change JWT_*_SECRET, CREDENTIAL_ENCRYPTION_KEY, ADMIN_PASSWORD before
+# any real deployment.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vapt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scanner
+      POSTGRES_PASSWORD: scanner_pass
+      POSTGRES_DB: vapt
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U scanner -d vapt']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: vapt-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  cspm-api:
+    build:
+      context: ./services/cspm
+      dockerfile: Dockerfile.api
+    container_name: vapt-cspm-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://scanner:scanner_pass@postgres:5432/vapt?schema=cspm"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
+      JWT_REFRESH_SECRET: "change-me-refresh-secret-min-32-chars-please"
+      JWT_ACCESS_EXPIRY: "15m"
+      JWT_REFRESH_EXPIRY: "7d"
+      CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      PORT: "3001"
+      NODE_ENV: "production"
+      CORS_ORIGIN: "http://localhost:8080"
+      ADMIN_EMAIL: "admin@example.com"
+      ADMIN_PASSWORD: "Admin@123456"
+
+  aspm-api:
+    build:
+      context: ./services/aspm
+      dockerfile: backend/Dockerfile
+      args:
+        INSTALL_SCANNERS: "false"
+    container_name: vapt-aspm-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # SQLAlchemy URL for the aspm schema (shared Postgres).
+      DATABASE_URL: "postgresql+psycopg://scanner:scanner_pass@postgres:5432/vapt"
+      DB_SCHEMA: "aspm"
+      # Shared with cspm-api so ASPM can validate CSPM-issued JWTs (Phase 2).
+      JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: vapt-web
+    restart: unless-stopped
+    depends_on:
+      - cspm-api
+      - aspm-api
+    ports:
+      - '8080:80'
+
+volumes:
+  postgres_data:
+  redis_data:
