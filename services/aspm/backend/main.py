@@ -2,13 +2,14 @@ import asyncio
 import urllib.parse
 from fastapi import FastAPI, Query, HTTPException, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 # Postgres-backed data layer + shared-JWT auth
 import backend.database as db
 import backend.scanners as scanners
+import backend.report_builder as report_builder
 from backend.ai_engine import get_ai_remediation_diff
 from backend.auth import verify_jwt
 
@@ -18,6 +19,9 @@ app = FastAPI(
     version="1.1.0",
     dependencies=[Depends(verify_jwt)],
 )
+
+# Fail any scan orphaned by a previous restart (status left 'Scanning'/'Queued').
+db.reset_stale_jobs()
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +55,33 @@ def validate_target_inputs(name: str, url: str, target_type: str, auth_type: str
         if "<script" in val_lower or "javascript:" in val_lower:
             raise HTTPException(status_code=400, detail=f"Security Alert: XSS pattern detected in {field_name}")
 
+
+def _looks_like_path_or_git(url: str) -> bool:
+    """A filesystem path or Git ref — must NOT get http:// prepended (that would
+    mangle it, e.g. http://D:/sam/...). Covers unix/Windows/UNC paths + git/ssh refs."""
+    u = url.strip()
+    if not u:
+        return False
+    if u.startswith(("/", "\\", "~", ".", "file://", "git@", "git://", "ssh://")):
+        return True
+    if u.endswith(".git"):
+        return True
+    # Windows drive path: D:\... or D:/...
+    if len(u) >= 3 and u[0].isalpha() and u[1] == ":" and u[2] in ("\\", "/"):
+        return True
+    return False
+
+
+def normalize_target_url(url: str, target_type: str) -> str:
+    """Prepend http:// only for bare web hosts/IPs — never for filesystem paths,
+    Git refs, or an explicit 'git' target type."""
+    if url.startswith(("http://", "https://", "tcp://")):
+        return url
+    if (target_type or "").lower() == "git" or _looks_like_path_or_git(url):
+        return url
+    return "http://" + url
+
+
 @app.get("/api/targets")
 def list_targets():
     return db.get_targets_list()
@@ -67,10 +98,8 @@ def create_target(
     validate_target_inputs(name, url, target_type, auth_type)
     if not url:
         raise HTTPException(status_code=400, detail="Target URL/IP is required")
-    # Clean URL format
-    if not url.startswith("http://") and not url.startswith("https://") and not url.startswith("tcp://"):
-        url = "http://" + url
-    
+    url = normalize_target_url(url, target_type)
+
     target_id = db.add_target(name, url, target_type, auth_type, auth_key, auth_val)
     return {"status": "success", "target_id": target_id}
 
@@ -98,10 +127,8 @@ def edit_target(
     validate_target_inputs(name, url, target_type, auth_type)
     if not url:
         raise HTTPException(status_code=400, detail="Target URL/IP is required")
-    # Clean URL format
-    if not url.startswith("http://") and not url.startswith("https://") and not url.startswith("tcp://"):
-        url = "http://" + url
-    
+    url = normalize_target_url(url, target_type)
+
     db.update_target(target_id, {
         "name": name,
         "url": url,
@@ -425,6 +452,30 @@ def stream_pentest_logs(target: str = Query(""), tenant_id: Optional[str] = Quer
 
 
 # ----------------- AI RED-TEAM OBSERVABILITY -----------------
+
+@app.post("/api/ai-security/redteam/stream")
+def llm_redteam_stream(payload: Dict[str, Any] = Body(...)):
+    """Live LLM red-team: probes a real OpenAI-compatible LLM endpoint and streams
+    progress (SSE). Findings are inserted against the chosen target_id."""
+    target_id = payload.get("target_id")
+    endpoint = payload.get("endpoint")
+    api_key = payload.get("api_key", "")
+    model = payload.get("model", "gpt-3.5-turbo")
+    if not target_id or not endpoint:
+        raise HTTPException(status_code=400, detail="target_id and endpoint are required")
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="target_id not found")
+
+    def gen():
+        try:
+            for line in scanners.run_llm_redteam(target_id, endpoint, api_key, model):
+                yield f"data: {line}\n\n"
+        except Exception as e:  # noqa: BLE001
+            yield f"data: [!] Red-team error: {str(e)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
 
 @app.post("/api/ai-security/test-prompt")
 def test_prompt_injection(prompt: str = Body(..., embed=True)):
@@ -778,500 +829,61 @@ def get_reports_summary(
 @app.get("/api/reports/export")
 def export_executive_report(
     tenant_id: Optional[str] = Query(None),
-    report_type: Optional[str] = Query(None)
+    report_type: Optional[str] = Query(None),
+    format: Optional[str] = Query(None, description="Set to 'html' to preview as HTML instead of PDF"),
 ):
+    """Render a professional security report (PDF) for a target or the whole estate.
+
+    The heavy lifting (model assembly, charts, templating, PDF) lives in
+    ``report_builder``. This endpoint just gathers data and picks the output
+    format. PDF is the default; ``?format=html`` returns the same report as HTML,
+    which is also used as a graceful fallback if the PDF engine is unavailable.
+    """
     if tenant_id:
         target = db.get_target(tenant_id)
         if not target:
             raise HTTPException(status_code=404, detail="Target not found")
     else:
-        target = {"name": "Consolidated Space", "url": "All Targets"}
-        
+        target = {"name": "Consolidated Scope", "url": "All Targets"}
+
     vulns = db.get_vulnerabilities(tenant_id)
     if report_type:
         rt_upper = report_type.upper()
-        if rt_upper in ["SAST", "SCA"]:
-            vulns = [v for v in vulns if v["type"].upper() == rt_upper]
-            
+        if rt_upper in ("SAST", "SCA"):
+            vulns = [v for v in vulns if (v.get("type") or "").upper() == rt_upper]
+
     assets_data = db.get_assets(tenant_id)
     summary = get_reports_summary(tenant_id, report_type)
-    open_vulns = [v for v in vulns if v["status"] in ["Open", "In Progress"]]
-    
-    # 1. Findings by Severity counts
-    c_level5 = 0
-    c_level4 = 0
-    c_level3 = 0
-    c_level2 = 0
-    c_level1 = 0
-    c_sensitive = 0
-    c_info_gathered = 0
-    
-    for v in open_vulns:
-        v_type = v.get("type", "").upper()
-        v_sev = v.get("severity", "")
-        if v_type == "SECRETS":
-            c_sensitive += 1
-        elif v_type in ["EASM", "NMAP", "NMAP + NSE", "SSLSCAN"]:
-            c_info_gathered += 1
-        elif v_sev == "Critical":
-            c_level5 += 1
-        elif v_sev == "High":
-            c_level4 += 1
-        elif v_sev == "Medium":
-            c_level3 += 1
-        elif v_sev == "Low":
-            c_level2 += 1
-        else:
-            c_level1 += 1
-            
-    max_val = max(c_level5, c_level4, c_level3, c_level2, c_level1, c_sensitive, c_info_gathered, 1)
-    h5 = int((c_level5 / max_val) * 120)
-    h4 = int((c_level4 / max_val) * 120)
-    h3 = int((c_level3 / max_val) * 120)
-    h2 = int((c_level2 / max_val) * 120)
-    h1 = int((c_level1 / max_val) * 120)
-    h_sens = int((c_sensitive / max_val) * 120)
-    h_info = int((c_info_gathered / max_val) * 120)
 
-    findings_by_severity_svg = f"""
-    <svg width="400" height="200" viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg">
-        <line x1="40" y1="40" x2="380" y2="40" stroke="#e9ecef" stroke-dasharray="4"/>
-        <line x1="40" y1="100" x2="380" y2="100" stroke="#e9ecef" stroke-dasharray="4"/>
-        <line x1="40" y1="160" x2="380" y2="160" stroke="#cccccc" stroke-width="1.5"/>
-        <text x="30" y="44" font-size="9" font-family="sans-serif" fill="#6c757d" text-anchor="end">{max_val}</text>
-        <text x="30" y="104" font-size="9" font-family="sans-serif" fill="#6c757d" text-anchor="end">{int(max_val/2)}</text>
-        <text x="30" y="164" font-size="9" font-family="sans-serif" fill="#6c757d" text-anchor="end">0</text>
-        
-        <rect x="50" y="{160 - h5}" width="26" height="{h5}" fill="#dc3545" rx="2"/>
-        <text x="63" y="{155 - h5 if h5 > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h5 > 15 else '#dc3545' }" text-anchor="middle">{c_level5}</text>
-        <text x="63" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">L5</text>
-        
-        <rect x="98" y="{160 - h4}" width="26" height="{h4}" fill="#fd7e14" rx="2"/>
-        <text x="111" y="{155 - h4 if h4 > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h4 > 15 else '#fd7e14' }" text-anchor="middle">{c_level4}</text>
-        <text x="111" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">L4</text>
-        
-        <rect x="146" y="{160 - h3}" width="26" height="{h3}" fill="#ffc107" rx="2"/>
-        <text x="159" y="{155 - h3 if h3 > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h3 > 15 else '#ffc107' }" text-anchor="middle">{c_level3}</text>
-        <text x="159" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">L3</text>
-        
-        <rect x="194" y="{160 - h2}" width="26" height="{h2}" fill="#17a2b8" rx="2"/>
-        <text x="207" y="{155 - h2 if h2 > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h2 > 15 else '#17a2b8' }" text-anchor="middle">{c_level2}</text>
-        <text x="207" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">L2</text>
-        
-        <rect x="242" y="{160 - h1}" width="26" height="{h1}" fill="#6c757d" rx="2"/>
-        <text x="255" y="{155 - h1 if h1 > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h1 > 15 else '#6c757d' }" text-anchor="middle">{c_level1}</text>
-        <text x="255" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">L1</text>
-        
-        <rect x="290" y="{160 - h_sens}" width="26" height="{h_sens}" fill="#6f42c1" rx="2"/>
-        <text x="303" y="{155 - h_sens if h_sens > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_sens > 15 else '#6f42c1' }" text-anchor="middle">{c_sensitive}</text>
-        <text x="303" y="175" font-size="8" font-family="sans-serif" fill="#495057" text-anchor="middle">Sensitive</text>
-        
-        <rect x="338" y="{160 - h_info}" width="26" height="{h_info}" fill="#007bff" rx="2"/>
-        <text x="351" y="{155 - h_info if h_info > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_info > 15 else '#007bff' }" text-anchor="middle">{c_info_gathered}</text>
-        <text x="351" y="175" font-size="8" font-family="sans-serif" fill="#495057" text-anchor="middle">Info Gath.</text>
-    </svg>
-    """
+    model = report_builder.build_model(
+        target=target,
+        vulns=vulns,
+        assets_data=assets_data,
+        summary=summary,
+        details_fn=get_vulnerability_details,
+        report_type=report_type,
+    )
+    html = report_builder.render_html(model)
 
-    # 2. Vulnerabilities by Group counts
-    c_xss = 0
-    c_sqli = 0
-    c_path = 0
-    c_info = 0
-    c_nogroup = 0
-    
-    for v in open_vulns:
-        cwe = v.get("cwe", "").upper()
-        title_l = v.get("title", "").lower()
-        if "cross-site scripting" in title_l or "xss" in title_l or cwe == "CWE-79":
-            c_xss += 1
-        elif "sql injection" in title_l or "sqli" in title_l or cwe == "CWE-89":
-            c_sqli += 1
-        elif "path disclosure" in title_l or "directory traversal" in title_l or "file inclusion" in title_l or cwe in ["CWE-22", "CWE-23"]:
-            c_path += 1
-        elif "disclosure" in title_l or "header" in title_l or "csp" in title_l or "referrer" in title_l or "hsts" in title_l or "nosniff" in title_l or "x-frame-options" in title_l or "clickjacking" in title_l or cwe == "CWE-200":
-            c_info += 1
-        else:
-            c_nogroup += 1
-            
-    max_group = max(c_xss, c_sqli, c_path, c_info, c_nogroup, 1)
-    h_xss = int((c_xss / max_group) * 120)
-    h_sqli = int((c_sqli / max_group) * 120)
-    h_path = int((c_path / max_group) * 120)
-    h_info_disc = int((c_info / max_group) * 120)
-    h_nogroup = int((c_nogroup / max_group) * 120)
-    
-    vulnerabilities_by_group_svg = f"""
-    <svg width="360" height="200" viewBox="0 0 360 200" xmlns="http://www.w3.org/2000/svg">
-        <line x1="40" y1="40" x2="340" y2="40" stroke="#e9ecef" stroke-dasharray="4"/>
-        <line x1="40" y1="100" x2="340" y2="100" stroke="#e9ecef" stroke-dasharray="4"/>
-        <line x1="40" y1="160" x2="340" y2="160" stroke="#cccccc" stroke-width="1.5"/>
-        <text x="30" y="44" font-size="9" font-family="sans-serif" fill="#6c757d" text-anchor="end">{max_group}</text>
-        <text x="30" y="104" font-size="9" font-family="sans-serif" fill="#6c757d" text-anchor="end">{int(max_group/2)}</text>
-        <text x="30" y="164" font-size="9" font-family="sans-serif" fill="#6c757d" text-anchor="end">0</text>
-        
-        <rect x="55" y="{160 - h_xss}" width="28" height="{h_xss}" fill="#007bff" rx="2"/>
-        <text x="69" y="{155 - h_xss if h_xss > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_xss > 15 else '#007bff' }" text-anchor="middle">{c_xss}</text>
-        <text x="69" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">XSS</text>
-        
-        <rect x="112" y="{160 - h_sqli}" width="28" height="{h_sqli}" fill="#28a745" rx="2"/>
-        <text x="126" y="{155 - h_sqli if h_sqli > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_sqli > 15 else '#28a745' }" text-anchor="middle">{c_sqli}</text>
-        <text x="126" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">SQLi</text>
-        
-        <rect x="169" y="{160 - h_path}" width="28" height="{h_path}" fill="#ffc107" rx="2"/>
-        <text x="183" y="{155 - h_path if h_path > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_path > 15 else '#ffc107' }" text-anchor="middle">{c_path}</text>
-        <text x="183" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">Path Disc.</text>
-        
-        <rect x="226" y="{160 - h_info_disc}" width="28" height="{h_info_disc}" fill="#17a2b8" rx="2"/>
-        <text x="240" y="{155 - h_info_disc if h_info_disc > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_info_disc > 15 else '#17a2b8' }" text-anchor="middle">{c_info}</text>
-        <text x="240" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">Info Disc.</text>
-        
-        <rect x="283" y="{160 - h_nogroup}" width="28" height="{h_nogroup}" fill="#6c757d" rx="2"/>
-        <text x="297" y="{155 - h_nogroup if h_nogroup > 15 else 155}" font-size="9" font-weight="bold" font-family="sans-serif" fill="{ '#333' if h_nogroup > 15 else '#6c757d' }" text-anchor="middle">{c_nogroup}</text>
-        <text x="297" y="175" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="middle">No Group</text>
-    </svg>
-    """
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_",
+                       f"aegissec_{model['kind'].lower()}_{model['target']['name']}").strip("_")
+    filename = f"{safe_name}_{model['generated_iso']}"
 
-    # 3. OWASP Top 10 counts
-    owasp_counts = {
-        "A01:2021-Broken Access Control": 0,
-        "A02:2021-Cryptographic Failures": 0,
-        "A03:2021-Injection": 0,
-        "A04:2021-Insecure Design": 0,
-        "A05:2021-Security Misconfiguration": 0,
-        "A06:2021-Vulnerable and Outdated Components": 0,
-        "A07:2021-Identification and Authentication Failures": 0,
-        "A08:2021-Software and Data Integrity Failures": 0,
-        "A09:2021-Security Logging and Monitoring Failures": 0,
-        "A10:2021-Server-Side Request Forgery": 0
-    }
-    for v in open_vulns:
-        cwe = v.get("cwe", "").upper()
-        title_l = v.get("title", "").lower()
-        v_type = v.get("type", "").upper()
-        
-        if cwe in ["CWE-287", "CWE-639"] or "x-frame-options" in title_l or "clickjacking" in title_l:
-            owasp_counts["A01:2021-Broken Access Control"] += 1
-        elif cwe in ["CWE-327", "CWE-319"] or "tls" in title_l or "ssl" in title_l:
-            owasp_counts["A02:2021-Cryptographic Failures"] += 1
-        elif cwe in ["CWE-89", "CWE-79"] or "sqli" in title_l or "injection" in title_l or "xss" in title_l:
-            owasp_counts["A03:2021-Injection"] += 1
-        elif "csp" in title_l or "content-security-policy" in title_l or "referrer-policy" in title_l or "nosniff" in title_l or "x-content-type-options" in title_l or "hsts" in title_l:
-            owasp_counts["A05:2021-Security Misconfiguration"] += 1
-        elif "outdated" in title_l or v_type in ["SCA", "TRIVY"]:
-            owasp_counts["A06:2021-Vulnerable and Outdated Components"] += 1
-        elif "credential" in title_l or "password" in title_l or v_type == "HYDRA" or v_type == "SECRETS":
-            owasp_counts["A07:2021-Identification and Authentication Failures"] += 1
-        elif "ssrf" in title_l or cwe == "CWE-918":
-            owasp_counts["A10:2021-Server-Side Request Forgery"] += 1
-        else:
-            owasp_counts["A05:2021-Security Misconfiguration"] += 1
-            
-    max_owasp = max(list(owasp_counts.values()) + [1])
-    
-    owasp_top10_svg = """
-    <svg width="720" height="280" viewBox="0 0 720 280" xmlns="http://www.w3.org/2000/svg">
-    """
-    for x_grid in [260, 360, 460, 560, 660]:
-        owasp_top10_svg += f'<line x1="{x_grid}" y1="10" x2="{x_grid}" y2="260" stroke="#e9ecef" stroke-dasharray="3"/>'
-        
-    y_offset = 15
-    for cat, count in owasp_counts.items():
-        w = int((count / max_owasp) * 380) if count > 0 else 0
-        display_label = cat[:42] + ("..." if len(cat) > 42 else "")
-        owasp_top10_svg += f"""
-        <text x="250" y="{y_offset + 14}" font-size="9" font-family="sans-serif" fill="#495057" text-anchor="end">{display_label}</text>
-        <rect x="260" y="{y_offset}" width="{max(w, 2) if count > 0 else 0}" height="16" fill="#5c6bc0" rx="2"/>
-        <text x="{265 + w}" y="{y_offset + 12}" font-size="9" font-weight="bold" font-family="sans-serif" fill="#5c6bc0">{count}</text>
-        """
-        y_offset += 24
-    owasp_top10_svg += "</svg>"
+    # HTML preview (and graceful fallback if WeasyPrint / its native libs are absent)
+    if (format or "").lower() == "html":
+        return HTMLResponse(content=html, status_code=200)
 
-    # Group vulnerabilities by (CWE, Title) to remove duplicate rows for the same issue
-    grouped_vulns = {}
-    for v in vulns:
-        key = (v["cwe"], v["title"])
-        if key not in grouped_vulns:
-            grouped_vulns[key] = {
-                "severity": v["severity"],
-                "cwe": v["cwe"],
-                "title": v["title"],
-                "status": v["status"],
-                "assets": [],
-                "description": v.get("description", "No description provided."),
-                "remediation": v.get("remediation", {}),
-                "type": v.get("type", "DAST")
-            }
-        if v["asset"] not in grouped_vulns[key]["assets"]:
-            grouped_vulns[key]["assets"].append(v["asset"])
+    try:
+        pdf_bytes = report_builder.render_pdf(html)
+    except Exception as exc:
+        print(f"[reports/export] PDF rendering unavailable, serving HTML fallback: {exc}")
+        return HTMLResponse(content=html, status_code=200)
 
-    # Map grouped vulnerabilities to rows (without Asset Endpoint column)
-    vuln_rows = ""
-    for idx, (key, gv) in enumerate(grouped_vulns.items(), 1):
-        instances_str = f" ({len(gv['assets'])} instances)" if len(gv['assets']) > 1 else ""
-        vuln_rows += f"""
-        <tr>
-            <td>{idx}</td>
-            <td><span class="badge badge-{gv['severity'].lower()}">{gv['severity']}</span></td>
-            <td>{gv['cwe']}</td>
-            <td>
-                <strong>{gv['title']}{instances_str}</strong><br/>
-                <span style="font-size:10px; color:#777; font-weight: 500;">Source Engine: {gv.get('type', 'DAST')}</span>
-            </td>
-            <td>{gv['status']}</td>
-        </tr>
-        """
-        
-    # Map subdomains to rows
-    subdomain_rows = ""
-    for sub in assets_data.get("subdomains", []):
-        ports_badges = "".join(f'<span class="badge badge-medium" style="margin-right:3px;">{p}</span>' for p in sub["ports"])
-        tls_ver = sub.get("tls_version", "N/A") or "N/A"
-        cipher = sub.get("cipher_suite", "None") or "None"
-        subdomain_rows += f"""
-        <tr>
-            <td><strong>{sub['subdomain']}</strong></td>
-            <td>{sub['ip']}</td>
-            <td>{sub['cdn']}</td>
-            <td>{ports_badges}</td>
-            <td>{sub['ssl_expiry']}</td>
-            <td><code>{tls_ver}</code></td>
-            <td style="font-size: 11px;"><code>{cipher}</code></td>
-        </tr>
-        """
-        
-    # Compliance progress bars
-    compliance_bars = ""
-    for comp, score in summary["compliance_gauges"].items():
-        color = "#28a745" if score > 75 else ("#ffc107" if score > 50 else "#dc3545")
-        compliance_bars += f"""
-        <div style="margin-bottom: 12px;">
-            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600; margin-bottom:4px;">
-                <span>{comp}</span>
-                <span>{score}%</span>
-            </div>
-            <div style="width:100%; height:8px; background-color:#eee; border-radius:4px; overflow:hidden;">
-                <div style="width:{score}%; height:100%; background-color:{color};"></div>
-            </div>
-        </div>
-        """
-        
-    # Map detailed vulnerability cards (grouped)
-    detailed_vuln_cards = ""
-    circ_nums = ["❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"]
-    for idx, (key, gv) in enumerate(grouped_vulns.items(), 1):
-        rem = gv.get("remediation", {})
-        safe_code = rem.get("safe", "")
-        unsafe_code = rem.get("unsafe", "")
-        lang = rem.get("language", "generic")
-        
-        # Get details from get_vulnerability_details
-        details = get_vulnerability_details(gv["cwe"], gv["title"], gv["description"], rem)
-        what_was_found = details["what_was_found"]
-        business_impact = details["business_impact"]
-        remediation_steps = details["remediation_steps"]
-        
-        remediation_html = ""
-        for s_idx, step in enumerate(remediation_steps):
-            badge = circ_nums[s_idx] if s_idx < len(circ_nums) else f"({s_idx+1})"
-            remediation_html += f"""
-            <div style="display: flex; align-items: flex-start; margin-bottom: 8px; font-size: 13px; line-height: 1.5;">
-                <span style="font-size: 16px; color: #0056b3; margin-right: 8px; flex-shrink: 0; line-height: 1;">{badge}</span>
-                <span style="color: #495057;">{step}</span>
-            </div>
-            """
-            
-        assets_list_items = "".join(f"<li><code>{asset}</code></li>" for asset in gv["assets"])
-        
-        detailed_vuln_cards += f"""
-        <div style="border: 1px solid #e1e4e6; border-radius: 8px; padding: 20px; margin-bottom: 20px; background-color: #fcfcfc;">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f2f5; padding-bottom: 10px; margin-bottom: 15px;">
-                <h4 style="margin: 0; color: #0056b3; font-size: 15px; font-weight: 700;">#{idx}. {gv['title']}</h4>
-                <div>
-                    <span class="badge badge-{gv['severity'].lower()}">{gv['severity']}</span>
-                    <span class="badge badge-medium" style="margin-left: 5px; background-color: #e2f0ff; color: #004085; border: 1px solid #b8daff;">{gv['cwe']}</span>
-                </div>
-            </div>
-            
-            <div style="font-size: 13px; color: #495057; margin-bottom: 15px;">
-                <strong>Affected Endpoints / Instances:</strong>
-                <ul style="margin: 5px 0 0 15px; padding: 0; line-height: 1.4;">
-                    {assets_list_items}
-                </ul>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-                <div style="font-size: 11px; font-weight: 700; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">WHAT WAS FOUND</div>
-                <div style="font-size: 13px; color: #495057; line-height: 1.5; text-align: justify;">{what_was_found}</div>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-                <div style="font-size: 11px; font-weight: 700; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">BUSINESS IMPACT</div>
-                <div style="font-size: 13px; color: #495057; line-height: 1.5; text-align: justify;">{business_impact}</div>
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-        <div style="margin-bottom: 15px;">
-                <div style="font-size: 11px; font-weight: 700; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">RECOMMENDED REMEDIATION</div>
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    {remediation_html}
-                </div>
-            </div>
-        </div>
-        """
-
-    # Construct html template
-    report_title = "AEGIS SEC EXECUTIVE SECURITY REPORT"
-    doc_title = f"Aegis Sec Executive Report - {target['name']}"
-    if report_type:
-        rt_upper = report_type.upper()
-        if rt_upper == "SAST":
-            report_title = "AEGIS SEC STATIC APPLICATION SECURITY TESTING (SAST) REPORT"
-            doc_title = f"Aegis Sec SAST Report - {target['name']}"
-        elif rt_upper == "SCA":
-            report_title = "AEGIS SEC SOFTWARE COMPOSITION ANALYSIS (SCA) REPORT"
-            doc_title = f"Aegis Sec SCA Report - {target['name']}"
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>{doc_title}</title>
-        <style>
-            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; line-height: 1.5; padding: 40px; margin: 0; background-color: #fff; }}
-            .header {{ border-bottom: 2px solid #0056b3; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }}
-            .header h1 {{ margin: 0; color: #0056b3; font-size: 26px; font-weight: 800; letter-spacing: 0.5px; }}
-            .header span {{ font-size: 12px; color: #777; font-weight: 600; }}
-            .meta-table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; }}
-            .meta-table th, .meta-table td {{ border: 1px solid #e1e4e6; padding: 12px; text-align: left; font-size: 13px; }}
-            .meta-table th {{ background-color: #f8f9fa; font-weight: 600; color: #495057; }}
-            .section-title {{ font-size: 18px; color: #0056b3; border-bottom: 2px solid #e1e4e6; padding-bottom: 8px; margin-top: 40px; margin-bottom: 20px; font-weight: 700; }}
-            .metric-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px; }}
-            .metric-card {{ border: 1px solid #e1e4e6; border-radius: 8px; padding: 15px; text-align: center; background-color: #f8f9fa; }}
-            .metric-label {{ font-size: 11px; color: #6c757d; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }}
-            .metric-value {{ font-size: 28px; font-weight: bold; color: #0056b3; margin-top: 5px; }}
-            .vuln-table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
-            .vuln-table th, .vuln-table td {{ border: 1px solid #e1e4e6; padding: 10px 12px; text-align: left; font-size: 13px; }}
-            .vuln-table th {{ background-color: #f8f9fa; font-weight: 600; color: #495057; }}
-            .badge {{ display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }}
-            .badge-critical {{ background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }}
-            .badge-high {{ background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }}
-            .badge-medium {{ background-color: #cce5ff; color: #004085; border: 1px solid #b8daff; }}
-            .badge-low {{ background-color: #e2e3e5; color: #383d41; border: 1px solid #d6d8db; }}
-            .no-print-btn {{ background-color: #0056b3; color: white; border: none; padding: 10px 20px; font-size: 14px; font-weight: 600; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; margin-bottom: 25px; }}
-            .no-print-btn:hover {{ background-color: #004085; }}
-            @media print {{
-                body {{ padding: 0; }}
-                .no-print {{ display: none !important; }}
-                .page-break {{ page-break-before: always; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="no-print" style="text-align: right;">
-            <button class="no-print-btn" onclick="window.print()">Print Report / Save PDF</button>
-        </div>
-
-        <div class="header">
-            <div>
-                <h1>{report_title}</h1>
-                <span style="text-transform: uppercase; font-size: 10px; letter-spacing: 1px;">SaaS VA + PT ASPM Core Engine</span>
-            </div>
-            <div>
-                <span style="font-weight: bold; font-size:12px; color: #0056b3;">REPORT DATE: {datetime.now().date().isoformat()}</span>
-            </div>
-        </div>
-
-        <div class="section-title">1. Executive Scope Metadata</div>
-        <table class="meta-table">
-            <tr>
-                <th style="width: 25%;">Target Domain URL</th>
-                <td style="width: 25%;"><a href="{target['url']}" target="_blank">{target['url']}</a></td>
-                <th style="width: 25%;">Scope App Name</th>
-                <td style="width: 25%;"><strong>{target['name']}</strong></td>
-            </tr>
-        </table>
-
-        <div class="section-title">2. Key Risk Metrics Summary</div>
-        <div class="metric-grid">
-            <div class="metric-card">
-                <div class="metric-label">Vulnerabilities Found</div>
-                <div class="metric-value">{len(vulns)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Discovered Assets</div>
-                <div class="metric-value">{summary['assets_count']}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Compliance posture</div>
-                <div class="metric-value">{int(sum(summary['compliance_gauges'].values())/4)}%</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Active Threats</div>
-                <div class="metric-value" style="color: #dc3545;">{len(open_vulns)}</div>
-            </div>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px; margin-bottom: 25px;">
-            <div style="border: 1px solid #e1e4e6; border-radius: 8px; overflow: hidden; background-color: #fff;">
-                <div style="background-color: #f1f3f5; padding: 10px 15px; border-bottom: 1px solid #e1e4e6; font-size: 12px; font-weight: 700; color: #495057;">
-                    FINDINGS BY SEVERITY
-                </div>
-                <div style="padding: 15px; display: flex; justify-content: center; align-items: center; background-color: #fdfdfd;">
-                    {findings_by_severity_svg}
-                </div>
-            </div>
-            <div style="border: 1px solid #e1e4e6; border-radius: 8px; overflow: hidden; background-color: #fff;">
-                <div style="background-color: #f1f3f5; padding: 10px 15px; border-bottom: 1px solid #e1e4e6; font-size: 12px; font-weight: 700; color: #495057;">
-                    VULNERABILITIES BY GROUP
-                </div>
-                <div style="padding: 15px; display: flex; justify-content: center; align-items: center; background-color: #fdfdfd;">
-                    {vulnerabilities_by_group_svg}
-                </div>
-            </div>
-        </div>
-
-        <div style="border: 1px solid #e1e4e6; border-radius: 8px; overflow: hidden; background-color: #fff; margin-bottom: 30px;">
-            <div style="background-color: #f1f3f5; padding: 10px 15px; border-bottom: 1px solid #e1e4e6; font-size: 12px; font-weight: 700; color: #495057;">
-                OWASP TOP 10 2021 VULNERABILITIES
-            </div>
-            <div style="padding: 15px; display: flex; justify-content: center; align-items: center; background-color: #fdfdfd;">
-                {owasp_top10_svg}
-            </div>
-        </div>
-
-        <div style="margin-top: 30px; margin-bottom: 25px;">
-            <div style="font-size: 14px; font-weight:700; color:#0056b3; border-bottom:1px solid #ddd; padding-bottom:6px; margin-bottom:15px;">Standard Compliance Health</div>
-            {compliance_bars}
-        </div>
-
-        <div class="section-title" style="margin-top: 50px;">3. Discovered Subdomains & Services (EASM Map)</div>
-        <table class="vuln-table">
-            <thead>
-                <tr>
-                    <th style="width: 20%;">Hostname</th>
-                    <th style="width: 15%;">Resolved IP</th>
-                    <th style="width: 15%;">Service Provider / CDN</th>
-                    <th style="width: 10%;">Open Ports Mapped</th>
-                    <th style="width: 15%;">SSL Exp Date</th>
-                    <th style="width: 10%;">TLS Version</th>
-                    <th style="width: 15%;">Cipher Suite</th>
-                </tr>
-            </thead>
-            <tbody>
-                {subdomain_rows if subdomain_rows else '<tr><td colspan="7" style="text-align:center; color:#777;">No subdomains discovered yet. Run EASM Discovery port sweeps.</td></tr>'}
-            </tbody>
-        </table>
-
-        <div class="page-break"></div>
-
-        <div class="section-title">4. Detailed Vulnerability Findings & Solutions</div>
-        {detailed_vuln_cards if detailed_vuln_cards else '<div style="text-align:center; color:#777; padding:20px; border:1px solid #e1e4e6; border-radius:8px;">No vulnerabilities to document. Target is secure.</div>'}
-    </body>
-    </html>
-    """
-    
-    from fastapi.responses import HTMLResponse
-    return HTMLResponse(content=html_content, status_code=200)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}.pdf"'},
+    )
 
 
 # ----------------- BACKGROUND SCAN JOBS ENGINE -----------------
@@ -1444,10 +1056,18 @@ def run_job_in_thread(job_id: str, target_id: str, scan_type: str):
         # Check final status
         job = db.get_scan_job(job_id)
         if job and job["status"] != "Stopped":
+            final_logs = "\n".join(logs_accumulated)
+            # A code scan (SAST/SCA) against a non-repo target (e.g. a deployed URL)
+            # has no source to analyze and skips. Report that honestly as "Skipped"
+            # rather than "Completed", so it isn't mistaken for a clean pass.
+            was_skipped = scan_type.upper() in ("SAST", "SCA") and (
+                "No valid local directory or Git repository" in final_logs
+                or "Skipping code analyzer scans" in final_logs
+            )
             db.update_scan_job(job_id, {
-                "status": "Completed",
+                "status": "Skipped" if was_skipped else "Completed",
                 "progress": 100,
-                "logs": "\n".join(logs_accumulated)
+                "logs": final_logs,
             })
     except Exception as e:
         db.update_scan_job(job_id, {

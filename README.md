@@ -9,34 +9,129 @@ Browser ──► nginx (web :8080) ──┬─ /                → React SPA 
                                 ├─ /socket.io/* ───► cspm-api  (Socket.IO)
                                 └─ /api/aspm/*  ───► aspm-api  (Python/FastAPI) :8000
 
-cspm-api ─► Redis (BullMQ)            ┌──────────────────────────────┐
-cspm-api ─► Postgres schema "cspm"    │   PostgreSQL  (db: vapt)      │
-aspm-api ─► Postgres schema "aspm"    │   schema cspm  (Prisma, 46)   │
-                                      │   schema aspm  (psycopg, 7)   │
-                                      └──────────────────────────────┘
+cspm-api ─► Redis (BullMQ, in-stack container)
+cspm-api ─► PostgreSQL schema "cspm"   ┌──────────────────────────────────────────┐
+aspm-api ─► PostgreSQL schema "aspm"   │  EXTERNAL PostgreSQL  (database: vapt)    │
+                                       │  provisioned & managed by DevOps —        │
+                                       │  NOT shipped as a container in this stack  │
+                                       │    schema cspm  (Prisma)                  │
+                                       │    schema aspm  (psycopg)                 │
+                                       └──────────────────────────────────────────┘
 ```
 
-## Run
+## Deployment checklist (DevOps)
+What the deployment team has to do, in order — details in the sections below.
+
+1. **Provision PostgreSQL 14+** reachable from the Docker host (managed service or a server).
+2. **Create the database objects:** run `infra/db/setup-local-db.sql` against it, using a
+   strong DB password (see [Database setup](#1-database-setup-devops--do-this-first)).
+3. **Provision a Docker host** with outbound internet for the build, and put this repo on it.
+4. **Generate secrets and configure** `docker-compose.yml` (see [Configure](#2-configure)):
+   both `DATABASE_URL`s, the shared `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
+   `CREDENTIAL_ENCRYPTION_KEY`, `CORS_ORIGIN`, `ADMIN_PASSWORD`, `TZ`.
+5. **Build & start:** `docker compose up -d --build` (first build is large — see [Deploy](#3-deploy)).
+6. **Terminate TLS in front** of the `web` container for production
+   (see [Production hardening](#production-hardening)).
+7. **Verify** (log in, run one test scan) and **set up database backups**.
+
+## Prerequisites
+- **Docker** + Docker Compose on the deployment host.
+- An **external PostgreSQL 14+** reachable from the Docker host — a managed service
+  (RDS / Cloud SQL / Azure Database for PostgreSQL) or a dedicated server. This stack does
+  **not** ship a database container by default; DevOps provisions and configures it.
+  - On a local dev box, your machine's native PostgreSQL on `localhost:5432` works — the
+    containers reach it via `host.docker.internal` (already set in `docker-compose.yml`).
+- Outbound internet on the **build** host: the `aspm-api` image pulls real scanner tooling
+  and vulnerability databases at build time (see [Deploy](#deploy)).
+
+## 1. Database setup (DevOps — do this first)
+The platform uses one database `vapt` with two schemas (`cspm`, `aspm`) owned by a login
+role. Create them once on the target PostgreSQL instance:
+
+```bash
+# Run as a PostgreSQL superuser, against the target DB instance:
+psql -U <superuser> -h <db-host> -f infra/db/setup-local-db.sql
+```
+
+This creates the `scanner` role, the `vapt` database, and the `cspm` + `aspm` schemas
+(see [infra/db/setup-local-db.sql](infra/db/setup-local-db.sql)). **Change the role name /
+password** in that file (and in the `DATABASE_URL`s below) for any non-local deployment.
+The backends auto-create their own tables on first boot — CSPM via `prisma db push`, ASPM
+via `init_db()` — so no migrations to run by hand.
+
+## 2. Configure
+Point both backends at the database from step 1 and set production secrets. These live in
+`docker-compose.yml` (prefer a `.env` file or a secrets manager over committing real values):
+
+| Service  | Variable                | Value / notes |
+|----------|-------------------------|---------------|
+| cspm-api | `DATABASE_URL`          | `postgresql://<user>:<pass>@<db-host>:5432/vapt?schema=cspm` |
+| aspm-api | `DATABASE_URL`          | `postgresql+psycopg://<user>:<pass>@<db-host>:5432/vapt` (schema set via `DB_SCHEMA=aspm`) |
+| both     | `JWT_ACCESS_SECRET`     | long random value — **must be identical** on cspm-api and aspm-api (shared login) |
+| cspm-api | `JWT_REFRESH_SECRET`    | long random value |
+| cspm-api | `CREDENTIAL_ENCRYPTION_KEY` | 64 hex characters |
+| cspm-api | `CORS_ORIGIN`           | the public URL users hit (e.g. `https://scanner.example.com`) |
+| cspm-api | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | first-login admin account |
+| aspm-api | `TZ`                    | timezone for report timestamps (default `Asia/Kolkata`) |
+
+`<db-host>` is `host.docker.internal` when PostgreSQL runs on the Docker host, or the managed
+database's hostname otherwise. Both `DATABASE_URL`s must point at the **same** `vapt` database.
+
+Generate strong secrets (don't ship the defaults):
+```bash
+openssl rand -hex 32   # JWT_ACCESS_SECRET   (set the SAME value on cspm-api AND aspm-api)
+openssl rand -hex 32   # JWT_REFRESH_SECRET
+openssl rand -hex 32   # CREDENTIAL_ENCRYPTION_KEY  (must be 64 hex chars)
+```
+
+> Optional: to run Postgres *inside* the stack for a self-contained dev deploy instead of an
+> external DB, uncomment the `postgres` service in `docker-compose.yml` and change the two
+> `DATABASE_URL` hosts to `postgres` (this path uses `infra/db/init.sql`).
+
+## 3. Deploy
 
 ```bash
 docker compose up -d --build
 ```
 
-Open **http://localhost:8080** — login `admin@example.com` / `Admin@123456`.
-The former AEGIS SEC app lives under the **"Application Security"** item in the sidebar.
+The first build is **large and network-heavy**: `aspm-api` ships real scanner binaries
+(nmap, nuclei, gobuster, trivy, semgrep, …) and **bakes in Trivy's vulnerability + Java DBs
+(~2.6 GB)** so the first SCA scan doesn't have to download them. Allow build time, disk, and
+outbound internet on the build host.
+
+Open **http://localhost:8080** (or your `CORS_ORIGIN`) — login `admin@example.com` /
+`Admin@123456` (or your configured admin). The former AEGIS SEC app lives under the
+**"Application Security"** item in the sidebar.
 
 Stop / reset:
 ```bash
-docker compose down            # stop, keep data
-docker compose down -v         # stop + wipe Postgres/Redis volumes
+docker compose down            # stop containers; the external DB is untouched
+docker compose down -v         # also wipe the Redis volume (the external DB is NOT wiped)
 ```
+
+## Production hardening
+- **TLS / reverse proxy:** the `web` container serves plain HTTP on `:8080`. In production put
+  it behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer)
+  and set `CORS_ORIGIN` (cspm-api) to the public `https://` URL. Don't expose `:8080` publicly.
+- **Secrets:** never deploy the default `JWT_*`, `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_PASSWORD`,
+  or DB password. Keep them in a secrets manager or an untracked `.env`, not in git.
+- **Database:** it lives outside the stack, so DevOps owns **backups, HA, and patching**.
+  Restrict network access so only the Docker host can reach port `5432`.
+- **Restart on boot:** services use `restart: unless-stopped`; make sure the Docker daemon
+  starts on host boot so the stack comes back after a reboot.
+- **Host sizing:** scans run real tools (OWASP ZAP, nuclei, trivy, semgrep). Give the host
+  enough CPU/RAM/disk — the `aspm-api` image alone is several GB (it bundles the scanners and
+  Trivy's vulnerability databases).
+- **Egress:** the build and the scanners need outbound internet (tool feeds, package
+  registries, target hosts). Allow it, or pre-mirror the feeds in an air-gapped setup.
 
 ## Layout
 
 ```
 vapt-cloud-scanner/
-├── docker-compose.yml          # postgres + redis + cspm-api + aspm-api + web
-├── infra/db/init.sql           # creates schemas cspm + aspm
+├── docker-compose.yml          # redis + cspm-api + aspm-api + web   (PostgreSQL is EXTERNAL)
+├── infra/db/setup-local-db.sql # one-time: scanner role + vapt db + cspm/aspm schemas
+├── infra/db/init.sql           # only used if you enable the optional in-stack postgres service
 ├── web/                        # unified React app (CSPM shell) + nginx gateway
 │   ├── src/aspm/components/    # ASPM views, calls rewritten to /api/aspm
 │   ├── src/aspm/aspm-theme.css # cyber theme, scoped to .aspm-root
@@ -48,9 +143,9 @@ vapt-cloud-scanner/
 ```
 
 ## How the merge works
-- **DB:** one Postgres `vapt`. CSPM uses `?schema=cspm` in `DATABASE_URL` (`prisma db push`);
-  ASPM connects with `search_path=aspm` (`DB_SCHEMA=aspm`), tables auto-created on boot.
-  va-tool's SQLite is gone — it now uses Postgres via `psycopg`.
+- **DB:** one external Postgres `vapt`. CSPM uses `?schema=cspm` in `DATABASE_URL`
+  (`prisma db push`); ASPM connects with `search_path=aspm` (`DB_SCHEMA=aspm`), tables
+  auto-created on boot. va-tool's SQLite is gone — it now uses Postgres via `psycopg`.
 - **Frontend:** CSPM React app is the host shell (login, layout, routing). ASPM views are
   rendered inside it; their `/api/...` calls were rewritten to `/api/aspm/...`. The ASPM
   cyber theme is scoped to `.aspm-root` so it doesn't bleed into CSPM pages.
@@ -58,8 +153,10 @@ vapt-cloud-scanner/
   (SSE-friendly) and `/socket.io` to the right backend.
 
 ## Security before distributing
-Change in `docker-compose.yml` (cspm-api env): `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
-`CREDENTIAL_ENCRYPTION_KEY` (64 hex), `ADMIN_PASSWORD`, and the Postgres password.
+Set in `docker-compose.yml` (or `.env` / secrets manager): the two `DATABASE_URL` credentials,
+`JWT_ACCESS_SECRET` (matching on both services) + `JWT_REFRESH_SECRET`,
+`CREDENTIAL_ENCRYPTION_KEY` (64 hex), `CORS_ORIGIN`, `ADMIN_PASSWORD`, and the PostgreSQL role
+password (also change it in `infra/db/setup-local-db.sql`).
 
 ## Unified auth (done)
 One login authorizes both backends. The ASPM (Python) API validates the CSPM-issued
@@ -71,3 +168,4 @@ to disable auth for local dev.
 ## Not yet done (future)
 - Per-target deep-linking from the CSPM shell into specific ASPM scans.
 - Role-based checks on ASPM (currently any valid CSPM user is allowed).
+```

@@ -59,7 +59,7 @@ services:
       REDIS_URL: "redis://redis:6379"
       JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
       JWT_REFRESH_SECRET: "change-me-refresh-secret-min-32-chars-please"
-      JWT_ACCESS_EXPIRY: "15m"
+      JWT_ACCESS_EXPIRY: "60m"
       JWT_REFRESH_EXPIRY: "7d"
       CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       PORT: "3001"
@@ -94,6 +94,8 @@ services:
       DB_SCHEMA: "aspm"
       JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
       ZAP_PROXY: "http://zap:8090"
+      # Report timestamps render in this zone (India). Change to your locale as needed.
+      TZ: "Asia/Kolkata"
 
   web:
     build:

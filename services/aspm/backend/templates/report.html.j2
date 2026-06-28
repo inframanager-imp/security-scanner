@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>{{ doc_title }}</title>
+<style>
+  /* ── Paged media: margins, running header & footer, page numbers ────────── */
+  @page {
+    size: A4;
+    margin: 20mm 15mm 17mm 15mm;
+    @top-left   { content: "Application Security Assessment"; font-size: 7.5pt; color: #9aa3af; }
+    @top-right  { content: "{{ page_header }}"; font-size: 7.5pt; color: #9aa3af; }
+    @bottom-left   { content: "{{ classification }} · Aegis Sec ASPM"; font-size: 7.5pt; color: #9aa3af; }
+    @bottom-center { content: "{{ page_footer_center }}"; font-size: 7.5pt; color: #9aa3af; }
+    @bottom-right  { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #9aa3af; }
+  }
+  @page cover {
+    margin: 0;
+    @top-left { content: none; } @top-right { content: none; }
+    @bottom-left { content: none; } @bottom-center { content: none; } @bottom-right { content: none; }
+  }
+
+  * { box-sizing: border-box; }
+  html { -weasy-hyphens: none; }
+  body {
+    font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #2b3440; font-size: 10.5pt; line-height: 1.55; margin: 0;
+  }
+  a { color: #2563eb; text-decoration: none; }
+  code { font-family: "Consolas", "DejaVu Sans Mono", monospace; font-size: 9pt; color: #334155; }
+
+  /* ── Cover ──────────────────────────────────────────────────────────────── */
+  .cover { page: cover; height: 296mm; overflow: hidden; position: relative; color: #fff;
+           background: linear-gradient(150deg, #0b1f3a 0%, #14305c 55%, #1d4a86 100%); }
+  .cover-inner { position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+                 padding: 30mm 22mm; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .mark { width: 34px; height: 34px; }
+  .brand .name { font-size: 15pt; font-weight: 800; letter-spacing: 2px; }
+  .brand .tag  { font-size: 7.5pt; letter-spacing: 3px; color: #9cc2f5; text-transform: uppercase; }
+  /* Anchored to the lower area of the cover — deterministic in WeasyPrint
+     (flex `margin-top:auto` is not honoured there). */
+  .cover-title { position: absolute; left: 22mm; right: 22mm; bottom: 30mm; }
+  .cover-kind { display: inline-block; font-size: 8pt; letter-spacing: 2px; text-transform: uppercase;
+                color: #0b1f3a; background: #ffffff; padding: 4px 12px; border-radius: 20px; font-weight: 700; }
+  .cover-title h1 { font-size: 30pt; font-weight: 800; margin: 16px 0 4px; line-height: 1.12; }
+  .cover-title h2 { font-size: 13pt; font-weight: 400; margin: 0; color: #cfe0f7; }
+  .cover-meta { margin-top: 26px; border-top: 1px solid rgba(255,255,255,.22); padding-top: 18px;
+                display: flex; flex-wrap: wrap; font-size: 9.5pt; }
+  .cover-meta > div { flex: 0 0 50%; margin-bottom: 12px; padding-right: 24px; }
+  .cover-meta .k { color: #9cc2f5; text-transform: uppercase; letter-spacing: 1px; font-size: 7.5pt; }
+  .cover-meta .v { font-weight: 600; color: #fff; word-break: break-all; }
+  .cover-strip { margin-top: 24px; display: flex; gap: 10px; }
+  .sev-chip { flex: 1; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18);
+              border-radius: 8px; padding: 10px 8px; text-align: center; }
+  .sev-chip .n { font-size: 18pt; font-weight: 800; display: block; line-height: 1; }
+  .sev-chip .l { font-size: 7pt; letter-spacing: 1px; text-transform: uppercase; color: #cfe0f7; }
+  .cover-foot { margin-top: 22px; font-size: 8pt; color: #9cc2f5; }
+  .classif-banner { position: absolute; top: 14mm; right: 22mm; font-size: 8pt; font-weight: 700;
+                    letter-spacing: 2px; color: #ffd9d2; border: 1px solid rgba(255,120,100,.5);
+                    padding: 3px 10px; border-radius: 4px; }
+
+  /* ── Sections & headings ────────────────────────────────────────────────── */
+  .section { margin-top: 26px; }
+  .section:first-of-type { margin-top: 6px; }
+  .section-title { font-size: 14pt; font-weight: 700; color: #0b1f3a; margin: 0 0 4px; }
+  .section-title .num { color: #2563eb; }
+  .section-rule { height: 2px; background: linear-gradient(90deg, #2563eb 0%, #2563eb 60px, #e3e8ef 60px);
+                  margin-bottom: 16px; }
+  p { margin: 0 0 10px; }
+
+  /* ── Risk banner + metric cards ─────────────────────────────────────────── */
+  .risk-banner { display: flex; align-items: center; gap: 14px; border: 1px solid #e3e8ef;
+                 border-left: 6px solid {{ risk.color }}; border-radius: 8px; padding: 12px 16px;
+                 background: #fbfcfe; margin: 14px 0 18px; }
+  .risk-banner .badge-lg { background: {{ risk.color }}; color: #fff; font-weight: 800; font-size: 10pt;
+                           letter-spacing: 1px; text-transform: uppercase; padding: 6px 14px; border-radius: 6px;
+                           white-space: nowrap; }
+  .risk-banner .txt { font-size: 9.8pt; color: #45505f; }
+  .metrics { display: flex; gap: 12px; margin: 4px 0 6px; }
+  .metric { flex: 1; border: 1px solid #e3e8ef; border-radius: 8px; padding: 12px 14px; background: #fbfcfe; }
+  .metric .l { font-size: 7.5pt; letter-spacing: .6px; text-transform: uppercase; color: #7b8694; font-weight: 600; }
+  .metric .v { font-size: 22pt; font-weight: 800; color: #0b1f3a; line-height: 1.1; margin-top: 2px; }
+  .metric.alert .v { color: #b91c1c; }
+
+  /* ── Chart cards ────────────────────────────────────────────────────────── */
+  .grid-2 { display: flex; gap: 16px; }
+  .grid-2 > .card { flex: 1; }
+  .card { border: 1px solid #e3e8ef; border-radius: 8px; overflow: hidden; background: #fff;
+          margin-bottom: 16px; break-inside: avoid; }
+  .card-head { background: #f4f7fb; border-bottom: 1px solid #e3e8ef; padding: 8px 14px;
+               font-size: 8.5pt; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #45505f; }
+  .card-body { padding: 12px 14px; text-align: center; }
+  .card-body svg { max-width: 100%; height: auto; }
+
+  /* ── Compliance bars ────────────────────────────────────────────────────── */
+  .comp-row { margin-bottom: 11px; }
+  .comp-row .top { display: flex; justify-content: space-between; font-size: 9pt; font-weight: 600; margin-bottom: 4px; }
+  .comp-track { height: 8px; background: #eef1f5; border-radius: 4px; overflow: hidden; }
+  .comp-fill { height: 100%; border-radius: 4px; }
+
+  /* ── Tables ─────────────────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; }
+  .data-table th, .data-table td { border: 1px solid #e3e8ef; padding: 7px 9px; font-size: 8.8pt; text-align: left; }
+  .data-table th { background: #f4f7fb; font-weight: 700; color: #45505f; }
+  .data-table tr { break-inside: avoid; }
+  .port { display: inline-block; background: #eef2ff; color: #3949ab; border: 1px solid #c7d2fe;
+          border-radius: 4px; padding: 1px 6px; font-size: 7.5pt; margin: 1px; font-weight: 600; }
+  .empty { text-align: center; color: #94a3b8; padding: 16px; }
+
+  /* ── Detailed finding cards ─────────────────────────────────────────────── */
+  .finding { border: 1px solid #e3e8ef; border-left: 4px solid #94a3b8; border-radius: 8px;
+             padding: 14px 16px; margin-bottom: 14px; background: #fff; break-inside: avoid; }
+  .finding .fhead { display: flex; justify-content: space-between; align-items: flex-start;
+                    border-bottom: 1px solid #eef1f5; padding-bottom: 8px; margin-bottom: 10px; gap: 10px; }
+  .finding .ftitle { font-size: 11pt; font-weight: 700; color: #0b1f3a; margin: 0; }
+  .finding .badges { white-space: nowrap; text-align: right; }
+  .badge { display: inline-block; font-size: 7.5pt; font-weight: 700; letter-spacing: .4px;
+           text-transform: uppercase; padding: 3px 8px; border-radius: 4px; color: #fff; }
+  .badge.cwe { background: #eef2ff; color: #3949ab; border: 1px solid #c7d2fe; }
+  .badge.status { background: #f1f5f9; color: #475569; border: 1px solid #d8dee7; }
+  .block { margin-bottom: 10px; }
+  .block .h { font-size: 7.5pt; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+              color: #7b8694; margin-bottom: 3px; }
+  .block .t { font-size: 9.5pt; color: #3b4654; text-align: justify; }
+  .assets { margin: 4px 0 0; padding-left: 16px; }
+  .assets li { font-size: 9pt; margin-bottom: 1px; }
+  ol.steps { counter-reset: step; list-style: none; margin: 4px 0 0; padding: 0; }
+  ol.steps li { counter-increment: step; position: relative; padding-left: 26px; margin-bottom: 6px;
+                font-size: 9.5pt; color: #3b4654; }
+  ol.steps li::before { content: counter(step); position: absolute; left: 0; top: 0;
+                        width: 17px; height: 17px; background: #2563eb; color: #fff; border-radius: 50%;
+                        font-size: 8pt; font-weight: 700; text-align: center; line-height: 17px; }
+
+  .page-break { break-before: page; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════ COVER ═══════════════════════ -->
+<section class="cover">
+  <div class="classif-banner">{{ classification }}</div>
+  <div class="cover-inner">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5l-8-3z" fill="#ffffff" opacity="0.95"/>
+        <path d="M9 12.5l2 2 4-4.5" stroke="#14305c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <div class="name">AEGIS SEC</div>
+        <div class="tag">ASPM Core Engine</div>
+      </div>
+    </div>
+
+    <div class="cover-title">
+      <span class="cover-kind">{{ kind }} Report</span>
+      <h1>{{ report_title }}</h1>
+      <h2>{{ subtitle }}</h2>
+
+      <div class="cover-meta">
+        <div><div class="k">Scope / Application</div><div class="v">{{ target.name }}</div></div>
+        <div><div class="k">Target URL</div><div class="v">{{ target.url or "All Monitored Targets" }}</div></div>
+        <div><div class="k">Generated</div><div class="v">{{ generated_full }}</div></div>
+        <div><div class="k">Overall Risk</div><div class="v">{{ risk.label }}</div></div>
+      </div>
+
+      <div class="cover-strip">
+        <div class="sev-chip"><span class="n">{{ metrics.Critical }}</span><span class="l">Critical</span></div>
+        <div class="sev-chip"><span class="n">{{ metrics.High }}</span><span class="l">High</span></div>
+        <div class="sev-chip"><span class="n">{{ metrics.Medium }}</span><span class="l">Medium</span></div>
+        <div class="sev-chip"><span class="n">{{ metrics.Low }}</span><span class="l">Low</span></div>
+        <div class="sev-chip"><span class="n">{{ metrics.open }}</span><span class="l">Open</span></div>
+      </div>
+
+      <div class="cover-foot">
+        Generated by the Aegis Sec ASPM Core Engine · {{ generated_full }}<br/>
+        This document contains confidential security information and is intended for authorised recipients only.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ 1. EXECUTIVE SUMMARY ═══════════════════════ -->
+<section class="section">
+  <h2 class="section-title"><span class="num">01</span> &nbsp;Executive Summary</h2>
+  <div class="section-rule"></div>
+
+  <div class="risk-banner">
+    <span class="badge-lg">{{ risk.label }} Risk</span>
+    <span class="txt">{{ exec_summary }}</span>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><div class="l">Total Findings</div><div class="v">{{ metrics.total }}</div></div>
+    <div class="metric alert"><div class="l">Open / Active</div><div class="v">{{ metrics.open }}</div></div>
+    <div class="metric"><div class="l">Assets in Scope</div><div class="v">{{ metrics.assets }}</div></div>
+    <div class="metric"><div class="l">Compliance</div><div class="v">{{ metrics.compliance_display }}</div></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════ 2. FINDINGS OVERVIEW ═══════════════════════ -->
+<section class="section">
+  <h2 class="section-title"><span class="num">02</span> &nbsp;Findings Overview</h2>
+  <div class="section-rule"></div>
+
+  {% if not_assessed %}
+  <div class="card">
+    <div class="card-body" style="text-align:left; padding:18px 20px;">
+      <div style="font-size:11pt; font-weight:700; color:#0b1f3a; margin-bottom:4px;">No {{ kind }} findings recorded for this scope</div>
+      <div style="font-size:9.8pt; color:#45505f;">
+        There is no {{ kind }} scan data to chart yet, so the severity, group and OWASP breakdowns
+        are not shown. Compliance scoring is reported as <strong>N/A</strong> rather than 100% to avoid
+        implying the scope passed a scan that was never run. Run a {{ kind }} scan to populate this section.
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-head">Findings by Severity</div>
+      <div class="card-body">{{ charts.severity | safe }}</div>
+    </div>
+    <div class="card">
+      <div class="card-head">Vulnerabilities by Group</div>
+      <div class="card-body">{{ charts.group | safe }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">OWASP Top 10 (2021) Distribution</div>
+    <div class="card-body">{{ charts.owasp | safe }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">Compliance Posture</div>
+    <div class="card-body" style="text-align:left;">
+      {% for c in compliance %}
+      <div class="comp-row">
+        <div class="top"><span>{{ c.name }}</span><span style="color:{{ c.color }}">{{ c.score }}%</span></div>
+        <div class="comp-track"><div class="comp-fill" style="width:{{ c.score }}%; background:{{ c.color }};"></div></div>
+      </div>
+      {% endfor %}
+      {% if not compliance %}<div class="empty">No compliance data available.</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<!-- ═══════════════════════ 3. ATTACK SURFACE ═══════════════════════ -->
+<section class="section">
+  <h2 class="section-title"><span class="num">03</span> &nbsp;Attack Surface &amp; Discovered Services</h2>
+  <div class="section-rule"></div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th style="width:22%">Hostname</th>
+        <th style="width:14%">Resolved IP</th>
+        <th style="width:15%">Provider / CDN</th>
+        <th style="width:13%">Open Ports</th>
+        <th style="width:14%">SSL Expiry</th>
+        <th style="width:10%">TLS</th>
+        <th style="width:12%">Cipher</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in subdomains %}
+      <tr>
+        <td><strong>{{ s.subdomain }}</strong></td>
+        <td>{{ s.ip }}</td>
+        <td>{{ s.cdn }}</td>
+        <td>{% for p in s.ports %}<span class="port">{{ p }}</span>{% endfor %}{% if not s.ports %}—{% endif %}</td>
+        <td>{{ s.ssl_expiry }}</td>
+        <td><code>{{ s.tls_version }}</code></td>
+        <td><code>{{ s.cipher_suite }}</code></td>
+      </tr>
+      {% endfor %}
+      {% if not subdomains %}
+      <tr><td colspan="7" class="empty">No subdomains discovered yet. Run EASM discovery &amp; port sweeps.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<!-- ═══════════════════════ 4. DETAILED FINDINGS ═══════════════════════ -->
+<section class="section page-break">
+  <h2 class="section-title"><span class="num">04</span> &nbsp;Detailed Findings &amp; Remediation</h2>
+  <div class="section-rule"></div>
+
+  {% for f in findings %}
+  <div class="finding" style="border-left-color:{{ f.severity_color }};">
+    <div class="fhead">
+      <h3 class="ftitle">{{ f.idx }}. {{ f.title }}{% if f.instances > 1 %} ({{ f.instances }} instances){% endif %}</h3>
+      <div class="badges">
+        <span class="badge" style="background:{{ f.severity_color }};">{{ f.severity }}</span>
+        <span class="badge cwe">{{ f.cwe }}</span>
+        <span class="badge status">{{ f.status }}</span>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="h">Affected Endpoints / Instances</div>
+      <ul class="assets">
+        {% for a in f.assets %}<li><code>{{ a }}</code></li>{% endfor %}
+      </ul>
+    </div>
+
+    {% if f.what_was_found %}
+    <div class="block">
+      <div class="h">What Was Found</div>
+      <div class="t">{{ f.what_was_found }}</div>
+    </div>
+    {% endif %}
+
+    {% if f.business_impact %}
+    <div class="block">
+      <div class="h">Business Impact</div>
+      <div class="t">{{ f.business_impact }}</div>
+    </div>
+    {% endif %}
+
+    {% if f.remediation_steps %}
+    <div class="block">
+      <div class="h">Recommended Remediation</div>
+      <ol class="steps">
+        {% for step in f.remediation_steps %}<li>{{ step }}</li>{% endfor %}
+      </ol>
+    </div>
+    {% endif %}
+
+    <div style="font-size:7.5pt; color:#9aa3af; margin-top:4px;">Source engine: {{ f.source }}</div>
+  </div>
+  {% endfor %}
+
+  {% if not findings %}
+  <div class="empty" style="border:1px solid #e3e8ef; border-radius:8px;">
+    {% if not_assessed %}
+    No {{ kind }} findings to document — this scope has not been scanned with {{ kind }}.
+    {% else %}
+    No vulnerabilities to document — the assessed scope is currently clean.
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+</body>
+</html>

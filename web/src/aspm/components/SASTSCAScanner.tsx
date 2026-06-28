@@ -205,6 +205,12 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
             🗙 FAILED
           </span>
         );
+      case 'Skipped':
+        return (
+          <span className="badge" style={{ background: 'rgba(217, 119, 6, 0.12)', color: 'var(--color-warning)', border: '1px solid rgba(217, 119, 6, 0.4)' }}>
+            ⊘ SKIPPED — NO SOURCE
+          </span>
+        );
       default:
         return (
           <span className="badge" style={{ background: 'rgba(140, 155, 165, 0.15)', color: 'var(--color-muted)', border: '1px solid rgba(140, 155, 165, 0.4)' }}>
@@ -280,14 +286,14 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
                       <td style={{ padding: '12px 5px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', fontWeight: 'bold', minWidth: '32px', color: isScanning ? 'var(--color-primary)' : 'var(--color-text)' }}>
-                            {job.progress}%
+                            {job.status === 'Skipped' ? 'N/A' : `${job.progress}%`}
                           </span>
                           <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', border: '1px solid var(--border-glass)' }}>
                             <div 
-                              style={{ 
-                                width: `${job.progress}%`, 
-                                height: '100%', 
-                                background: isScanning ? 'var(--color-primary)' : (job.status === 'Completed' ? 'var(--color-success)' : (job.status === 'Failed' ? 'var(--color-danger)' : 'var(--color-muted)')), 
+                              style={{
+                                width: job.status === 'Skipped' ? '0%' : `${job.progress}%`,
+                                height: '100%',
+                                background: isScanning ? 'var(--color-primary)' : (job.status === 'Completed' ? 'var(--color-success)' : (job.status === 'Failed' ? 'var(--color-danger)' : 'var(--color-muted)')),
                                 boxShadow: isScanning ? '0 0 8px var(--color-primary)' : 'none',
                                 borderRadius: '3px',
                                 transition: 'width 0.4s ease'

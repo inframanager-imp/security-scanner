@@ -457,6 +457,17 @@ def add_scan_log(target_id: str, scan_type: str, status: str, log_list: List[str
     return log_id
 
 # --- SCAN JOBS helpers ---
+def reset_stale_jobs():
+    """On startup, fail any job left mid-flight by a crash/restart.
+    The in-process scan threads don't survive a container restart, so a job still
+    marked 'Scanning'/'Queued' is orphaned — mark it Failed instead of stuck forever."""
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE scan_jobs SET status = 'Failed', logs = COALESCE(NULLIF(logs,''),'') || '\n[!] Scan interrupted (backend restarted). Please re-run.' WHERE status IN ('Scanning', 'Queued')"
+    )
+    conn.commit()
+    conn.close()
+
 def add_scan_job(target_id: str, target_url: str, scan_type: str, openapi_spec: Optional[str] = None) -> str:
     job_id = f"job-{uuid.uuid4().hex[:8]}"
     conn = get_db_connection()

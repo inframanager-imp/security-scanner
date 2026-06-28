@@ -183,23 +183,53 @@ export default function AspmWorkspace() {
                     </select>
                   </div>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--color-muted)', fontWeight: 500 }}>Auth Profiling</label>
-                    <select className="cyber-input" value={newAuthType} onChange={(e) => setNewAuthType(e.target.value)}>
-                      <option value="none">Unauthenticated Scope</option>
-                      <option value="bearer">Header Injection (Bearer)</option>
-                      <option value="cookie">Session Cookie Injection</option>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--color-muted)', fontWeight: 500 }}>
+                      {newType === 'git' ? 'Repository Access' : 'Auth Profiling'}
+                    </label>
+                    <select
+                      className="cyber-input"
+                      value={newType === 'git' ? (newAuthType === 'none' ? 'none' : 'token') : newAuthType}
+                      onChange={(e) => setNewAuthType(e.target.value)}
+                    >
+                      {newType === 'git' ? (
+                        <>
+                          <option value="none">Public repository (no token)</option>
+                          <option value="token">Private — Personal Access Token</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="none">Unauthenticated Scope</option>
+                          <option value="bearer">Header Injection (Bearer)</option>
+                          <option value="cookie">Session Cookie Injection</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 </div>
                 {newAuthType !== 'none' && (
                   <div style={{ display: 'flex', gap: '10px' }}>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                      <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>Key Name</label>
-                      <input type="text" className="cyber-input" value={newAuthKey} onChange={(e) => setNewAuthKey(e.target.value)} />
-                    </div>
+                    {newType !== 'git' && (
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>Key Name</label>
+                        <input type="text" className="cyber-input" value={newAuthKey} onChange={(e) => setNewAuthKey(e.target.value)} />
+                      </div>
+                    )}
                     <div style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                      <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>Secret Token Value</label>
-                      <input type="password" className="cyber-input" placeholder="session-token-hash" value={newAuthVal} onChange={(e) => setNewAuthVal(e.target.value)} />
+                      <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+                        {newType === 'git' ? 'Personal Access Token (PAT)' : 'Secret Token Value'}
+                      </label>
+                      <input
+                        type="password"
+                        className="cyber-input"
+                        placeholder={newType === 'git' ? 'Paste your Git access token' : 'session-token-hash'}
+                        value={newAuthVal}
+                        onChange={(e) => setNewAuthVal(e.target.value)}
+                      />
+                      {newType === 'git' && (
+                        <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>
+                          Used only to clone private repos. GitHub: a classic/fine-grained token with repo read access. Azure DevOps: a PAT with Code → Read. Leave the access set to “Public” for public repos.
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}

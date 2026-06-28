@@ -20,7 +20,7 @@ export class ApiRequestError extends Error {
 let isRefreshing = false;
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+export async function refreshAccessToken(): Promise<string | null> {
   const { refreshToken, setTokens, logout } = useAuthStore.getState();
   if (!refreshToken) {
     logout();

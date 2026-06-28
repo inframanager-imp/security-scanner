@@ -8,70 +8,46 @@ interface ReportsProps {
 
 // ----------------- SUB-COMPONENTS FOR CHARTS -----------------
 
+// Shared vertical bar chart for the severity & group breakdowns. Labels and colours
+// are aligned with the exported PDF report (report_builder.py) for consistency.
+function VBarChart({ title, bars }: { title: string; bars: { label: string; value: number; color: string }[] }) {
+  const maxVal = Math.max(...bars.map((b) => b.value), 1);
+  return (
+    <div style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc' }}>
+      <div style={{ background: '#f1f5f9', padding: '10px 15px', borderBottom: '1px solid var(--border-glass)', fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {title}
+      </div>
+      <div style={{ display: 'flex', height: '150px', alignItems: 'flex-end', justifyContent: 'space-around', padding: '16px 12px 12px', gap: '4px' }}>
+        {bars.map((b) => (
+          <div key={b.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '6px' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: b.color }}>{b.value}</span>
+            <div style={{ width: '60%', maxWidth: '34px', height: `${(b.value / maxVal) * 100}px`, minHeight: b.value > 0 ? '2px' : '0', background: b.color, borderRadius: '3px 3px 0 0' }} />
+            <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)', textAlign: 'center', lineHeight: 1.15 }}>{b.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FindingsBySeverityChart({
   c_level5, c_level4, c_level3, c_level2, c_level1, c_sensitive, c_info_gathered
 }: {
   c_level5: number; c_level4: number; c_level3: number; c_level2: number; c_level1: number; c_sensitive: number; c_info_gathered: number;
 }) {
-  const maxVal = Math.max(c_level5, c_level4, c_level3, c_level2, c_level1, c_sensitive, c_info_gathered, 1);
-  const h5 = (c_level5 / maxVal) * 110;
-  const h4 = (c_level4 / maxVal) * 110;
-  const h3 = (c_level3 / maxVal) * 110;
-  const h2 = (c_level2 / maxVal) * 110;
-  const h1 = (c_level1 / maxVal) * 110;
-  const h_sens = (c_sensitive / maxVal) * 110;
-  const h_info = (c_info_gathered / maxVal) * 110;
-
   return (
-    <div style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc' }}>
-      <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)', padding: '10px 15px', borderBottom: '1px solid var(--border-glass)', fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        Findings by Severity
-      </div>
-      <div style={{ display: 'flex', height: '140px', alignItems: 'flex-end', justifyContent: 'space-around', padding: '15px 10px 10px', flex: 1 }}>
-        {/* L5 */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'var(--color-danger)' }}>{c_level5}</span>
-          <div style={{ width: '100%', height: `${h5}px`, background: 'var(--color-danger)', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(220, 38, 38, 0.2)' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>L5</span>
-        </div>
-        {/* L4 */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'var(--color-warning)' }}>{c_level4}</span>
-          <div style={{ width: '100%', height: `${h4}px`, background: 'var(--color-warning)', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(217, 119, 6, 0.2)' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>L4</span>
-        </div>
-        {/* L3 */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'var(--color-primary)' }}>{c_level3}</span>
-          <div style={{ width: '100%', height: `${h3}px`, background: 'var(--color-primary)', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(37, 99, 235, 0.2)' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>L3</span>
-        </div>
-        {/* L2 */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#17a2b8' }}>{c_level2}</span>
-          <div style={{ width: '100%', height: `${h2}px`, background: '#17a2b8', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(23, 162, 184, 0.2)' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>L2</span>
-        </div>
-        {/* L1 */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'var(--color-muted)' }}>{c_level1}</span>
-          <div style={{ width: '100%', height: `${h1}px`, background: 'var(--color-muted)', borderRadius: '3px 3px 0 0' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>L1</span>
-        </div>
-        {/* Sensitive */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#6f42c1' }}>{c_sensitive}</span>
-          <div style={{ width: '100%', height: `${h_sens}px`, background: '#6f42c1', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(111, 66, 193, 0.2)' }} />
-          <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)', textAlign: 'center' }}>Sens.</span>
-        </div>
-        {/* Info Gathered */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '35px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#007bff' }}>{c_info_gathered}</span>
-          <div style={{ width: '100%', height: `${h_info}px`, background: '#007bff', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(0, 123, 255, 0.2)' }} />
-          <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)', textAlign: 'center' }}>Info.</span>
-        </div>
-      </div>
-    </div>
+    <VBarChart
+      title="Findings by Severity"
+      bars={[
+        { label: 'Critical', value: c_level5, color: '#b91c1c' },
+        { label: 'High', value: c_level4, color: '#ea580c' },
+        { label: 'Medium', value: c_level3, color: '#d4a017' },
+        { label: 'Low', value: c_level2, color: '#2563eb' },
+        { label: 'Info', value: c_level1, color: '#64748b' },
+        { label: 'Secrets', value: c_sensitive, color: '#7c3aed' },
+        { label: 'Recon', value: c_info_gathered, color: '#0e9aa7' },
+      ]}
+    />
   );
 }
 
@@ -80,51 +56,17 @@ function VulnerabilitiesByGroupChart({
 }: {
   c_xss: number; c_sqli: number; c_path: number; c_info: number; c_nogroup: number;
 }) {
-  const maxVal = Math.max(c_xss, c_sqli, c_path, c_info, c_nogroup, 1);
-  const h_xss = (c_xss / maxVal) * 110;
-  const h_sqli = (c_sqli / maxVal) * 110;
-  const h_path = (c_path / maxVal) * 110;
-  const h_info = (c_info / maxVal) * 110;
-  const h_nogroup = (c_nogroup / maxVal) * 110;
-
   return (
-    <div style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc' }}>
-      <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)', padding: '10px 15px', borderBottom: '1px solid var(--border-glass)', fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        Vulnerabilities by Group
-      </div>
-      <div style={{ display: 'flex', height: '140px', alignItems: 'flex-end', justifyContent: 'space-around', padding: '15px 10px 10px', flex: 1 }}>
-        {/* XSS */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '45px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#007bff' }}>{c_xss}</span>
-          <div style={{ width: '100%', height: `${h_xss}px`, background: '#007bff', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(0, 123, 255, 0.2)' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>XSS</span>
-        </div>
-        {/* SQLi */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '45px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#28a745' }}>{c_sqli}</span>
-          <div style={{ width: '100%', height: `${h_sqli}px`, background: '#28a745', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(40, 167, 69, 0.2)' }} />
-          <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>SQLi</span>
-        </div>
-        {/* Path Disc */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '45px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#ffc107' }}>{c_path}</span>
-          <div style={{ width: '100%', height: `${h_path}px`, background: '#ffc107', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(255, 193, 7, 0.2)' }} />
-          <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)', textAlign: 'center' }}>Path Disc.</span>
-        </div>
-        {/* Info Disc */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '45px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#17a2b8' }}>{c_info}</span>
-          <div style={{ width: '100%', height: `${h_info}px`, background: '#17a2b8', borderRadius: '3px 3px 0 0', boxShadow: '0 0 8px rgba(23, 162, 184, 0.2)' }} />
-          <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)', textAlign: 'center' }}>Info Disc.</span>
-        </div>
-        {/* No Group */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '45px', gap: '6px' }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: 'var(--color-muted)' }}>{c_nogroup}</span>
-          <div style={{ width: '100%', height: `${h_nogroup}px`, background: 'var(--color-muted)', borderRadius: '3px 3px 0 0' }} />
-          <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)', textAlign: 'center' }}>No Group</span>
-        </div>
-      </div>
-    </div>
+    <VBarChart
+      title="Vulnerabilities by Group"
+      bars={[
+        { label: 'XSS', value: c_xss, color: '#2563eb' },
+        { label: 'SQLi', value: c_sqli, color: '#16a34a' },
+        { label: 'Path Traversal', value: c_path, color: '#d4a017' },
+        { label: 'Info Disclosure', value: c_info, color: '#0e9aa7' },
+        { label: 'Other', value: c_nogroup, color: '#64748b' },
+      ]}
+    />
   );
 }
 
@@ -133,32 +75,22 @@ function OwaspTop10Chart({ counts }: { counts: Record<string, number> }) {
 
   return (
     <div style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc' }}>
-      <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)', padding: '10px 15px', borderBottom: '1px solid var(--border-glass)', fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        OWASP Top 10 2021 Vulnerabilities
+      <div style={{ background: '#f1f5f9', padding: '10px 15px', borderBottom: '1px solid var(--border-glass)', fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        OWASP Top 10 (2021) Distribution
       </div>
-      <div style={{ padding: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '9px' }}>
         {Object.entries(counts).map(([cat, count]) => {
           const w = (count / maxVal) * 100;
-          const displayLabel = cat.length > 50 ? cat.slice(0, 48) + '...' : cat;
           return (
-            <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.725rem' }}>
-              <div style={{ width: '230px', color: 'var(--color-muted)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                {displayLabel}
+            <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.7rem' }}>
+              <div style={{ width: '240px', flexShrink: 0, color: 'var(--color-muted)', textAlign: 'right', lineHeight: 1.2 }}>
+                {cat}
               </div>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ flex: 1, height: '14px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '3px', overflow: 'hidden', border: '1px solid var(--border-glass)' }}>
-                  <div
-                    style={{
-                      width: `${w}%`,
-                      height: '100%',
-                      background: 'var(--color-primary)',
-                      boxShadow: '0 0 8px rgba(37, 99, 235, 0.3)',
-                      borderRadius: '3px',
-                      transition: 'width 0.5s ease-out'
-                    }}
-                  />
+                <div style={{ flex: 1, height: '14px', background: '#eef1f5', borderRadius: '3px', overflow: 'hidden', border: '1px solid var(--border-glass)' }}>
+                  <div style={{ width: `${w}%`, height: '100%', background: '#3949ab', borderRadius: '3px', minWidth: count > 0 ? '2px' : '0', transition: 'width 0.5s ease-out' }} />
                 </div>
-                <span style={{ fontWeight: 'bold', color: count > 0 ? 'var(--color-primary)' : 'var(--color-muted)', width: '15px' }}>
+                <span style={{ fontWeight: 700, color: count > 0 ? '#3949ab' : 'var(--color-muted)', width: '16px' }}>
                   {count}
                 </span>
               </div>
