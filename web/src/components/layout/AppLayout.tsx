@@ -68,8 +68,8 @@ const navSections: NavSection[] = [
     id: 'appsec',
     title: 'Application Security',
     items: [
-      { to: '/appsec/overview', icon: <LayoutDashboard size={16} />, label: 'App Posture'         },
       { to: '/appsec/targets',  icon: <ClipboardList size={16} />,   label: 'Targets'             },
+      { to: '/appsec/overview', icon: <LayoutDashboard size={16} />, label: 'App Posture'         },
       { to: '/appsec/web',      icon: <Server size={16} />,          label: 'Web Scan (DAST)'     },
       { to: '/appsec/api',      icon: <Network size={16} />,         label: 'API Security'        },
       { to: '/appsec/code',     icon: <FileText size={16} />,        label: 'Code Scan (SAST/SCA)'},

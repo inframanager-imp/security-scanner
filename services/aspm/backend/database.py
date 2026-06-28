@@ -179,6 +179,27 @@ def init_db():
     cursor.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS cipher_suite TEXT;")
     cursor.execute("ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS openapi_spec TEXT;")
 
+    # ── Duplicate prevention ──────────────────────────────────────────────────
+    # Tool/scan-generated rows must be unique. We (1) purge any pre-existing
+    # duplicates, then (2) add DB-level UNIQUE constraints so concurrent scans
+    # can't race past the app-level checks. Each step is wrapped so re-running
+    # init_db() on an already-migrated DB is a no-op (autocommit isolates failures).
+    def _safe(sql: str):
+        try:
+            cursor.execute(sql)
+        except Exception:
+            pass
+
+    # (1) collapse existing duplicates, keeping one row per logical key
+    _safe("DELETE FROM assets a USING assets b WHERE a.ctid < b.ctid AND a.target_id = b.target_id AND a.subdomain = b.subdomain;")
+    _safe("DELETE FROM api_inventory a USING api_inventory b WHERE a.ctid < b.ctid AND a.target_id = b.target_id AND a.path = b.path AND a.method = b.method;")
+    _safe("DELETE FROM vulnerabilities a USING vulnerabilities b WHERE a.ctid < b.ctid AND a.target_id = b.target_id AND a.cwe = b.cwe AND a.asset = b.asset AND a.title = b.title;")
+
+    # (2) enforce uniqueness going forward
+    _safe("ALTER TABLE assets ADD CONSTRAINT uq_assets_target_subdomain UNIQUE (target_id, subdomain);")
+    _safe("ALTER TABLE api_inventory ADD CONSTRAINT uq_api_target_path_method UNIQUE (target_id, path, method);")
+    _safe("ALTER TABLE vulnerabilities ADD CONSTRAINT uq_vuln_target_cwe_asset_title UNIQUE (target_id, cwe, asset, title);")
+
     conn.close()
 
 
@@ -187,8 +208,13 @@ init_db()
 
 # --- TARGETS API helpers ---
 def add_target(name: str, url: str, target_type: str, auth_type: str = "none", auth_key: str = "", auth_val: str = "") -> str:
-    target_id = f"target-{uuid.uuid4().hex[:8]}"
     conn = get_db_connection()
+    # Avoid duplicate onboarding of the same application (same name + url).
+    existing = conn.execute("SELECT id FROM targets WHERE name = %s AND url = %s", (name, url)).fetchone()
+    if existing:
+        conn.close()
+        return existing["id"]
+    target_id = f"target-{uuid.uuid4().hex[:8]}"
     conn.execute(
         "INSERT INTO targets (id, name, url, target_type, auth_type, auth_key, auth_val, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
         (target_id, name, url, target_type, auth_type, auth_key, auth_val, datetime.now().isoformat())
@@ -263,33 +289,32 @@ def get_vulnerabilities(target_id: Optional[str] = None, severity: Optional[str]
 
 def add_vulnerability(target_id: str, title: str, severity: str, type_val: str, cwe: str, asset: str, description: str, poc: Dict[str, Any], ai_analysis: Dict[str, Any], remediation: Dict[str, Any], status: str = "Open") -> str:
     conn = get_db_connection()
-    # Check if an unresolved matching vulnerability already exists for this target
-    existing = conn.execute(
-        "SELECT id FROM vulnerabilities WHERE target_id = %s AND (cwe = %s OR title = %s) AND asset = %s AND status != 'Resolved'",
-        (target_id, cwe, title, asset)
-    ).fetchone()
-
-    if existing:
-        conn.close()
-        return existing["id"]
-
     vuln_id = f"vuln-{uuid.uuid4().hex[:8]}"
     created_at = datetime.now().isoformat()
     sla_days = 14 if severity == "Critical" else (30 if severity == "High" else 60)
     sla_deadline = (datetime.now() + timedelta(days=sla_days)).isoformat()
 
-    conn.execute(
+    # Race-safe dedup: one row per (target_id, cwe, asset, title). On a repeat
+    # finding we refresh the evidence and return the existing row id (no duplicate).
+    row = conn.execute(
         """INSERT INTO vulnerabilities
         (id, target_id, title, severity, type, cwe, status, created_at, sla_deadline, assigned_to, asset, description, poc, ai_analysis, remediation, pt_verification)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (target_id, cwe, asset, title) DO UPDATE
+          SET severity = EXCLUDED.severity,
+              description = EXCLUDED.description,
+              poc = EXCLUDED.poc,
+              ai_analysis = EXCLUDED.ai_analysis,
+              remediation = EXCLUDED.remediation
+        RETURNING id""",
         (
             vuln_id, target_id, title, severity, type_val, cwe, status, created_at, sla_deadline, "Unassigned", asset, description,
             json.dumps(poc), json.dumps(ai_analysis), json.dumps(remediation), None
         )
-    )
+    ).fetchone()
     conn.commit()
     conn.close()
-    return vuln_id
+    return row["id"] if row else vuln_id
 
 def update_vulnerability(vuln_id: str, fields: Dict[str, Any]):
     conn = get_db_connection()
@@ -350,19 +375,18 @@ def get_assets(target_id: Optional[str] = None) -> Dict[str, Any]:
 
 def add_asset(target_id: str, subdomain: str, ip: str, cdn: str, ports: List[int], ssl_expiry: str, cert_issuer: str, tls_version: str = "", cipher_suite: str = "", status: str = "Active"):
     conn = get_db_connection()
-    # Check if asset already exists
-    existing = conn.execute("SELECT id FROM assets WHERE target_id = %s AND subdomain = %s", (target_id, subdomain)).fetchone()
-    if existing:
-        conn.execute(
-            "UPDATE assets SET ip = %s, cdn = %s, ports = %s, ssl_expiry = %s, cert_issuer = %s, tls_version = %s, cipher_suite = %s, status = %s WHERE id = %s",
-            (ip, cdn, json.dumps(ports), ssl_expiry, cert_issuer, tls_version, cipher_suite, status, existing["id"])
-        )
-    else:
-        asset_id = f"asset-{uuid.uuid4().hex[:8]}"
-        conn.execute(
-            "INSERT INTO assets (id, target_id, subdomain, ip, cdn, ports, ssl_expiry, cert_issuer, tls_version, cipher_suite, status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (asset_id, target_id, subdomain, ip, cdn, json.dumps(ports), ssl_expiry, cert_issuer, tls_version, cipher_suite, status, datetime.now().isoformat())
-        )
+    asset_id = f"asset-{uuid.uuid4().hex[:8]}"
+    # Race-safe upsert keyed on (target_id, subdomain) — repeated EASM pulls update in place.
+    conn.execute(
+        """INSERT INTO assets (id, target_id, subdomain, ip, cdn, ports, ssl_expiry, cert_issuer, tls_version, cipher_suite, status, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (target_id, subdomain) DO UPDATE
+          SET ip = EXCLUDED.ip, cdn = EXCLUDED.cdn, ports = EXCLUDED.ports,
+              ssl_expiry = EXCLUDED.ssl_expiry, cert_issuer = EXCLUDED.cert_issuer,
+              tls_version = EXCLUDED.tls_version, cipher_suite = EXCLUDED.cipher_suite,
+              status = EXCLUDED.status""",
+        (asset_id, target_id, subdomain, ip, cdn, json.dumps(ports), ssl_expiry, cert_issuer, tls_version, cipher_suite, status, datetime.now().isoformat())
+    )
     conn.commit()
     conn.close()
 
@@ -378,19 +402,16 @@ def get_api_inventory(target_id: Optional[str] = None) -> List[Dict[str, Any]]:
 
 def add_api_route(target_id: str, path: str, method: str, auth: str, classification: str, risk: str, findings: int = 0):
     conn = get_db_connection()
-    # Check duplicate
-    existing = conn.execute("SELECT id FROM api_inventory WHERE target_id = %s AND path = %s AND method = %s", (target_id, path, method)).fetchone()
-    if existing:
-        conn.execute(
-            "UPDATE api_inventory SET auth = %s, classification = %s, risk = %s, findings = %s WHERE id = %s",
-            (auth, classification, risk, findings, existing["id"])
-        )
-    else:
-        api_id = f"api-{uuid.uuid4().hex[:8]}"
-        conn.execute(
-            "INSERT INTO api_inventory (id, target_id, path, method, auth, classification, risk, findings, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (api_id, target_id, path, method, auth, classification, risk, findings, datetime.now().isoformat())
-        )
+    api_id = f"api-{uuid.uuid4().hex[:8]}"
+    # Race-safe upsert keyed on (target_id, path, method) — repeated API discovery updates in place.
+    conn.execute(
+        """INSERT INTO api_inventory (id, target_id, path, method, auth, classification, risk, findings, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (target_id, path, method) DO UPDATE
+          SET auth = EXCLUDED.auth, classification = EXCLUDED.classification,
+              risk = EXCLUDED.risk, findings = EXCLUDED.findings""",
+        (api_id, target_id, path, method, auth, classification, risk, findings, datetime.now().isoformat())
+    )
     conn.commit()
     conn.close()
 

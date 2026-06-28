@@ -71,7 +71,7 @@ export default function App() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="cloud" element={<CloudSubscriptions />} />
-        <Route path="appsec" element={<Navigate to="/appsec/overview" replace />} />
+        <Route path="appsec" element={<Navigate to="/appsec/targets" replace />} />
         <Route path="appsec/:module" element={<AspmWorkspace />} />
         <Route path="accounts" element={<Navigate to="/cloud" replace />} />
         <Route path="accounts/:id" element={<AccountDetail />} />

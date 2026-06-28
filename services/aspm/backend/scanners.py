@@ -1,3 +1,4 @@
+import os
 import socket
 import ssl
 import json
@@ -9,6 +10,10 @@ import time
 import threading
 from datetime import datetime
 from typing import Generator, List, Dict, Any, Optional
+
+# OWASP ZAP daemon proxy — overridable so ZAP can run in its own container.
+ZAP_PROXY = os.environ.get("ZAP_PROXY", "http://127.0.0.1:8090")
+ZAP_LABEL = ZAP_PROXY.replace("http://", "").replace("https://", "")
 
 from backend.database import (
     add_vulnerability,
@@ -634,12 +639,12 @@ def run_dast_scan(target_id: str) -> Generator[str, None, None]:
         try:
             from zapv2 import ZAPv2
             # Try a quick ZAP command to see if it responds on proxy port 8090
-            zap = ZAPv2(proxies={'http': 'http://127.0.0.1:8090', 'https': 'http://127.0.0.1:8090'})
+            zap = ZAPv2(proxies={'http': ZAP_PROXY, 'https': ZAP_PROXY})
             version = zap.core.version
             yield f"[+] Connected to OWASP ZAP daemon (Version: {version}) successfully on port 8090!"
             use_zap = True
         except Exception as e:
-            yield "[!] Connection to OWASP ZAP daemon failed on 127.0.0.1:8090."
+            yield f"[!] Connection to OWASP ZAP daemon failed on {ZAP_LABEL}."
             yield "[!] Make sure ZAP daemon is running: zaproxy -daemon -port 8090 -config api.disablekey=true"
             yield "[*] FALLING BACK to lightweight custom Python crawler and active fuzzer..."
 
@@ -1109,12 +1114,12 @@ def run_api_scan(target_id: str, openapi_spec: Optional[str] = None) -> Generato
         try:
             from zapv2 import ZAPv2
             # Try connecting to ZAP daemon on port 8090
-            zap = ZAPv2(proxies={'http': 'http://127.0.0.1:8090', 'https': 'http://127.0.0.1:8090'})
+            zap = ZAPv2(proxies={'http': ZAP_PROXY, 'https': ZAP_PROXY})
             version = zap.core.version
             yield f"[+] Connected to OWASP ZAP daemon (Version: {version}) successfully on port 8090!"
             use_zap = True
         except Exception:
-            yield "[!] Connection to OWASP ZAP daemon failed on 127.0.0.1:8090."
+            yield f"[!] Connection to OWASP ZAP daemon failed on {ZAP_LABEL}."
             yield "[!] Make sure ZAP daemon is running: zaproxy -daemon -port 8090 -config api.disablekey=true"
 
         if use_zap:
