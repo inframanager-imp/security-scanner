@@ -26,9 +26,9 @@ What the deployment team has to do, in order — details in the sections below.
 2. **Create the database objects:** run `infra/db/setup-local-db.sql` against it, using a
    strong DB password (see [Database setup](#1-database-setup-devops--do-this-first)).
 3. **Provision a Docker host** with outbound internet for the build, and put this repo on it.
-4. **Generate secrets and configure** `docker-compose.yml` (see [Configure](#2-configure)):
-   both `DATABASE_URL`s, the shared `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
-   `CREDENTIAL_ENCRYPTION_KEY`, `CORS_ORIGIN`, `ADMIN_PASSWORD`, `TZ`.
+4. **Configure `.env`** — `cp .env.example .env`, then set the DB connection (`DB_*`),
+   secrets (`JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`),
+   `CORS_ORIGIN`, `ADMIN_PASSWORD`, `TZ` (see [Configure](#2-configure-env)).
 5. **Build & start:** `docker compose up -d --build` (first build is large — see [Deploy](#3-deploy)).
 6. **Terminate TLS in front** of the `web` container for production
    (see [Production hardening](#production-hardening)).
@@ -42,7 +42,7 @@ What the deployment team has to do, in order — details in the sections below.
   - On a local dev box, your machine's native PostgreSQL on `localhost:5432` works — the
     containers reach it via `host.docker.internal` (already set in `docker-compose.yml`).
 - Outbound internet on the **build** host: the `aspm-api` image pulls real scanner tooling
-  and vulnerability databases at build time (see [Deploy](#deploy)).
+  and vulnerability databases at build time (see [Deploy](#3-deploy)).
 
 ## 1. Database setup (DevOps — do this first)
 The platform uses one database `vapt` with two schemas (`cspm`, `aspm`) owned by a login
@@ -55,38 +55,45 @@ psql -U <superuser> -h <db-host> -f infra/db/setup-local-db.sql
 
 This creates the `scanner` role, the `vapt` database, and the `cspm` + `aspm` schemas
 (see [infra/db/setup-local-db.sql](infra/db/setup-local-db.sql)). **Change the role name /
-password** in that file (and in the `DATABASE_URL`s below) for any non-local deployment.
-The backends auto-create their own tables on first boot — CSPM via `prisma db push`, ASPM
-via `init_db()` — so no migrations to run by hand.
+password** in that file — and match them in `.env` (`DB_USER` / `DB_PASSWORD`) — for any
+non-local deployment. The backends auto-create their own tables on first boot — CSPM via
+`prisma db push`, ASPM via `init_db()` — so no migrations to run by hand.
 
-## 2. Configure
-Point both backends at the database from step 1 and set production secrets. These live in
-`docker-compose.yml` (prefer a `.env` file or a secrets manager over committing real values):
+## 2. Configure (`.env`)
+All deploy-specific config is read from a **`.env`** file in the repo root (`docker compose`
+loads it automatically). Copy the template and edit it — never commit the real `.env`:
 
-| Service  | Variable                | Value / notes |
-|----------|-------------------------|---------------|
-| cspm-api | `DATABASE_URL`          | `postgresql://<user>:<pass>@<db-host>:5432/vapt?schema=cspm` |
-| aspm-api | `DATABASE_URL`          | `postgresql+psycopg://<user>:<pass>@<db-host>:5432/vapt` (schema set via `DB_SCHEMA=aspm`) |
-| both     | `JWT_ACCESS_SECRET`     | long random value — **must be identical** on cspm-api and aspm-api (shared login) |
-| cspm-api | `JWT_REFRESH_SECRET`    | long random value |
-| cspm-api | `CREDENTIAL_ENCRYPTION_KEY` | 64 hex characters |
-| cspm-api | `CORS_ORIGIN`           | the public URL users hit (e.g. `https://scanner.example.com`) |
-| cspm-api | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | first-login admin account |
-| aspm-api | `TZ`                    | timezone for report timestamps (default `Asia/Kolkata`) |
+```bash
+cp .env.example .env
+```
 
-`<db-host>` is `host.docker.internal` when PostgreSQL runs on the Docker host, or the managed
-database's hostname otherwise. Both `DATABASE_URL`s must point at the **same** `vapt` database.
+| `.env` variable | Notes |
+|-----------------|-------|
+| `DB_USER`, `DB_PASSWORD` | PostgreSQL login role (from step 1). URL-encode the password if it has `@ : / ?`. |
+| `DB_HOST`, `DB_PORT`, `DB_NAME` | `host.docker.internal` for a DB on the Docker host, else the managed DB's hostname; port `5432`; db `vapt`. |
+| `JWT_ACCESS_SECRET` | shared login secret — used to **sign and verify** the JWT across both backends. |
+| `JWT_REFRESH_SECRET` | refresh-token secret. |
+| `CREDENTIAL_ENCRYPTION_KEY` | exactly **64 hex** characters. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | first-login admin account. |
+| `WEB_PORT` | host port for the UI (default `8080`). |
+| `CORS_ORIGIN` | the public URL users hit (`https://…` in production). |
+| `TZ` | timezone for report timestamps (default `Asia/Kolkata`). |
+
+The two backends build their `DATABASE_URL`s from `DB_*` (cspm adds `?schema=cspm`, aspm uses
+`DB_SCHEMA=aspm`), so both always point at the **same** `vapt` database. The compose file has
+`${VAR:-default}` fallbacks, so it still runs if `.env` is missing — but `.env` is the intended
+place to configure a deployment.
 
 Generate strong secrets (don't ship the defaults):
 ```bash
-openssl rand -hex 32   # JWT_ACCESS_SECRET   (set the SAME value on cspm-api AND aspm-api)
+openssl rand -hex 32   # JWT_ACCESS_SECRET
 openssl rand -hex 32   # JWT_REFRESH_SECRET
-openssl rand -hex 32   # CREDENTIAL_ENCRYPTION_KEY  (must be 64 hex chars)
+openssl rand -hex 32   # CREDENTIAL_ENCRYPTION_KEY  (64 hex chars)
 ```
 
 > Optional: to run Postgres *inside* the stack for a self-contained dev deploy instead of an
-> external DB, uncomment the `postgres` service in `docker-compose.yml` and change the two
-> `DATABASE_URL` hosts to `postgres` (this path uses `infra/db/init.sql`).
+> external DB, uncomment the `postgres` service in `docker-compose.yml` and set `DB_HOST=postgres`
+> in `.env` (this path uses `infra/db/init.sql`).
 
 ## 3. Deploy
 
@@ -153,10 +160,11 @@ vapt-cloud-scanner/
   (SSE-friendly) and `/socket.io` to the right backend.
 
 ## Security before distributing
-Set in `docker-compose.yml` (or `.env` / secrets manager): the two `DATABASE_URL` credentials,
-`JWT_ACCESS_SECRET` (matching on both services) + `JWT_REFRESH_SECRET`,
-`CREDENTIAL_ENCRYPTION_KEY` (64 hex), `CORS_ORIGIN`, `ADMIN_PASSWORD`, and the PostgreSQL role
-password (also change it in `infra/db/setup-local-db.sql`).
+Everything sensitive lives in **`.env`** (see [Configure](#2-configure-env)) — change the
+defaults before any real deployment: `DB_USER` / `DB_PASSWORD`, `JWT_ACCESS_SECRET` (identical
+for both services) + `JWT_REFRESH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY` (64 hex), `CORS_ORIGIN`,
+and `ADMIN_PASSWORD`. Change the DB role password in `infra/db/setup-local-db.sql` to match,
+and keep the real `.env` out of git (it is already `.gitignore`d; commit only `.env.example`).
 
 ## Unified auth (done)
 One login authorizes both backends. The ASPM (Python) API validates the CSPM-issued

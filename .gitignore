@@ -1,0 +1,4 @@
+# Local runtime configuration & secrets — never commit
+.env
+.env.*
+!.env.example
