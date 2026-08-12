@@ -13,7 +13,7 @@
 
 import { prisma } from '../config/database';
 import { logger } from '../config/logger';
-import { analyzeEvent, normalizeAwsEvent, normalizeAzureEvent, normalizeGcpEvent, type NormalizedEvent } from './anomalyEngine';
+import { analyzeEvent, normalizeAwsEvent, type NormalizedEvent } from './anomalyEngine';
 import * as credentialService from './credentialService';
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { CloudTrailClient, LookupEventsCommand } from '@aws-sdk/client-cloudtrail';
@@ -135,24 +135,39 @@ export async function seedAzureBaseline(opts: BaselineSeedOptions): Promise<Base
 
   const since = new Date(Date.now() - lookbackDays * 86_400_000);
 
-  // Replay from stored ConfigChanges (Azure Activity Log data already in DB)
+  // Replay from stored ConfigChanges (Azure Activity Log data already in DB).
+  // The raw provider payload is not persisted, so rebuild NormalizedEvents
+  // from the normalized ConfigChange columns instead.
   const changes = await prisma.configChange.findMany({
     where: {
       provider: 'AZURE',
-      timestamp: { gte: since },
-      // Filter to this subscription via the subscriptionId stored in rawEvent
+      azureSubId: opts.accountId,
+      eventTime: { gte: since },
     },
-    select: { id: true, rawEvent: true, timestamp: true },
-    orderBy: { timestamp: 'asc' },
+    select: {
+      eventName: true, eventTime: true, actor: true, actorType: true,
+      sourceIp: true, region: true, resourceId: true, sourceEventId: true,
+    },
+    orderBy: { eventTime: 'asc' },
     take: 5000,
   });
 
   for (const change of changes) {
     try {
-      const raw = change.rawEvent as Record<string, unknown>;
-      if (!raw) continue;
-      const normalized = normalizeAzureEvent(raw, opts.accountId);
-      if (!normalized) continue;
+      const actor = change.actor ?? 'unknown';
+      const normalized: NormalizedEvent = {
+        provider:   'AZURE',
+        accountId:  opts.accountId,
+        actorId:    actor,
+        actorType:  change.actorType ?? (actor.includes('@') ? 'User' : 'ServicePrincipal'),
+        eventName:  change.eventName,
+        eventTime:  change.eventTime,
+        sourceIp:   change.sourceIp ?? '',
+        region:     change.region ?? '',
+        service:    change.eventName.split('/')[0]?.toLowerCase() ?? 'unknown',
+        resourceId: change.resourceId ?? undefined,
+        rawEventId: change.sourceEventId,
+      };
       await analyzeEvent(normalized);
       eventsProcessed++;
     } catch { /* skip */ }
@@ -183,19 +198,33 @@ export async function seedGcpBaseline(opts: BaselineSeedOptions): Promise<Baseli
   const changes = await prisma.configChange.findMany({
     where: {
       provider: 'GCP',
-      timestamp: { gte: since },
+      gcpProjectId: opts.accountId,
+      eventTime: { gte: since },
     },
-    select: { id: true, rawEvent: true, timestamp: true },
-    orderBy: { timestamp: 'asc' },
+    select: {
+      eventName: true, eventTime: true, actor: true, actorType: true,
+      sourceIp: true, region: true, resourceId: true, sourceEventId: true,
+    },
+    orderBy: { eventTime: 'asc' },
     take: 5000,
   });
 
   for (const change of changes) {
     try {
-      const raw = change.rawEvent as Record<string, unknown>;
-      if (!raw) continue;
-      const normalized = normalizeGcpEvent(raw, opts.accountId);
-      if (!normalized) continue;
+      const actor = change.actor ?? 'unknown';
+      const normalized: NormalizedEvent = {
+        provider:   'GCP',
+        accountId:  opts.accountId,
+        actorId:    actor,
+        actorType:  change.actorType ?? (actor.endsWith('.gserviceaccount.com') ? 'ServiceAccount' : 'User'),
+        eventName:  change.eventName,
+        eventTime:  change.eventTime,
+        sourceIp:   change.sourceIp ?? '',
+        region:     change.region ?? '',
+        service:    change.eventName.split('.')[0]?.toLowerCase() ?? 'unknown',
+        resourceId: change.resourceId ?? undefined,
+        rawEventId: change.sourceEventId,
+      };
       await analyzeEvent(normalized);
       eventsProcessed++;
     } catch { /* skip */ }

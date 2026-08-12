@@ -1,16 +1,37 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   GetRestApisCommand,
   GetStagesCommand,
   GetResourcesCommand,
+  GetDomainNamesCommand,
+  GetAuthorizersCommand,
   type RestApi,
   type Resource,
   type Stage,
+  type DomainName,
 } from '@aws-sdk/client-api-gateway';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
 import { ScanningResult } from '../utils/types';
 import logger from '../utils/logger';
 import { retry } from '../utils/helpers';
+
+// Conservative secret patterns (Prowler uses detect-secrets library; this is a regex port)
+const SECRET_PATTERNS: { type: string; regex: RegExp }[] = [
+  { type: 'AWS Access Key ID', regex: /\b(A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/ },
+  { type: 'AWS Secret Access Key', regex: /aws_?secret_?access_?key\s*[=:]\s*['"]?[A-Za-z0-9/+=]{40}\b/i },
+  { type: 'Private Key', regex: /-----BEGIN (RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY/ },
+  { type: 'Hardcoded Password', regex: /\b(password|passwd|pwd)\b\s*[=:]\s*['"][^'"]{4,}['"]/i },
+  { type: 'Hardcoded Secret or Token', regex: /\b(secret|token|api[_-]?key|auth[_-]?key|access[_-]?token)\b\s*[=:]\s*['"][^'"]{8,}['"]/i },
+  { type: 'Credentials in URL', regex: /[a-z][a-z0-9+.-]*:\/\/[^/\s:@'"]+:[^/\s:@'"]+@[^\s'"]+/i },
+];
+
+// PQ-ready security policies (Prowler defaults + AWS-published options)
+const PQC_APIGATEWAY_POLICIES = [
+  'SecurityPolicy_TLS13_1_2_FIPS_PFS_PQ_2025_09',
+  'SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09',
+  'SecurityPolicy_TLS13_1_2_PQ_2025_09',
+];
 
 export class APIGatewayScanner extends BaseScanner {
   constructor(client: AWSClient) {
@@ -23,6 +44,12 @@ export class APIGatewayScanner extends BaseScanner {
 
     const apis = await this.listAPIs();
     logger.info(`API Gateway: scanning ${apis.length} REST API(s)`);
+
+    const domainNames = await this.listDomainNames();
+    logger.info(`API Gateway: scanning ${domainNames.length} custom domain name(s)`);
+
+    // 1. Custom domain name PQ-TLS check
+    findings.push(...(await this.checkDomainNamesPQC(domainNames)));
 
     for (const api of apis) {
       findings.push(...(await this.scanAPI(api)));
@@ -47,6 +74,42 @@ export class APIGatewayScanner extends BaseScanner {
     return apis;
   }
 
+  private async listDomainNames(): Promise<DomainName[]> {
+    const domains: DomainName[] = [];
+    let position: string | undefined;
+    try {
+      do {
+        const result = await retry(() =>
+          this.client.apigateway.send(new GetDomainNamesCommand({ position, limit: 500 }))
+        );
+        domains.push(...(result.items ?? []));
+        position = result.position;
+      } while (position);
+    } catch { /* no permission */ }
+    return domains;
+  }
+
+  private async checkDomainNamesPQC(domainNames: DomainName[]): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    for (const domain of domainNames) {
+      const domainName = domain.domainName ?? 'Unknown';
+      const policy = domain.securityPolicy ?? '';
+      if (!PQC_APIGATEWAY_POLICIES.includes(policy)) {
+        findings.push(this.emit(
+          'apigateway_domain_name_pqc_tls_enabled',
+          { resourceId: domainName, domainName, securityPolicy: policy || null },
+          {
+            message: `API Gateway custom domain "${domainName}" uses TLS policy "${policy}" instead of a post-quantum policy. ` +
+              `Traffic captured today can be decrypted once quantum computers exist (harvest-now, decrypt-later attack).`,
+            remediation: `Update the security policy to one of: ${PQC_APIGATEWAY_POLICIES.join(', ')} via the console or ` +
+              `aws apigateway update-domain-name --domain-name ${domainName} --patch-operations op=replace,path=/securityPolicy,value=SecurityPolicy_TLS13_1_2_PQ_2025_09`,
+          }
+        ));
+      }
+    }
+    return findings;
+  }
+
   private async scanAPI(api: RestApi): Promise<ScanningResult[]> {
     const findings: ScanningResult[] = [];
     const apiName = api.name ?? 'Unknown';
@@ -60,87 +123,130 @@ export class APIGatewayScanner extends BaseScanner {
       stages = result.item ?? [];
     } catch { return findings; }
 
-    // Unauthenticated methods exposed at the API level (independent of stages)
+    // Check endpoint type and authorizers (once per API)
+    findings.push(...(await this.checkEndpointType(api, apiId, apiName)));
+    findings.push(...(await this.checkAuthorizers(api, apiId, apiName)));
     findings.push(...(await this.checkUnauthenticatedMethods(api, apiId, apiName)));
 
     for (const stage of stages) {
       const stageName = stage.stageName ?? 'Unknown';
       const stageId   = `${apiId}::${stageName}`;
 
-      // 1. No access logging
-      if (!stage.accessLogSettings?.destinationArn) {
-        findings.push(this.createFinding(
-          'API Gateway Stage Access Logging Disabled',
-          `API Gateway REST API "${apiName}" stage "${stageName}" does not have access logging enabled. ` +
-          `Without logs, API abuse and unauthorized access cannot be detected or audited.`,
-          'HIGH',
+      // Stage-level checks
+      // 1. Client certificate
+      if (!stage.clientCertificateId) {
+        findings.push(this.emit(
+          'apigateway_restapi_client_certificate_enabled',
           { resourceId: stageId, apiName, apiId, stageName },
-          `Enable access logging for stage "${stageName}" by setting a CloudWatch Logs or Kinesis ARN as the logging destination in API Gateway stage settings.`,
-          ['apigateway', 'logging'],
+          {
+            message: `API Gateway REST API "${apiName}" stage "${stageName}" does not have a client certificate configured. ` +
+              `Without mutual TLS, the backend cannot verify requests originate from API Gateway.`,
+            remediation: `Create a client certificate and attach it to the stage: ` +
+              `aws apigateway create-client-certificate && ` +
+              `aws apigateway update-stage --rest-api-id ${apiId} --stage-name ${stageName} --patch-operations op=replace,path=/clientCertificateId,value=<cert-id>`,
+          }
         ));
       }
 
-      // 2. Execution logging disabled
-      const loggingLevel = stage.methodSettings?.['*/*']?.loggingLevel ?? 'OFF';
-      if (loggingLevel === 'OFF') {
-        findings.push(this.createFinding(
-          'API Gateway Stage Execution Logging Disabled',
-          `API "${apiName}" stage "${stageName}" has execution logging set to OFF. ` +
-          `Request/response details are not captured for troubleshooting or security analysis.`,
-          'MEDIUM',
-          { resourceId: `${stageId}::exec-logging`, apiName, apiId, stageName },
-          `Enable execution logging in API Gateway console under Stages > "${stageName}" > Logs/Tracing. Set level to ERROR or INFO.`,
-          ['apigateway', 'logging'],
-        ));
-      }
+      // 2. Secrets in stage variables
+      findings.push(...(await this.checkStageVariablesForSecrets(apiName, apiId, stageName, stage.variables ?? {})));
 
-      // 3. No WAF WebACL
-      if (!stage.webAclArn) {
-        findings.push(this.createFinding(
-          'API Gateway Stage Not Protected By WAF',
-          `API Gateway stage "${apiName}/${stageName}" has no WAF WebACL associated. ` +
-          `The API is exposed to web attacks (SQLi, XSS, bot traffic) without WAF protection.`,
-          'HIGH',
-          { resourceId: `${stageId}::waf`, apiName, apiId, stageName },
-          `Associate a WAF WebACL with this API stage in the AWS WAF console or via: ` +
-          `aws wafv2 associate-web-acl --web-acl-arn <acl-arn> --resource-arn arn:aws:apigateway:<region>::/restapis/${apiId}/stages/${stageName}`,
-          ['apigateway', 'waf'],
-        ));
-      }
-
-      // 4. Cache encryption disabled (if caching is enabled)
-      if (stage.cacheClusterEnabled && !stage.cacheClusterSize) {
-        // cache enabled but check encryption
-        const cacheEncrypted = stage.methodSettings?.['*/*']?.cacheDataEncrypted;
-        if (cacheEncrypted === false) {
-          findings.push(this.createFinding(
-            'API Gateway Stage Cache Not Encrypted',
-            `API Gateway stage "${apiName}/${stageName}" has caching enabled but cache data is not encrypted. ` +
-            `Sensitive API responses cached in plaintext can be exposed.`,
-            'MEDIUM',
-            { resourceId: `${stageId}::cache`, apiName, apiId, stageName },
-            `Enable cache encryption in API Gateway stage method settings.`,
-            ['apigateway', 'encryption'],
-          ));
-        }
-      }
-
-      // 5. No throttling configured
-      const throttleRate  = stage.methodSettings?.['*/*']?.throttlingRateLimit;
-      const throttleBurst = stage.methodSettings?.['*/*']?.throttlingBurstLimit;
-      if (!throttleRate && !throttleBurst) {
-        findings.push(this.createFinding(
-          'API Gateway Stage No Throttling Configured',
-          `API Gateway stage "${apiName}/${stageName}" has no throttling configured. ` +
-          `Without throttling, the API is vulnerable to abuse, DDoS, and unexpected cost spikes.`,
-          'MEDIUM',
-          { resourceId: `${stageId}::throttle`, apiName, apiId, stageName },
-          `Configure throttling limits in API Gateway stage settings to limit requests per second.`,
-          ['apigateway', 'throttling'],
+      // 3. X-Ray tracing
+      if (!stage.tracingEnabled) {
+        findings.push(this.emit(
+          'apigateway_restapi_tracing_enabled',
+          { resourceId: `${stageId}::tracing`, apiName, apiId, stageName },
+          {
+            message: `API Gateway REST API "${apiName}" stage "${stageName}" does not have X-Ray tracing enabled. ` +
+              `Without traces, end-to-end visibility of latency, errors and integration failures is lost.`,
+            remediation: `Enable X-Ray tracing: aws apigateway update-stage --rest-api-id ${apiId} --stage-name ${stageName} ` +
+              `--patch-operations op=replace,path=/tracingEnabled,value=true`,
+          }
         ));
       }
     }
 
+    return findings;
+  }
+
+  private async checkEndpointType(api: RestApi, apiId: string, apiName: string): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const endpointType = api.endpointConfiguration?.types?.[0] ?? 'EDGE';
+    const isPrivate = endpointType === 'PRIVATE';
+
+    if (!isPrivate) {
+      findings.push(this.emit(
+        'apigateway_restapi_public',
+        { resourceId: apiId, apiName, apiId, endpointType },
+        {
+          message: `API Gateway REST API "${apiName}" has endpoint type "${endpointType}" (public/internet-accessible). ` +
+            `Public endpoints increase attack surface; private endpoints (via VPC endpoints) reduce exposure.`,
+          remediation: `Change to PRIVATE endpoint type: aws apigateway update-rest-api --rest-api-id ${apiId} ` +
+            `--patch-operations op=replace,path=/endpointConfiguration/types/0,value=PRIVATE (or use resource policies to restrict access)`,
+        }
+      ));
+    }
+    return findings;
+  }
+
+  private async checkAuthorizers(api: RestApi, apiId: string, apiName: string): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const endpointType = api.endpointConfiguration?.types?.[0] ?? 'EDGE';
+    const isPublic = endpointType !== 'PRIVATE';
+
+    if (!isPublic) return findings; // Only check public APIs
+
+    let hasAuthorizer = false;
+    try {
+      const result: any = await retry(() =>
+        this.client.apigateway.send(new GetAuthorizersCommand({ restApiId: apiId }))
+      );
+      hasAuthorizer = (result.items ?? []).length > 0;
+    } catch (error) {
+      logger.debug(`Failed to check authorizers for API ${apiId}`, { error: (error as Error).message });
+    }
+
+    if (!hasAuthorizer) {
+      findings.push(this.emit(
+        'apigateway_restapi_public_with_authorizer',
+        { resourceId: apiId, apiName, apiId, hasAuthorizer: false },
+        {
+          message: `API Gateway REST API "${apiName}" is internet-accessible but has no authorizer configured. ` +
+            `Without authentication, anonymous callers can invoke methods and access/modify backend data.`,
+          remediation: `Attach an authorizer (Lambda, Cognito, or API key) to the API or its methods: ` +
+            `aws apigateway create-authorizer --rest-api-id ${apiId} --name <authorizer-name> --type TOKEN --authorizer-uri <lambda-uri>`,
+        }
+      ));
+    }
+    return findings;
+  }
+
+  private async checkStageVariablesForSecrets(apiName: string, apiId: string, stageName: string, variables: Record<string, string>): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const secretHits: string[] = [];
+    const variableNames = Object.keys(variables);
+
+    for (let varIndex = 0; varIndex < variableNames.length; varIndex++) {
+      const varName = variableNames[varIndex];
+      const varValue = variables[varName];
+      for (const pattern of SECRET_PATTERNS) {
+        if (pattern.regex.test(varValue)) {
+          secretHits.push(`${pattern.type} in variable "${varName}"`);
+        }
+      }
+    }
+
+    if (secretHits.length > 0) {
+      findings.push(this.emit(
+        'apigateway_restapi_no_secrets_in_stage_variables',
+        { resourceId: `${apiId}::${stageName}`, apiName, apiId, stageName, secretTypes: secretHits },
+        {
+          message: `API Gateway REST API "${apiName}" stage "${stageName}" contains potential ${secretHits.length > 1 ? 'secrets' : 'secret'} in stage variables: ${secretHits.join(', ')}. ` +
+            `Hardcoded credentials can be viewed by anyone with read access to the API configuration.`,
+          remediation: `Remove secrets from stage variables and store them in AWS Secrets Manager or Parameter Store. Reference them via Lambda authorizers or integration request mapping templates.`,
+        }
+      ));
+    }
     return findings;
   }
 
@@ -182,14 +288,13 @@ export class APIGatewayScanner extends BaseScanner {
 
     if (openMethods.length > 0) {
       const sample = openMethods.slice(0, 5).map(m => `${m.method} ${m.path}`).join(', ');
-      findings.push(this.createFinding(
-        'API Gateway Method Has No Authorization',
-        `API "${apiName}" has ${openMethods.length} method(s) with authorizationType=NONE and no API key required: ${sample}${openMethods.length > 5 ? '...' : ''}. ` +
-        `These endpoints are publicly invokable without authentication.`,
-        'HIGH',
+      findings.push(this.emit(
+        'apigateway_restapi_public_with_authorizer',
         { resourceId: `${apiId}::unauth-methods`, apiName, apiId, methodCount: openMethods.length, sample: openMethods.slice(0, 10) },
-        `Add IAM, Cognito, or Lambda authorizer to these methods, or require an API key. Configure in API Gateway console under Resources > Method Request.`,
-        ['apigateway', 'authentication', 'public-access'],
+        {
+          message: `API "${apiName}" has ${openMethods.length} method(s) with authorizationType=NONE and no API key required: ${sample}${openMethods.length > 5 ? '...' : ''}. ` +
+            `These endpoints are publicly invokable without authentication.`,
+        }
       ));
     }
     return findings;

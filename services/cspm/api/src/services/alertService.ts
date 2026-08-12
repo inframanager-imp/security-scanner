@@ -14,7 +14,8 @@
 import * as crypto   from 'crypto';
 import * as https    from 'https';
 import nodemailer    from 'nodemailer';
-import { google }    from 'googleapis';
+import { gmail as gmailApi } from '@googleapis/gmail';
+import { JWT }       from 'google-auth-library';
 import { prisma }    from '../config/database';
 import { logger }    from '../config/logger';
 import { env }       from '../config/env';
@@ -46,7 +47,7 @@ export function decryptAlertConfig(enc: string): Record<string, unknown> {
 
 // ─── HTML email template ───────────────────────────────────────────────────────
 
-function buildEmailHtml(change: ConfigChange, isFreeze: boolean): string {
+export function buildEmailHtml(change: ConfigChange, isFreeze: boolean): string {
   const sevColor: Record<string, string> = {
     CRITICAL: '#dc2626', HIGH: '#ea580c', MEDIUM: '#ca8a04', LOW: '#2563eb',
   };
@@ -136,7 +137,7 @@ function buildEmailHtml(change: ConfigChange, isFreeze: boolean): string {
 
 // ─── Slack Block Kit message ──────────────────────────────────────────────────
 
-function buildSlackPayload(change: ConfigChange, isFreeze: boolean): Record<string, unknown> {
+export function buildSlackPayload(change: ConfigChange, isFreeze: boolean): Record<string, unknown> {
   const sevEmoji: Record<string, string> = {
     CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🔵',
   };
@@ -201,7 +202,7 @@ function buildSlackPayload(change: ConfigChange, isFreeze: boolean): Record<stri
 
 // ─── Channel senders ──────────────────────────────────────────────────────────
 
-async function sendSlack(cfg: Record<string, unknown>, payload: Record<string, unknown>): Promise<void> {
+export async function sendSlack(cfg: Record<string, unknown>, payload: Record<string, unknown>): Promise<void> {
   const webhookUrl = cfg.webhookUrl as string;
   if (!webhookUrl) throw new Error('Slack webhookUrl missing');
 
@@ -224,7 +225,7 @@ async function sendSlack(cfg: Record<string, unknown>, payload: Record<string, u
   });
 }
 
-async function sendSmtp(cfg: Record<string, unknown>, subject: string, html: string): Promise<void> {
+export async function sendSmtp(cfg: Record<string, unknown>, subject: string, html: string): Promise<void> {
   const transport = nodemailer.createTransport({
     host:   cfg.host   as string,
     port:   (cfg.port  as number) ?? 587,
@@ -245,7 +246,7 @@ async function sendSmtp(cfg: Record<string, unknown>, subject: string, html: str
   transport.close();
 }
 
-async function sendO365(cfg: Record<string, unknown>, subject: string, html: string): Promise<void> {
+export async function sendO365(cfg: Record<string, unknown>, subject: string, html: string): Promise<void> {
   // Step 1: acquire token via client credentials (app-only)
   const tenantId     = cfg.tenantId     as string;
   const clientId     = cfg.clientId     as string;
@@ -313,7 +314,7 @@ async function sendO365(cfg: Record<string, unknown>, subject: string, html: str
   });
 }
 
-async function sendGmail(cfg: Record<string, unknown>, subject: string, html: string): Promise<void> {
+export async function sendGmail(cfg: Record<string, unknown>, subject: string, html: string): Promise<void> {
   const fromEmail = cfg.fromEmail as string;
   const toEmails  = cfg.toEmails  as string[];
   const keyJson   = cfg.serviceAccountKey as string;
@@ -321,14 +322,14 @@ async function sendGmail(cfg: Record<string, unknown>, subject: string, html: st
   const serviceAccountKey = JSON.parse(keyJson) as Record<string, unknown>;
 
   // Service account with domain-wide delegation
-  const auth = new google.auth.JWT({
+  const auth = new JWT({
     email:      serviceAccountKey.client_email as string,
     key:        serviceAccountKey.private_key  as string,
     scopes:     ['https://www.googleapis.com/auth/gmail.send'],
     subject:    fromEmail,  // impersonate this Workspace user
   });
 
-  const gmail = google.gmail({ version: 'v1', auth });
+  const gmail = gmailApi({ version: 'v1', auth });
 
   // Build RFC 2822 raw message
   const boundary = `boundary_${Date.now()}`;

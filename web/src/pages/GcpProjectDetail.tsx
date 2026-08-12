@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { Play, CheckCircle, XCircle, ArrowLeft, FileBarChart } from 'lucide-react';
 import { gcpApi } from '../api/gcp';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -11,6 +11,7 @@ import { SeverityDonut } from '../components/charts/SeverityDonut';
 import { ScanStatusBadge, SeverityBadge, FindingStatusBadge } from '../components/ui/Badge';
 import type { GcpAuthMethod, GcpScan, GcpFinding } from '../types';
 import { ApiRequestError } from '../api/client';
+import { VaptReportModal } from '../components/ui/VaptReportModal';
 
 type Tab = 'overview' | 'scans' | 'credentials';
 
@@ -59,6 +60,7 @@ export function GcpProjectDetail() {
   const [credError,    setCredError]    = useState<string | null>(null);
   const [credSuccess,  setCredSuccess]  = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [vaptModalOpen, setVaptModalOpen] = useState(false);
 
   const [authMethod,         setAuthMethod]         = useState<GcpAuthMethod>('SERVICE_ACCOUNT_KEY');
   const [serviceAccountKey,  setServiceAccountKey]  = useState('');
@@ -176,16 +178,36 @@ export function GcpProjectDetail() {
             </div>
           </div>
         </div>
-        <Button
-          variant="primary"
-          leftIcon={<Play size={16} />}
-          loading={triggerScan.isPending}
-          disabled={!project.hasCredentials}
-          onClick={() => triggerScan.mutate()}
-        >
-          Run Scan
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            leftIcon={<FileBarChart size={16} />}
+            onClick={() => setVaptModalOpen(true)}
+            title="Generate a professional VAPT-style security report (view HTML, print to PDF)"
+          >
+            VAPT Report
+          </Button>
+          <Button
+            variant="primary"
+            leftIcon={<Play size={16} />}
+            loading={triggerScan.isPending}
+            disabled={!project.hasCredentials}
+            onClick={() => triggerScan.mutate()}
+          >
+            Run Scan
+          </Button>
+        </div>
       </div>
+
+      {id && (
+        <VaptReportModal
+          open={vaptModalOpen}
+          onClose={() => setVaptModalOpen(false)}
+          provider="GCP"
+          targetId={id}
+          targetName={project.name}
+        />
+      )}
 
       {/* Tabs */}
       <div className="border-b border-gray-200">

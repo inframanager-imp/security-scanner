@@ -109,7 +109,7 @@ router.post('/reconcile-inventory', async (req: Request, res: Response) => {
 
   const changes = await prisma.configChange.findMany({
     where,
-    select: { eventName: true, resourceId: true, resourceName: true, eventTime: true },
+    select: { eventName: true, resourceId: true, resourceName: true, resourceType: true, newValue: true, eventTime: true },
     orderBy: { eventTime: 'asc' },
   });
 

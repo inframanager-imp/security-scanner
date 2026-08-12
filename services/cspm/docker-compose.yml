@@ -59,6 +59,7 @@ services:
       JWT_REFRESH_EXPIRY: "7d"
       CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       PORT: "3001"
+      HOST: "0.0.0.0"
       NODE_ENV: "production"
       CORS_ORIGIN: "http://localhost:8080"
       ADMIN_EMAIL: "admin@example.com"

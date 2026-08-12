@@ -2,39 +2,34 @@
 # CSPM (Node) + ASPM (Python) behind one nginx. Both share ONE Postgres database
 # (schemas cspm + aspm) and Redis. Single UI + single login (CSPM).
 #
-# CONFIG: all deploy-specific values (DB connection, secrets, admin, ports, TZ) come
-# from a `.env` file in this directory — copy `.env.example` → `.env` and edit it.
-# The values below are `${VAR:-default}` fallbacks so the stack still runs if `.env`
-# is absent, but `.env` is the intended place to configure a real deployment.
-#
-# DATABASE: external / DevOps-managed PostgreSQL (defaults to your machine's native
-# PostgreSQL via host.docker.internal:5432). Run infra/db/setup-local-db.sql on it
-# first. (To use a containerised DB instead, uncomment the `postgres` service below
-# and set DB_HOST=postgres in `.env`.)
+# DATABASE: containerised Postgres (local dev/test deploy). Host port 5433 (5432 is
+# taken by an unrelated project's container on this box) -> container port 5432.
+# For a real deployment against an external/managed Postgres instead, see the
+# README "Local DB" section and point the two DATABASE_URLs at host.docker.internal
+# (or the managed host) after running infra/db/setup-local-db.sql against it.
 #
 # Run:    docker compose up -d --build
-# Open:   http://localhost:8080   (login from ADMIN_EMAIL / ADMIN_PASSWORD in .env)
+# Open:   http://localhost:8080   (login: admin@example.com / Admin@123456)
 
 services:
-  # ── Containerised Postgres (DISABLED — using native host Postgres instead) ──
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: vapt-db
-  #   restart: unless-stopped
-  #   environment:
-  #     POSTGRES_USER: scanner
-  #     POSTGRES_PASSWORD: scanner_pass
-  #     POSTGRES_DB: vapt
-  #   ports:
-  #     - '5433:5432'
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #     - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-  #   healthcheck:
-  #     test: ['CMD-SHELL', 'pg_isready -U scanner -d vapt']
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 10
+  postgres:
+    image: postgres:16-alpine
+    container_name: vapt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scanner
+      POSTGRES_PASSWORD: scanner_pass
+      POSTGRES_DB: vapt
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U scanner -d vapt']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -57,27 +52,32 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: "postgresql://${DB_USER:-scanner}:${DB_PASSWORD:-scanner_pass}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5432}/${DB_NAME:-vapt}?schema=cspm"
+      DATABASE_URL: "postgresql://scanner:scanner_pass@postgres:5432/vapt?schema=cspm"
       REDIS_URL: "redis://redis:6379"
-      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-change-me-access-secret-min-32-chars-please}"
-      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-change-me-refresh-secret-min-32-chars-please}"
+      JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
+      JWT_REFRESH_SECRET: "change-me-refresh-secret-min-32-chars-please"
       JWT_ACCESS_EXPIRY: "60m"
       JWT_REFRESH_EXPIRY: "7d"
-      CREDENTIAL_ENCRYPTION_KEY: "${CREDENTIAL_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}"
+      CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       PORT: "3001"
+      HOST: "0.0.0.0"
       NODE_ENV: "production"
-      CORS_ORIGIN: "${CORS_ORIGIN:-http://localhost:8080}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@example.com}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-Admin@123456}"
+      CORS_ORIGIN: "http://localhost:8080"
+      ADMIN_EMAIL: "admin@example.com"
+      ADMIN_PASSWORD: "Admin@123456"
 
   # OWASP ZAP daemon for deep DAST (the ASPM backend proxies through it)
   zap:
     image: zaproxy/zap-stable
     container_name: vapt-zap
     restart: unless-stopped
+    environment:
+      ZAP_PORT: "8090"   # aligns the image's built-in healthcheck with our actual -port below
     command: >
       zap.sh -daemon -host 0.0.0.0 -port 8090
       -config api.disablekey=true
@@ -93,14 +93,17 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - zap
+      postgres:
+        condition: service_healthy
+      zap:
+        condition: service_started
     environment:
-      DATABASE_URL: "postgresql+psycopg://${DB_USER:-scanner}:${DB_PASSWORD:-scanner_pass}@${DB_HOST:-host.docker.internal}:${DB_PORT:-5432}/${DB_NAME:-vapt}"
+      DATABASE_URL: "postgresql+psycopg://scanner:scanner_pass@postgres:5432/vapt"
       DB_SCHEMA: "aspm"
-      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:-change-me-access-secret-min-32-chars-please}"
+      JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
       ZAP_PROXY: "http://zap:8090"
-      # Report timestamps render in this zone. Change TZ in .env for your locale.
-      TZ: "${TZ:-Asia/Kolkata}"
+      # Report timestamps render in this zone (India). Change to your locale as needed.
+      TZ: "Asia/Kolkata"
 
   web:
     build:
@@ -112,8 +115,8 @@ services:
       - cspm-api
       - aspm-api
     ports:
-      - '${WEB_PORT:-8080}:80'
+      - '8080:80'
 
 volumes:
   redis_data:
-  # postgres_data:   # only needed if you re-enable the containerised postgres
+  postgres_data:

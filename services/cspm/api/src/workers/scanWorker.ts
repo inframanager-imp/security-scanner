@@ -4,6 +4,7 @@ import { redis } from '../config/redis';
 import { prisma } from '../config/database';
 import { logger } from '../config/logger';
 import * as credentialService from '../services/credentialService';
+import { dedupKey } from '../services/dedupService';
 import { getIO } from '../socket/index';
 import { ScanEngine } from '../../../src/scanners/engine';
 import type { ScanOptions } from '../../../src/utils/types';
@@ -110,29 +111,8 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     const report = await engine.executeScan(scanOptions);
 
     // ── Deduplication ──────────────────────────────────────────────────────
-    // A finding is a duplicate if an OPEN or ACKNOWLEDGED finding with the
-    // same service + title + resource already exists for this account.
-    // Duplicates are skipped; only net-new findings are inserted.
-
-    /**
-     * Extracts a stable resource identifier from an evidence object.
-     * Tries service-specific keys first, then generic fallbacks.
-     */
-    function resourceFingerprint(evidence: unknown): string {
-      const e = (evidence ?? {}) as Record<string, unknown>;
-      // resourceId is checked first — scanners that need per-sub-resource uniqueness
-      // (e.g. Lambda CVEs, specific SG ports) set this explicitly.
-      if (e.resourceId != null) return String(e.resourceId);
-      for (const key of [
-        'functionName', 'trailName', 'bucket', 'username', 'accessKeyId',
-        'keyId', 'dbId', 'clusterId', 'secretName', 'sgId', 'instanceId',
-        'naclId', 'vpcId', 'requirementId', 'peeringConnectionId',
-        'resourceName', 'arn', 'name', 'id',
-      ]) {
-        if (e[key] != null) return String(e[key]);
-      }
-      return 'account-level';
-    }
+    // See dedupService.ts for the fingerprint/key logic and why checkId is
+    // preferred over service:title. Extracted there so it's unit-testable.
 
     // Fetch all existing active findings for this account in one query
     const existingFindings = await prisma.finding.findMany({
@@ -140,18 +120,19 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
         scan: { accountId },
         findingStatus: { in: ['OPEN', 'ACKNOWLEDGED'] },
       },
-      select: { service: true, title: true, evidence: true },
+      select: { service: true, title: true, checkId: true, evidence: true },
     });
 
     const existingKeys = new Set(
       existingFindings.map(
-        (f) => `${f.service}:${f.title}:${resourceFingerprint(f.evidence)}`,
+        (f) => dedupKey(f.service, f.title, f.checkId, f.evidence),
       ),
     );
 
     // Partition: new findings vs already-known
     const findingData = report.findings.map((finding) => ({
       scanId,
+      checkId: finding.checkId ?? null,
       service: finding.service,
       severity: finding.severity as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO',
       title: finding.title,
@@ -167,7 +148,7 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     // AND within the current batch (two findings with the same key in one scan run).
     const seenKeys = new Set<string>(existingKeys);
     const toInsert = findingData.filter((f) => {
-      const key = `${f.service}:${f.title}:${resourceFingerprint(f.evidence)}`;
+      const key = dedupKey(f.service, f.title, f.checkId, f.evidence);
       if (seenKeys.has(key)) return false;
       seenKeys.add(key);
       return true;
@@ -283,6 +264,12 @@ export function createScanWorker(): Worker<ScanJobData> {
   const worker = new Worker<ScanJobData>('scans', processScanJob, {
     connection: redis,
     concurrency: 3,
+    // Full AWS scans run for minutes; the default 30s lock expires mid-scan and
+    // causes "could not renew lock" + duplicate stalled re-runs. Give the job a
+    // long lock and match the stalled-check cadence to it.
+    lockDuration: 600000,      // 10 min
+    stalledInterval: 600000,   // 10 min
+    maxStalledCount: 1,
   });
 
   worker.on('completed', (job) => {

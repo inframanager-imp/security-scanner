@@ -7,6 +7,7 @@ import AzureClient from '../../../src/azure/client';
 import { azureScanQueue } from '../workers/azureScanWorker';
 import { AZURE_SERVICES } from '../../../src/azure/engine';
 import { triggerInitialPipeline } from '../services/inventoryPipeline';
+import { getAzureComplianceTags } from '../services/azureComplianceService';
 
 const router = Router();
 router.use(authenticate);
@@ -490,7 +491,9 @@ router.get('/:id/findings', async (req: Request, res: Response) => {
       prisma.azureFinding.count({ where }),
     ]);
 
-    res.json({ data: findings, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } });
+    const mapped = findings.map((f) => ({ ...f, complianceTags: getAzureComplianceTags(f.title) }));
+
+    res.json({ data: mapped, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } });
   } catch {
     res.status(500).json({ error: 'Internal server error' });
   }

@@ -2,3 +2,33 @@
 .env
 .env.*
 !.env.example
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+nohup.out
+
+# Caches
+.cache/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+
+# Claude Code project metadata (local-only)
+.claude/
+
+# Personal notes vault (Obsidian) — not application source
+security-scanner-dev-brain/

@@ -1,0 +1,55 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
+import { CheckMetadata } from '../../types';
+
+export const organizationsChecks: CheckMetadata[] = [
+  {
+    checkId: 'organizations_account_part_of_organizations',
+    provider: 'aws',
+    service: 'organizations',
+    title: 'Account Not Part of an AWS Organization',
+    severity: 'MEDIUM',
+    description: 'Checks that the AWS account is a member of an active AWS Organization, enabling centralized governance, SCP guardrails and consolidated logging across accounts.',
+    remediation: 'Create an AWS Organization from the management account (aws organizations create-organization) or accept an invitation to join an existing one, and govern the account through organizational units and SCPs.',
+    tags: ['organizations', 'governance'],
+  },
+  {
+    checkId: 'organizations_delegated_administrators',
+    provider: 'aws',
+    service: 'organizations',
+    title: 'Unapproved Organizations Delegated Administrator',
+    severity: 'CRITICAL',
+    description: 'Checks that AWS Organizations delegated administrator accounts are limited to an explicitly approved allowlist; delegated administrators can change organization-wide policies and settings.',
+    remediation: 'Review delegated administrators in the AWS Organizations console and deregister any account that is not explicitly approved; maintain a governed allowlist of trusted delegated administrator account IDs.',
+    tags: ['organizations', 'delegated-admin', 'governance'],
+  },
+  {
+    checkId: 'organizations_opt_out_ai_services_policy',
+    provider: 'aws',
+    service: 'organizations',
+    title: 'AI Services Opt-Out Policy Not Enforced',
+    severity: 'MEDIUM',
+    description: 'Checks that the organization has an AI services opt-out policy that opts out of all AI services by default and prevents child accounts from overriding it, so service content is not used for model training.',
+    remediation: 'Create an AISERVICES_OPT_OUT_POLICY that sets services.default.opt_out_policy "@@assign" to "optOut" with "@@operators_allowed_for_child_policies" set to ["@@none"], and attach it to the organization root.',
+    tags: ['organizations', 'ai-services', 'data-protection'],
+  },
+  {
+    checkId: 'organizations_scp_check_deny_regions',
+    provider: 'aws',
+    service: 'organizations',
+    title: 'No SCP Restricting AWS Regions',
+    severity: 'HIGH',
+    description: 'Checks that the organization has service control policies with aws:RequestedRegion conditions that deny account activity outside approved AWS Regions.',
+    remediation: 'Create and attach an SCP that denies all actions when aws:RequestedRegion is not in the approved region list (Deny with a StringNotEquals condition), with narrow exemptions for required global services.',
+    tags: ['organizations', 'scp', 'region-restriction'],
+  },
+  {
+    checkId: 'organizations_tags_policies_enabled_and_attached',
+    provider: 'aws',
+    service: 'organizations',
+    title: 'Tag Policies Missing or Not Attached',
+    severity: 'LOW',
+    description: 'Checks that the organization has tag policies defined and attached to at least one target (root, OU or account) to enforce consistent resource tagging.',
+    remediation: 'Enable tag policies in AWS Organizations, define mandatory tag keys and allowed values, and attach the policies to the organization root, OUs or member accounts.',
+    tags: ['organizations', 'tagging', 'governance'],
+  },
+];

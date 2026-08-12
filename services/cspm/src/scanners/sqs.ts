@@ -72,15 +72,13 @@ export class SQSScanner extends BaseScanner {
           );
         });
         if (hasPublic) {
-          findings.push(this.createFinding(
-            'SQS Queue Allows Public Access',
-            `SQS queue "${queueName}" has a policy granting access to all principals ("*"). ` +
-            `Any AWS account can send to or receive from this queue.`,
-            'CRITICAL',
+          findings.push(this.emit(
+            'sqs_queues_not_publicly_accessible',
             { resourceId: queueArn, queueName, queueArn, queueUrl },
-            `Update the SQS queue policy to restrict the Principal to specific AWS accounts or IAM roles. ` +
-            `Remove any Statement with Principal: "*".`,
-            ['sqs', 'access-control'],
+            {
+              message: `SQS queue "${queueName}" has a policy granting access to all principals ("*"). ` +
+                `Any AWS account can send to or receive from this queue.`,
+            }
           ));
         }
       } catch { /* invalid policy JSON */ }
@@ -90,30 +88,28 @@ export class SQSScanner extends BaseScanner {
     const kmsKeyId     = attrs.KmsMasterKeyId ?? '';
     const sqsEncrypted = attrs.SqsManagedSseEnabled === 'true';
     if (!kmsKeyId && !sqsEncrypted) {
-      findings.push(this.createFinding(
-        'SQS Queue Not Encrypted',
-        `SQS queue "${queueName}" does not have server-side encryption enabled. ` +
-        `Messages are stored unencrypted and may expose sensitive data.`,
-        'MEDIUM',
+      findings.push(this.emit(
+        'sqs_queues_server_side_encryption_enabled',
         { resourceId: `${queueArn}::encryption`, queueName, queueArn },
-        `Enable SSE: aws sqs set-queue-attributes --queue-url ${queueUrl} ` +
-        `--attributes KmsMasterKeyId=alias/aws/sqs`,
-        ['sqs', 'encryption'],
+        {
+          message: `SQS queue "${queueName}" does not have server-side encryption enabled. ` +
+            `Messages are stored unencrypted and may expose sensitive data.`,
+          remediation: `Enable SSE: aws sqs set-queue-attributes --queue-url ${queueUrl} ` +
+            `--attributes KmsMasterKeyId=alias/aws/sqs`,
+        }
       ));
     }
 
     // 3. No dead-letter queue configured
     const redrivePolicy = attrs.RedrivePolicy ?? '';
     if (!redrivePolicy) {
-      findings.push(this.createFinding(
-        'SQS Queue Has No Dead-Letter Queue',
-        `SQS queue "${queueName}" has no dead-letter queue (DLQ) configured. ` +
-        `Failed messages will be retried indefinitely and eventually lost, making failures invisible.`,
-        'LOW',
+      findings.push(this.emit(
+        'sqs_queue_dead_letter_queue_configured',
         { resourceId: `${queueArn}::dlq`, queueName, queueArn },
-        `Configure a DLQ: create a separate SQS queue and set it as the RedrivePolicy target ` +
-        `with a maxReceiveCount of 3-5.`,
-        ['sqs', 'reliability'],
+        {
+          message: `SQS queue "${queueName}" has no dead-letter queue (DLQ) configured. ` +
+            `Failed messages will be retried indefinitely and eventually lost, making failures invisible.`,
+        }
       ));
     }
 

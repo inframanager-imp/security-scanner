@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { authenticate } from '../middleware/authenticate';
 import { scoreFrameworks, FRAMEWORKS } from '../services/complianceService';
@@ -13,12 +14,18 @@ const router = Router();
 router.use(authenticate);
 
 /**
- * Build active finding title sets for one or all accounts.
+ * Build active finding sets for one or all accounts.
  * Only OPEN and ACKNOWLEDGED findings count as non-compliant.
+ *
+ * Findings with a stable registry checkId go into the checkId set/counts;
+ * legacy findings (checkId = null) go into the title set/counts so they can
+ * still be matched by byte-identical title.
  */
 async function getActiveFindingData(accountId?: string): Promise<{
   titles: Set<string>;
   counts: Map<string, number>;
+  checkIds: Set<string>;
+  checkIdCounts: Map<string, number>;
 }> {
   // groupBy does not reliably support nested relation filters in Prisma,
   // so resolve scan IDs first when filtering by account.
@@ -32,17 +39,29 @@ async function getActiveFindingData(accountId?: string): Promise<{
   }
 
   const rows = await prisma.finding.groupBy({
-    by: ['title'],
+    by: ['title', 'checkId'],
     where: {
       findingStatus: { in: ['OPEN', 'ACKNOWLEDGED'] },
       ...scanIdFilter,
     },
-    _count: { title: true },
+    _count: { _all: true },
   });
 
-  const titles = new Set<string>(rows.map((r) => r.title));
-  const counts = new Map<string, number>(rows.map((r) => [r.title, r._count.title]));
-  return { titles, counts };
+  const titles = new Set<string>();
+  const counts = new Map<string, number>();
+  const checkIds = new Set<string>();
+  const checkIdCounts = new Map<string, number>();
+  for (const r of rows) {
+    const n = r._count._all;
+    if (r.checkId) {
+      checkIds.add(r.checkId);
+      checkIdCounts.set(r.checkId, (checkIdCounts.get(r.checkId) ?? 0) + n);
+    } else {
+      titles.add(r.title);
+      counts.set(r.title, (counts.get(r.title) ?? 0) + n);
+    }
+  }
+  return { titles, counts, checkIds, checkIdCounts };
 }
 
 // GET /api/compliance?accountId=X
@@ -55,8 +74,8 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const { titles, counts } = await getActiveFindingData(accountId);
-    const scores = scoreFrameworks(titles, counts);
+    const { titles, counts, checkIds, checkIdCounts } = await getActiveFindingData(accountId);
+    const scores = scoreFrameworks(titles, counts, checkIds, checkIdCounts);
 
     res.json({ data: scores });
   } catch (err) {
@@ -75,8 +94,8 @@ router.get('/all', async (req: Request, res: Response) => {
 
     const result = await Promise.all(
       accounts.map(async (acct) => {
-        const { titles, counts } = await getActiveFindingData(acct.id);
-        const scores = scoreFrameworks(titles, counts).map(
+        const { titles, counts, checkIds, checkIdCounts } = await getActiveFindingData(acct.id);
+        const scores = scoreFrameworks(titles, counts, checkIds, checkIdCounts).map(
           ({ controls: _c, ...summary }) => summary,
         );
         return { accountId: acct.id, accountName: acct.name, awsAccountId: acct.awsAccountId, scores };
@@ -169,7 +188,7 @@ router.post('/evidence', async (req: Request, res: Response) => {
     }
     const expiresAt = new Date(Date.now() + 90 * 86_400_000);
     const record = await prisma.complianceEvidence.create({
-      data: { frameworkId, controlId, provider, accountId, evidenceType: 'MANUAL', status, summary, detail: detail ?? {}, expiresAt },
+      data: { frameworkId, controlId, provider, accountId, evidenceType: 'MANUAL', status, summary, detail: (detail ?? {}) as Prisma.InputJsonValue, expiresAt },
     });
     res.json({ data: record });
   } catch (err) {

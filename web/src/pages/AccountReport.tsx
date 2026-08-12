@@ -8,9 +8,11 @@ import {
   ChevronUp,
   Search,
   CheckSquare,
+  FileBarChart,
 } from 'lucide-react';
 import { findingsApi } from '../api/findings';
 import { accountsApi } from '../api/accounts';
+import { VaptReportModal } from '../components/ui/VaptReportModal';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Select } from '../components/ui/Select';
@@ -22,6 +24,8 @@ import { Pagination } from '../components/ui/Table';
 import type { Finding, Severity, FindingStatus } from '../types';
 import { getResourceName } from '../utils/resourceName';
 import { AwsReadinessSection } from '../components/ui/ReadinessSection';
+import { IamUsersTable } from '../components/ui/IamUsersTable';
+import { ComplianceTagBadges } from '../components/ui/ComplianceTagBadges';
 
 const SEVERITY_OPTIONS = [
   { value: '', label: 'All Severities' },
@@ -70,7 +74,7 @@ interface ExpandedDetailProps {
 function ExpandedDetail({ finding }: ExpandedDetailProps) {
   return (
     <tr>
-      <td colSpan={9} className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+      <td colSpan={10} className="px-6 py-4 bg-gray-50 border-b border-gray-200">
         <div className="grid grid-cols-2 gap-6 text-sm">
           <div>
             <h4 className="font-semibold text-gray-900 mb-2">Description</h4>
@@ -160,6 +164,7 @@ export function AccountReport() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<FindingStatus>('ACKNOWLEDGED');
+  const [vaptModalOpen, setVaptModalOpen] = useState(false);
 
   const { data: account } = useQuery({
     queryKey: ['accounts', accountId],
@@ -322,11 +327,33 @@ export function AccountReport() {
               Update {selected.size} selected
             </Button>
           )}
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<FileBarChart size={14} />}
+            onClick={() => setVaptModalOpen(true)}
+            title="Generate a professional VAPT-style security report (view HTML, print to PDF)"
+          >
+            VAPT Report
+          </Button>
         </div>
       </div>
 
+      {accountId && (
+        <VaptReportModal
+          open={vaptModalOpen}
+          onClose={() => setVaptModalOpen(false)}
+          provider="AWS"
+          targetId={accountId}
+          targetName={account?.name ?? 'this account'}
+        />
+      )}
+
       {/* Compliance Readiness */}
       {accountId && <AwsReadinessSection accountId={accountId} />}
+
+      {/* IAM Users */}
+      {accountId && <IamUsersTable accountId={accountId} />}
 
       {/* Findings Table */}
       <Card padding={false}>
@@ -401,6 +428,9 @@ export function AccountReport() {
                   </th>
                   <SortTh label="Finding" field="title" sort={sort} onSort={handleSort} className="min-w-48" />
                   <SortTh label="Status" field="status" sort={sort} onSort={handleSort} />
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Compliance
+                  </th>
                   <SortTh label="Discovered" field="discoveredAt" sort={sort} onSort={handleSort} />
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Action
@@ -411,7 +441,7 @@ export function AccountReport() {
                 {findings.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       className="px-4 py-12 text-center text-gray-500 text-sm"
                     >
                       No findings match the current filters.
@@ -499,6 +529,9 @@ export function AccountReport() {
                           </td>
                           <td className="px-4 py-3">
                             <FindingStatusBadge status={finding.findingStatus} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <ComplianceTagBadges tags={finding.complianceTags} />
                           </td>
                           <td
                             className="px-4 py-3 text-sm text-gray-500 cursor-pointer whitespace-nowrap"

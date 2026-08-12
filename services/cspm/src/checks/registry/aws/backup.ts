@@ -1,0 +1,55 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
+import { CheckMetadata } from '../../types';
+
+export const backupChecks: CheckMetadata[] = [
+  {
+    checkId: 'backup_vaults_exist',
+    provider: 'aws',
+    service: 'backup',
+    title: 'No Backup Vaults Exist',
+    severity: 'LOW',
+    description: 'Checks that at least one AWS Backup vault exists in the region to store and organize recovery points for backup plans and copies.',
+    remediation: 'Create a backup vault in each required region, encrypt it with a customer-managed KMS key, restrict access with least privilege, and consider Vault Lock to prevent tampering.',
+    tags: ['backup', 'resilience', 'data-protection'],
+  },
+  {
+    checkId: 'backup_plans_exist',
+    provider: 'aws',
+    service: 'backup',
+    title: 'No Backup Plans Configured',
+    severity: 'LOW',
+    description: 'Checks that at least one AWS Backup plan exists to schedule and retain recovery points; backup vaults without any plan mean resources are not being backed up.',
+    remediation: 'Create backup plans for critical workloads with schedules, retention and lifecycle rules that meet RPO/RTO, use tag-based resource selections, and regularly test restores.',
+    tags: ['backup', 'resilience', 'data-protection'],
+  },
+  {
+    checkId: 'backup_reportplans_exist',
+    provider: 'aws',
+    service: 'backup',
+    title: 'No Backup Report Plans Configured',
+    severity: 'LOW',
+    description: 'Checks that accounts with backup plans also have at least one AWS Backup report plan generating jobs or compliance reports for backup activity.',
+    remediation: 'Create a report plan covering the relevant accounts and regions, review the generated reports routinely, and alert on anomalies in backup job and compliance status.',
+    tags: ['backup', 'audit', 'reporting'],
+  },
+  {
+    checkId: 'backup_vaults_encrypted',
+    provider: 'aws',
+    service: 'backup',
+    title: 'Backup Vault Not Encrypted',
+    severity: 'MEDIUM',
+    description: 'Checks that AWS Backup vaults are encrypted at rest with a KMS key protecting the stored recovery points.',
+    remediation: 'Encrypt backup vaults with a customer-managed KMS key, enforce least privilege in key policies, enable key rotation, and separate key administrators from backup operators.',
+    tags: ['backup', 'encryption', 'kms'],
+  },
+  {
+    checkId: 'backup_recovery_point_encrypted',
+    provider: 'aws',
+    service: 'backup',
+    title: 'Backup Recovery Point Not Encrypted',
+    severity: 'MEDIUM',
+    description: 'Checks that AWS Backup recovery points are encrypted at rest, regardless of the source resource encryption.',
+    remediation: 'Ensure recovery points are encrypted with KMS, preferring customer-managed keys, apply least privilege to keys and vaults, and require encrypted copies across accounts and regions.',
+    tags: ['backup', 'encryption', 'kms'],
+  },
+];

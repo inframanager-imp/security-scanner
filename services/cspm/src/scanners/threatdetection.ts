@@ -18,10 +18,22 @@ import {
   LookupEventsCommand,
   type Event as CTEvent,
 } from '@aws-sdk/client-cloudtrail';
+// GuardDuty posture checks derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
+import {
+  GuardDutyClient,
+  ListDetectorsCommand,
+  GetDetectorCommand,
+  GetAdministratorAccountCommand,
+  ListMembersCommand,
+  ListFindingsCommand,
+  ListOrganizationAdminAccountsCommand,
+  DescribeOrganizationConfigurationCommand,
+} from '@aws-sdk/client-guardduty';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
 import { ScanningResult } from '../utils/types';
 import logger from '../utils/logger';
+import { retry } from '../utils/helpers';
 
 // ─── Time windows ────────────────────────────────────────────────────────────
 
@@ -105,8 +117,11 @@ async function lookupEvents(
 // ─── Scanner ─────────────────────────────────────────────────────────────────
 
 export class ThreatDetectionScanner extends BaseScanner {
+  private guardduty: GuardDutyClient;
+
   constructor(client: AWSClient) {
     super(client, 'THREAT');
+    this.guardduty = new GuardDutyClient(client.getClientConfig());
   }
 
   /**
@@ -130,6 +145,7 @@ export class ThreatDetectionScanner extends BaseScanner {
       this.detectPublicSnapshots(),
       this.detectHighComputeLaunch(),
       this.detectConfigTampering(),
+      this.checkGuardDutyPosture(),
     ];
 
     const results = await Promise.allSettled(checks);
@@ -189,13 +205,14 @@ export class ThreatDetectionScanner extends BaseScanner {
         const actor  = actorFromEvent(e);
         const trail  = raw.requestParameters?.name ?? raw.requestParameters?.trailARN ?? 'Unknown';
         const f: ScanningResult & { _eventId?: string } = {
-          ...this.createFinding(
-            'Threat: CloudTrail Logging Disabled or Modified',
-            `CloudTrail "${eventName}" by ${actor} at ${e.EventTime?.toISOString()}. Trail: ${trail}.`,
-            eventName === 'DeleteTrail' ? 'CRITICAL' : 'HIGH',
+          ...this.emit(
+            'threatdetection_cloudtrail_logging_tampering',
             { resourceId: `threat::cloudtrail-tamper::${actor}::${e.EventTime?.getTime()}`, threatCategory: 'DefenseEvasion', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), eventName, affectedResource: trail, rawEvents: [raw] },
-            `Re-enable CloudTrail: aws cloudtrail start-logging --name ${trail}`,
-            ['threat', 'cloudtrail', 'defense-evasion'],
+            {
+              message: `CloudTrail "${eventName}" by ${actor} at ${e.EventTime?.toISOString()}. Trail: ${trail}.`,
+              remediation: `Re-enable CloudTrail: aws cloudtrail start-logging --name ${trail}`,
+              severity: eventName === 'DeleteTrail' ? 'CRITICAL' : 'HIGH',
+            },
           ),
           _eventId: e.EventId ?? `${eventName}-${e.EventTime?.getTime()}`,
         };
@@ -218,13 +235,12 @@ export class ThreatDetectionScanner extends BaseScanner {
         if (e.EventName === 'ConsoleLogin') continue;
         const raw = parseRaw(e);
         const f: ScanningResult & { _eventId?: string } = {
-          ...this.createFinding(
-            'Threat: Root Account API Activity',
-            `Root account performed "${e.EventName}" at ${e.EventTime?.toISOString()} from IP ${sourceIPFromEvent(e)}.`,
-            'CRITICAL',
+          ...this.emit(
+            'threatdetection_root_account_activity',
             { resourceId: `threat::root::${e.EventTime?.getTime()}`, threatCategory: 'UnauthorizedAccess', actor: 'root', eventName: e.EventName, eventTime: e.EventTime?.toISOString(), sourceIP: sourceIPFromEvent(e), rawEvents: [raw] },
-            'Immediately investigate and rotate root credentials. Enable MFA on root account.',
-            ['threat', 'root'],
+            {
+              message: `Root account performed "${e.EventName}" at ${e.EventTime?.toISOString()} from IP ${sourceIPFromEvent(e)}.`,
+            },
           ),
           _eventId: e.EventId ?? `root-${e.EventTime?.getTime()}`,
         };
@@ -244,13 +260,13 @@ export class ThreatDetectionScanner extends BaseScanner {
       if (raw.additionalEventData?.MFAUsed === 'No' && raw.responseElements?.ConsoleLogin === 'Success' && raw.userIdentity?.type !== 'Root') {
         const actor = actorFromEvent(e);
         findings.push({
-          ...this.createFinding(
-            'Threat: Console Login Without MFA',
-            `"${actor}" logged in without MFA at ${e.EventTime?.toISOString()} from ${sourceIPFromEvent(e)}.`,
-            'HIGH',
+          ...this.emit(
+            'threatdetection_console_login_without_mfa',
             { resourceId: `threat::no-mfa::${actor}::${e.EventTime?.getTime()}`, threatCategory: 'UnauthorizedAccess', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), rawEvents: [raw] },
-            `Enforce MFA on IAM user "${actor}".`,
-            ['threat', 'mfa'],
+            {
+              message: `"${actor}" logged in without MFA at ${e.EventTime?.toISOString()} from ${sourceIPFromEvent(e)}.`,
+              remediation: `Enforce MFA on IAM user "${actor}".`,
+            },
           ),
           _eventId: e.EventId ?? `mfa-${e.EventTime?.getTime()}`,
         });
@@ -270,13 +286,13 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor  = actorFromEvent(e);
       const target = raw.requestParameters?.userName ?? 'Unknown';
       findings.push({
-        ...this.createFinding(
-          'Threat: Admin Policy Attached to User',
-          `AdministratorAccess attached to "${target}" by "${actor}" at ${e.EventTime?.toISOString()}.`,
-          'CRITICAL',
+        ...this.emit(
+          'threatdetection_admin_policy_attached_to_user',
           { resourceId: `threat::admin-attach::${target}::${e.EventTime?.getTime()}`, threatCategory: 'Persistence', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), affectedResource: target, rawEvents: [raw] },
-          `Detach AdministratorAccess from "${target}" immediately.`,
-          ['threat', 'persistence'],
+          {
+            message: `AdministratorAccess attached to "${target}" by "${actor}" at ${e.EventTime?.toISOString()}.`,
+            remediation: `Detach AdministratorAccess from "${target}" immediately.`,
+          },
         ),
         _eventId: e.EventId ?? `admin-${e.EventTime?.getTime()}`,
       });
@@ -295,13 +311,13 @@ export class ThreatDetectionScanner extends BaseScanner {
       const target = raw.responseElements?.accessKey?.userName ?? raw.requestParameters?.userName ?? 'Unknown';
       const keyId  = raw.responseElements?.accessKey?.accessKeyId ?? '';
       findings.push({
-        ...this.createFinding(
-          'Threat: New Access Key Created',
-          `New access key ${keyId ? `(${keyId}) ` : ''}for "${target}" by "${actor}" at ${e.EventTime?.toISOString()}.`,
-          'HIGH',
+        ...this.emit(
+          'threatdetection_new_access_key_created',
           { resourceId: `threat::new-key::${target}::${e.EventTime?.getTime()}`, threatCategory: 'Persistence', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), affectedResource: target, accessKeyId: keyId, rawEvents: [raw] },
-          `Verify this key creation was authorized. Deactivate if not: aws iam update-access-key --access-key-id ${keyId} --status Inactive`,
-          ['threat', 'access-key'],
+          {
+            message: `New access key ${keyId ? `(${keyId}) ` : ''}for "${target}" by "${actor}" at ${e.EventTime?.toISOString()}.`,
+            remediation: `Verify this key creation was authorized. Deactivate if not: aws iam update-access-key --access-key-id ${keyId} --status Inactive`,
+          },
         ),
         _eventId: e.EventId ?? `key-${e.EventTime?.getTime()}`,
       });
@@ -323,13 +339,13 @@ export class ThreatDetectionScanner extends BaseScanner {
         const actor  = actorFromEvent(e);
         const target = raw.requestParameters?.userName ?? raw.requestParameters?.roleName ?? 'Unknown';
         findings.push({
-          ...this.createFinding(
-            'Threat: IAM Policy Privilege Escalation',
-            `Wildcard policy attached to "${target}" by "${actor}" via ${eventName} at ${e.EventTime?.toISOString()}.`,
-            'CRITICAL',
+          ...this.emit(
+            'cloudtrail_threat_detection_privilege_escalation',
             { resourceId: `threat::priv-esc::${target}::${e.EventTime?.getTime()}`, threatCategory: 'PrivilegeEscalation', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), affectedResource: target, rawEvents: [raw] },
-            `Delete the inline policy from "${target}" immediately.`,
-            ['threat', 'privilege-escalation'],
+            {
+              message: `Wildcard policy attached to "${target}" by "${actor}" via ${eventName} at ${e.EventTime?.toISOString()}.`,
+              remediation: `Delete the inline policy from "${target}" immediately.`,
+            },
           ),
           _eventId: e.EventId ?? `privesc-${e.EventTime?.getTime()}`,
         });
@@ -350,13 +366,13 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor  = actorFromEvent(e);
       const snapId = raw.requestParameters?.snapshotId ?? 'Unknown';
       findings.push({
-        ...this.createFinding(
-          'Threat: EBS Snapshot Made Public',
-          `Snapshot "${snapId}" made public by "${actor}" at ${e.EventTime?.toISOString()}.`,
-          'CRITICAL',
+        ...this.emit(
+          'threatdetection_ebs_snapshot_made_public',
           { resourceId: `threat::public-snapshot::${snapId}`, threatCategory: 'Exfiltration', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), affectedResource: snapId, rawEvents: [raw] },
-          `Make snapshot private: aws ec2 modify-snapshot-attribute --snapshot-id ${snapId} --attribute createVolumePermission --operation-type remove --group-names all`,
-          ['threat', 'exfiltration'],
+          {
+            message: `Snapshot "${snapId}" made public by "${actor}" at ${e.EventTime?.toISOString()}.`,
+            remediation: `Make snapshot private: aws ec2 modify-snapshot-attribute --snapshot-id ${snapId} --attribute createVolumePermission --operation-type remove --group-names all`,
+          },
         ),
         _eventId: e.EventId ?? `snapshot-${snapId}`,
       });
@@ -376,13 +392,13 @@ export class ThreatDetectionScanner extends BaseScanner {
       if (!HIGH_COMPUTE_TYPES.has(prefix)) continue;
       const actor = actorFromEvent(e);
       findings.push({
-        ...this.createFinding(
-          'Threat: High-Compute Instance Launch (Crypto Mining Indicator)',
-          `Instance type "${instanceType}" launched by "${actor}" at ${e.EventTime?.toISOString()} from ${sourceIPFromEvent(e)}.`,
-          'HIGH',
+        ...this.emit(
+          'threatdetection_high_compute_instance_launch',
           { resourceId: `threat::high-compute::${actor}::${e.EventTime?.getTime()}`, threatCategory: 'Impact', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), instanceType, rawEvents: [raw] },
-          `If unauthorized, terminate instance(s) and revoke "${actor}" credentials.`,
-          ['threat', 'crypto-mining'],
+          {
+            message: `Instance type "${instanceType}" launched by "${actor}" at ${e.EventTime?.toISOString()} from ${sourceIPFromEvent(e)}.`,
+            remediation: `If unauthorized, terminate instance(s) and revoke "${actor}" credentials.`,
+          },
         ),
         _eventId: e.EventId ?? `compute-${e.EventTime?.getTime()}`,
       });
@@ -399,13 +415,12 @@ export class ThreatDetectionScanner extends BaseScanner {
       for (const e of events) {
         const actor = actorFromEvent(e);
         findings.push({
-          ...this.createFinding(
-            'Threat: AWS Config Recorder Stopped',
-            `"${eventName}" by "${actor}" at ${e.EventTime?.toISOString()}.`,
-            'HIGH',
+          ...this.emit(
+            'threatdetection_config_recorder_stopped',
             { resourceId: `threat::config-tamper::${actor}::${e.EventTime?.getTime()}`, threatCategory: 'DefenseEvasion', actor, sourceIP: sourceIPFromEvent(e), eventTime: e.EventTime?.toISOString(), eventName, rawEvents: [parseRaw(e)] },
-            `Re-enable AWS Config recording immediately.`,
-            ['threat', 'defense-evasion'],
+            {
+              message: `"${eventName}" by "${actor}" at ${e.EventTime?.toISOString()}.`,
+            },
           ),
           _eventId: e.EventId ?? `config-${e.EventTime?.getTime()}`,
         });
@@ -427,11 +442,8 @@ export class ThreatDetectionScanner extends BaseScanner {
         const actor  = actorFromEvent(e);
         const trailArn = raw.requestParameters?.name ?? raw.requestParameters?.trailARN ?? 'Unknown trail';
         findings.push(
-          this.createFinding(
-            'Threat: CloudTrail Logging Disabled or Modified',
-            `CloudTrail event "${eventName}" detected at ${e.EventTime?.toISOString()} by ${actor}. ` +
-            `Trail: ${trailArn}. This may indicate an attacker disabling audit logging to cover their tracks.`,
-            eventName === 'DeleteTrail' ? 'CRITICAL' : 'HIGH',
+          this.emit(
+            'threatdetection_cloudtrail_logging_tampering',
             {
               resourceId:      `threat::cloudtrail-tamper::${actor}::${e.EventTime?.getTime()}`,
               threatCategory:  'DefenseEvasion',
@@ -442,9 +454,13 @@ export class ThreatDetectionScanner extends BaseScanner {
               affectedResource: trailArn,
               rawEvents:       [raw],
             },
-            `Re-enable CloudTrail logging immediately: aws cloudtrail start-logging --name ${trailArn}. ` +
-            `Investigate who performed this action and revoke access if unauthorized.`,
-            ['threat', 'cloudtrail', 'defense-evasion'],
+            {
+              message: `CloudTrail event "${eventName}" detected at ${e.EventTime?.toISOString()} by ${actor}. ` +
+                `Trail: ${trailArn}. This may indicate an attacker disabling audit logging to cover their tracks.`,
+              remediation: `Re-enable CloudTrail logging immediately: aws cloudtrail start-logging --name ${trailArn}. ` +
+                `Investigate who performed this action and revoke access if unauthorized.`,
+              severity: eventName === 'DeleteTrail' ? 'CRITICAL' : 'HIGH',
+            },
           ),
         );
       }
@@ -480,11 +496,8 @@ export class ThreatDetectionScanner extends BaseScanner {
 
     const eventNames = [...new Set(apiEvents.map((e) => e.EventName ?? 'Unknown'))];
     findings.push(
-      this.createFinding(
-        'Threat: Root Account API Activity',
-        `${apiEvents.length} API call(s) made using the AWS root account in the last 24 hours. ` +
-        `Events: ${eventNames.slice(0, 5).join(', ')}. Root account should never be used for daily operations.`,
-        'CRITICAL',
+      this.emit(
+        'threatdetection_root_account_activity',
         {
           resourceId:      `threat::root-activity::${start.toISOString()}`,
           threatCategory:  'UnauthorizedAccess',
@@ -494,9 +507,10 @@ export class ThreatDetectionScanner extends BaseScanner {
           eventTime:       apiEvents[0].EventTime?.toISOString(),
           rawEvents:       apiEvents.slice(0, 3).map(parseRaw),
         },
-        `Immediately rotate root account credentials. Enable MFA on root. ` +
-        `Delete root access keys if any exist. Use IAM roles for all operations.`,
-        ['threat', 'root', 'unauthorized-access'],
+        {
+          message: `${apiEvents.length} API call(s) made using the AWS root account in the last 24 hours. ` +
+            `Events: ${eventNames.slice(0, 5).join(', ')}. Root account should never be used for daily operations.`,
+        },
       ),
     );
     return findings;
@@ -523,11 +537,8 @@ export class ThreatDetectionScanner extends BaseScanner {
     for (const e of noMFALogins) {
       const actor = actorFromEvent(e);
       findings.push(
-        this.createFinding(
-          'Threat: Console Login Without MFA',
-          `IAM user "${actor}" logged into the AWS console without MFA at ${e.EventTime?.toISOString()} ` +
-          `from IP ${sourceIPFromEvent(e)}. This is a credential compromise risk.`,
-          'HIGH',
+        this.emit(
+          'threatdetection_console_login_without_mfa',
           {
             resourceId:     `threat::no-mfa-login::${actor}::${e.EventTime?.getTime()}`,
             threatCategory: 'UnauthorizedAccess',
@@ -538,9 +549,10 @@ export class ThreatDetectionScanner extends BaseScanner {
             affectedResource: actor,
             rawEvents:      [parseRaw(e)],
           },
-          `Enforce MFA for all IAM users via IAM policy condition aws:MultiFactorAuthPresent. ` +
-          `Temporarily disable the user's console access until MFA is configured.`,
-          ['threat', 'mfa', 'unauthorized-access'],
+          {
+            message: `IAM user "${actor}" logged into the AWS console without MFA at ${e.EventTime?.toISOString()} ` +
+              `from IP ${sourceIPFromEvent(e)}. This is a credential compromise risk.`,
+          },
         ),
       );
     }
@@ -562,11 +574,8 @@ export class ThreatDetectionScanner extends BaseScanner {
     for (const [ip, ipEvents] of byIP) {
       if (ipEvents.length < 10) continue;
       findings.push(
-        this.createFinding(
-          'Threat: Brute Force Login Attempt',
-          `${ipEvents.length} failed console login attempts from IP ${ip} in the last 24 hours. ` +
-          `This indicates a brute-force or credential stuffing attack.`,
-          'HIGH',
+        this.emit(
+          'threatdetection_brute_force_login_attempts',
           {
             resourceId:     `threat::brute-force::${ip}::${start.toISOString()}`,
             threatCategory: 'UnauthorizedAccess',
@@ -575,9 +584,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             eventTime:      ipEvents[0].EventTime?.toISOString(),
             rawEvents:      ipEvents.slice(0, 3).map(parseRaw),
           },
-          `Block the source IP ${ip} at the network/WAF level. ` +
-          `Enable account lockout policies. Review whether any login succeeded.`,
-          ['threat', 'brute-force', 'unauthorized-access'],
+          {
+            message: `${ipEvents.length} failed console login attempts from IP ${ip} in the last 24 hours. ` +
+              `This indicates a brute-force or credential stuffing attack.`,
+            remediation: `Block the source IP ${ip} at the network/WAF level. ` +
+              `Enable account lockout policies. Review whether any login succeeded.`,
+          },
         ),
       );
     }
@@ -607,11 +619,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor  = actorFromEvent(e);
       const target = raw.requestParameters?.userName ?? raw.requestParameters?.userArn ?? 'Unknown';
       findings.push(
-        this.createFinding(
-          'Threat: Admin Policy Attached to User',
-          `AdministratorAccess policy attached to "${target}" by "${actor}" at ${e.EventTime?.toISOString()}. ` +
-          `This grants full AWS access and may indicate persistence or privilege escalation.`,
-          'CRITICAL',
+        this.emit(
+          'threatdetection_admin_policy_attached_to_user',
           {
             resourceId:      `threat::admin-attach::${target}::${e.EventTime?.getTime()}`,
             threatCategory:  'Persistence',
@@ -622,10 +631,13 @@ export class ThreatDetectionScanner extends BaseScanner {
             affectedResource: target,
             rawEvents:       [raw],
           },
-          `Immediately detach AdministratorAccess from "${target}": ` +
-          `aws iam detach-user-policy --user-name ${target} --policy-arn arn:aws:iam::aws:policy/AdministratorAccess. ` +
-          `Investigate whether this was authorized.`,
-          ['threat', 'persistence', 'admin'],
+          {
+            message: `AdministratorAccess policy attached to "${target}" by "${actor}" at ${e.EventTime?.toISOString()}. ` +
+              `This grants full AWS access and may indicate persistence or privilege escalation.`,
+            remediation: `Immediately detach AdministratorAccess from "${target}": ` +
+              `aws iam detach-user-policy --user-name ${target} --policy-arn arn:aws:iam::aws:policy/AdministratorAccess. ` +
+              `Investigate whether this was authorized.`,
+          },
         ),
       );
     }
@@ -636,11 +648,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor  = actorFromEvent(e);
       const newUser = raw.requestParameters?.userName ?? 'Unknown';
       findings.push(
-        this.createFinding(
-          'Threat: New IAM User Created',
-          `New IAM user "${newUser}" created by "${actor}" at ${e.EventTime?.toISOString()} ` +
-          `from IP ${sourceIPFromEvent(e)}. Verify this was an authorized action.`,
-          'MEDIUM',
+        this.emit(
+          'threatdetection_new_iam_user_created',
           {
             resourceId:      `threat::new-user::${newUser}::${e.EventTime?.getTime()}`,
             threatCategory:  'Persistence',
@@ -651,9 +660,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             affectedResource: newUser,
             rawEvents:       [raw],
           },
-          `Verify that user "${newUser}" was created as part of an authorized onboarding process. ` +
-          `If unauthorized, delete immediately: aws iam delete-user --user-name ${newUser}.`,
-          ['threat', 'persistence', 'iam'],
+          {
+            message: `New IAM user "${newUser}" created by "${actor}" at ${e.EventTime?.toISOString()} ` +
+              `from IP ${sourceIPFromEvent(e)}. Verify this was an authorized action.`,
+            remediation: `Verify that user "${newUser}" was created as part of an authorized onboarding process. ` +
+              `If unauthorized, delete immediately: aws iam delete-user --user-name ${newUser}.`,
+          },
         ),
       );
     }
@@ -675,11 +687,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       const target  = raw.responseElements?.accessKey?.userName ?? raw.requestParameters?.userName ?? 'Unknown';
       const keyId   = raw.responseElements?.accessKey?.accessKeyId ?? '';
       findings.push(
-        this.createFinding(
-          'Threat: New Access Key Created',
-          `New access key ${keyId ? `(${keyId}) ` : ''}created for user "${target}" by "${actor}" ` +
-          `at ${e.EventTime?.toISOString()} from IP ${sourceIPFromEvent(e)}.`,
-          'HIGH',
+        this.emit(
+          'threatdetection_new_access_key_created',
           {
             resourceId:      `threat::new-key::${target}::${e.EventTime?.getTime()}`,
             threatCategory:  'Persistence',
@@ -691,9 +700,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             accessKeyId:     keyId,
             rawEvents:       [raw],
           },
-          `Verify this key creation was authorized. If not, deactivate immediately: ` +
-          `aws iam update-access-key --user-name ${target} --access-key-id ${keyId} --status Inactive`,
-          ['threat', 'persistence', 'access-key'],
+          {
+            message: `New access key ${keyId ? `(${keyId}) ` : ''}created for user "${target}" by "${actor}" ` +
+              `at ${e.EventTime?.toISOString()} from IP ${sourceIPFromEvent(e)}.`,
+            remediation: `Verify this key creation was authorized. If not, deactivate immediately: ` +
+              `aws iam update-access-key --user-name ${target} --access-key-id ${keyId} --status Inactive`,
+          },
         ),
       );
     }
@@ -722,11 +734,8 @@ export class ThreatDetectionScanner extends BaseScanner {
         const actor  = actorFromEvent(e);
         const target = raw.requestParameters?.userName ?? raw.requestParameters?.roleName ?? raw.requestParameters?.groupName ?? 'Unknown';
         findings.push(
-          this.createFinding(
-            'Threat: IAM Policy Privilege Escalation',
-            `Inline policy with wildcard permissions attached to "${target}" by "${actor}" ` +
-            `via ${eventName} at ${e.EventTime?.toISOString()}. This grants unrestricted AWS access.`,
-            'CRITICAL',
+          this.emit(
+            'cloudtrail_threat_detection_privilege_escalation',
             {
               resourceId:      `threat::priv-esc::${target}::${e.EventTime?.getTime()}`,
               threatCategory:  'PrivilegeEscalation',
@@ -737,9 +746,12 @@ export class ThreatDetectionScanner extends BaseScanner {
               affectedResource: target,
               rawEvents:       [raw],
             },
-            `Delete the inline policy immediately: aws iam delete-user-policy --user-name ${target} --policy-name <PolicyName>. ` +
-            `Replace with least-privilege managed policies.`,
-            ['threat', 'privilege-escalation', 'iam'],
+            {
+              message: `Inline policy with wildcard permissions attached to "${target}" by "${actor}" ` +
+                `via ${eventName} at ${e.EventTime?.toISOString()}. This grants unrestricted AWS access.`,
+              remediation: `Delete the inline policy immediately: aws iam delete-user-policy --user-name ${target} --policy-name <PolicyName>. ` +
+                `Replace with least-privilege managed policies.`,
+            },
           ),
         );
       }
@@ -763,11 +775,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor = actorFromEvent(e);
       if (actor === 'root') continue; // root calling this is covered elsewhere
       findings.push(
-        this.createFinding(
-          'Threat: IAM Enumeration Detected',
-          `"GetAccountAuthorizationDetails" called by "${actor}" at ${e.EventTime?.toISOString()} ` +
-          `from IP ${sourceIPFromEvent(e)}. This API dumps the entire IAM configuration — a common reconnaissance technique.`,
-          'HIGH',
+        this.emit(
+          'threatdetection_iam_enumeration',
           {
             resourceId:     `threat::iam-enum::${actor}::${e.EventTime?.getTime()}`,
             threatCategory: 'Reconnaissance',
@@ -777,9 +786,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             eventName:      'GetAccountAuthorizationDetails',
             rawEvents:      [parseRaw(e)],
           },
-          `Review whether "${actor}" should have iam:GetAccountAuthorizationDetails permission. ` +
-          `Restrict this permission to only security/audit roles.`,
-          ['threat', 'reconnaissance', 'iam'],
+          {
+            message: `"GetAccountAuthorizationDetails" called by "${actor}" at ${e.EventTime?.toISOString()} ` +
+              `from IP ${sourceIPFromEvent(e)}. This API dumps the entire IAM configuration — a common reconnaissance technique.`,
+            remediation: `Review whether "${actor}" should have iam:GetAccountAuthorizationDetails permission. ` +
+              `Restrict this permission to only security/audit roles.`,
+          },
         ),
       );
     }
@@ -814,11 +826,8 @@ export class ThreatDetectionScanner extends BaseScanner {
     for (const [actor, eventNames] of byActor) {
       if (eventNames.size < 5) continue; // only flag if called 5+ different Describe APIs
       findings.push(
-        this.createFinding(
-          'Threat: Infrastructure Enumeration Detected',
-          `"${actor}" called ${eventNames.size} different discovery APIs in the last 24 hours ` +
-          `(${[...eventNames].join(', ')}). This pattern indicates automated reconnaissance of your AWS environment.`,
-          'MEDIUM',
+        this.emit(
+          'cloudtrail_threat_detection_enumeration',
           {
             resourceId:     `threat::infra-enum::${actor}::${start.toISOString()}`,
             threatCategory: 'Reconnaissance',
@@ -827,9 +836,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             eventNames:     [...eventNames],
             eventTime:      start.toISOString(),
           },
-          `Investigate whether "${actor}" is a legitimate automation tool or compromised credential. ` +
-          `Apply least-privilege — restrict discovery APIs to only needed services.`,
-          ['threat', 'reconnaissance', 'enumeration'],
+          {
+            message: `"${actor}" called ${eventNames.size} different discovery APIs in the last 24 hours ` +
+              `(${[...eventNames].join(', ')}). This pattern indicates automated reconnaissance of your AWS environment.`,
+            remediation: `Investigate whether "${actor}" is a legitimate automation tool or compromised credential. ` +
+              `Apply least-privilege — restrict discovery APIs to only needed services.`,
+          },
         ),
       );
     }
@@ -864,11 +876,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       }).filter(Boolean);
 
       findings.push(
-        this.createFinding(
-          'Threat: Mass EC2 Instance Termination',
-          `${events.length} TerminateInstances calls by "${actor}" in the last 24 hours ` +
-          `affecting ${instanceIds.length} instance(s). This may indicate ransomware, sabotage, or a compromised credential.`,
-          'CRITICAL',
+        this.emit(
+          'threatdetection_mass_ec2_termination',
           {
             resourceId:      `threat::mass-terminate::${actor}::${start.toISOString()}`,
             threatCategory:  'Impact',
@@ -878,9 +887,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             eventTime:       events[0].EventTime?.toISOString(),
             rawEvents:       events.slice(0, 2).map(parseRaw),
           },
-          `Immediately revoke "${actor}" credentials. Restore instances from snapshots/AMIs. ` +
-          `Enable EC2 termination protection on critical instances.`,
-          ['threat', 'impact', 'deletion'],
+          {
+            message: `${events.length} TerminateInstances calls by "${actor}" in the last 24 hours ` +
+              `affecting ${instanceIds.length} instance(s). This may indicate ransomware, sabotage, or a compromised credential.`,
+            remediation: `Immediately revoke "${actor}" credentials. Restore instances from snapshots/AMIs. ` +
+              `Enable EC2 termination protection on critical instances.`,
+          },
         ),
       );
     }
@@ -908,11 +920,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor      = actorFromEvent(e);
       const snapshotId = raw.requestParameters?.snapshotId ?? 'Unknown';
       findings.push(
-        this.createFinding(
-          'Threat: EBS Snapshot Made Public',
-          `EBS snapshot "${snapshotId}" was made publicly accessible by "${actor}" ` +
-          `at ${e.EventTime?.toISOString()}. Public snapshots expose all data in the volume to any AWS account.`,
-          'CRITICAL',
+        this.emit(
+          'threatdetection_ebs_snapshot_made_public',
           {
             resourceId:      `threat::public-snapshot::${snapshotId}`,
             threatCategory:  'Exfiltration',
@@ -922,9 +931,12 @@ export class ThreatDetectionScanner extends BaseScanner {
             affectedResource: snapshotId,
             rawEvents:       [raw],
           },
-          `Immediately make the snapshot private: ` +
-          `aws ec2 modify-snapshot-attribute --snapshot-id ${snapshotId} --attribute createVolumePermission --operation-type remove --group-names all`,
-          ['threat', 'exfiltration', 'snapshot'],
+          {
+            message: `EBS snapshot "${snapshotId}" was made publicly accessible by "${actor}" ` +
+              `at ${e.EventTime?.toISOString()}. Public snapshots expose all data in the volume to any AWS account.`,
+            remediation: `Immediately make the snapshot private: ` +
+              `aws ec2 modify-snapshot-attribute --snapshot-id ${snapshotId} --attribute createVolumePermission --operation-type remove --group-names all`,
+          },
         ),
       );
     }
@@ -942,10 +954,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       const actor  = actorFromEvent(e);
       const snapId = raw.requestParameters?.dbSnapshotIdentifier ?? 'Unknown';
       findings.push(
-        this.createFinding(
-          'Threat: RDS Snapshot Made Public',
-          `RDS snapshot "${snapId}" was made publicly restorable by "${actor}" at ${e.EventTime?.toISOString()}.`,
-          'CRITICAL',
+        this.emit(
+          'threatdetection_rds_snapshot_made_public',
           {
             resourceId:      `threat::public-rds-snapshot::${snapId}`,
             threatCategory:  'Exfiltration',
@@ -955,9 +965,11 @@ export class ThreatDetectionScanner extends BaseScanner {
             affectedResource: snapId,
             rawEvents:       [raw],
           },
-          `Make the snapshot private: aws rds modify-db-snapshot-attribute --db-snapshot-identifier ${snapId} ` +
-          `--attribute-name restore --values-to-remove all`,
-          ['threat', 'exfiltration', 'rds'],
+          {
+            message: `RDS snapshot "${snapId}" was made publicly restorable by "${actor}" at ${e.EventTime?.toISOString()}.`,
+            remediation: `Make the snapshot private: aws rds modify-db-snapshot-attribute --db-snapshot-identifier ${snapId} ` +
+              `--attribute-name restore --values-to-remove all`,
+          },
         ),
       );
     }
@@ -982,12 +994,8 @@ export class ThreatDetectionScanner extends BaseScanner {
 
       const instanceCount = raw.requestParameters?.instancesSet?.items?.length ?? 1;
       findings.push(
-        this.createFinding(
-          'Threat: High-Compute Instance Launch (Crypto Mining Indicator)',
-          `${instanceCount} instance(s) of type "${instanceType}" launched by "${actor}" ` +
-          `at ${e.EventTime?.toISOString()} from IP ${sourceIPFromEvent(e)}. ` +
-          `High-compute/GPU instances launched by unexpected identities often indicate crypto-mining.`,
-          'HIGH',
+        this.emit(
+          'threatdetection_high_compute_instance_launch',
           {
             resourceId:      `threat::high-compute::${actor}::${e.EventTime?.getTime()}`,
             threatCategory:  'Impact',
@@ -998,9 +1006,13 @@ export class ThreatDetectionScanner extends BaseScanner {
             instanceCount,
             rawEvents:       [raw],
           },
-          `If unauthorized, immediately terminate the instance(s) and revoke "${actor}" credentials. ` +
-          `Enable AWS Cost Anomaly Detection to catch unexpected compute spend.`,
-          ['threat', 'crypto-mining', 'impact'],
+          {
+            message: `${instanceCount} instance(s) of type "${instanceType}" launched by "${actor}" ` +
+              `at ${e.EventTime?.toISOString()} from IP ${sourceIPFromEvent(e)}. ` +
+              `High-compute/GPU instances launched by unexpected identities often indicate crypto-mining.`,
+            remediation: `If unauthorized, immediately terminate the instance(s) and revoke "${actor}" credentials. ` +
+              `Enable AWS Cost Anomaly Detection to catch unexpected compute spend.`,
+          },
         ),
       );
     }
@@ -1018,11 +1030,8 @@ export class ThreatDetectionScanner extends BaseScanner {
       for (const e of events) {
         const actor = actorFromEvent(e);
         findings.push(
-          this.createFinding(
-            'Threat: AWS Config Recorder Stopped',
-            `"${eventName}" called by "${actor}" at ${e.EventTime?.toISOString()}. ` +
-            `Disabling AWS Config stops configuration change tracking — a common defense evasion technique.`,
-            'HIGH',
+          this.emit(
+            'threatdetection_config_recorder_stopped',
             {
               resourceId:     `threat::config-tamper::${actor}::${e.EventTime?.getTime()}`,
               threatCategory: 'DefenseEvasion',
@@ -1032,11 +1041,319 @@ export class ThreatDetectionScanner extends BaseScanner {
               eventName,
               rawEvents:      [parseRaw(e)],
             },
-            `Re-enable AWS Config recording immediately. Investigate whether this was authorized.`,
-            ['threat', 'defense-evasion', 'config'],
+            {
+              message: `"${eventName}" called by "${actor}" at ${e.EventTime?.toISOString()}. ` +
+                `Disabling AWS Config stops configuration change tracking — a common defense evasion technique.`,
+            },
           ),
         );
       }
+    }
+    return findings;
+  }
+
+  // ── 13. GuardDuty posture (ported from Prowler guardduty checks) ─────────
+  // Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
+
+  private async checkGuardDutyPosture(): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const region = this.client.getRegion();
+
+    let detectorIds: string[] = [];
+    try {
+      detectorIds = await this.listGuardDutyDetectors();
+    } catch (error) {
+      logger.debug('GuardDuty ListDetectors failed', { error: (error as Error).message });
+      return findings;
+    }
+
+    // guardduty_is_enabled: no detector configured at all in this region
+    if (detectorIds.length === 0) {
+      findings.push(
+        this.emit(
+          'guardduty_is_enabled',
+          { resourceId: `guardduty::${region}::detector`, region, detectorId: null, enabledInAccount: false },
+          { message: `GuardDuty is not enabled in region ${region} (no detector configured)` },
+        ),
+      );
+      // guardduty_delegated_admin_enabled_all_regions also evaluates the no-detector case
+      findings.push(...await this.checkGuardDutyDelegatedAdmin(region, null, false));
+      return findings;
+    }
+
+    for (const detectorId of detectorIds) {
+      try {
+        findings.push(...await this.validateGuardDutyDetector(region, detectorId));
+      } catch (error) {
+        logger.debug(`Failed to scan GuardDuty detector ${detectorId}`, { error: (error as Error).message });
+      }
+    }
+    return findings;
+  }
+
+  private async listGuardDutyDetectors(): Promise<string[]> {
+    const detectorIds: string[] = [];
+    let nextToken: string | undefined;
+    do {
+      const result = await retry(async () => {
+        return await this.guardduty.send(new ListDetectorsCommand({ NextToken: nextToken }));
+      });
+      detectorIds.push(...(result.DetectorIds ?? []));
+      nextToken = result.NextToken;
+    } while (nextToken);
+    return detectorIds;
+  }
+
+  private async validateGuardDutyDetector(region: string, detectorId: string): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const resourceId = `guardduty::${region}::detector/${detectorId}`;
+
+    const info: any = await retry(async () => {
+      return await this.guardduty.send(new GetDetectorCommand({ DetectorId: detectorId }));
+    });
+    const status: string | undefined = info.Status;
+    const enabled = status === 'ENABLED';
+
+    // guardduty_is_enabled: detector exists but is not configured or is suspended
+    if (!status) {
+      findings.push(
+        this.emit(
+          'guardduty_is_enabled',
+          { resourceId, region, detectorId, status: null },
+          { message: `GuardDuty detector "${detectorId}" in region ${region} is not configured` },
+        ),
+      );
+    } else if (!enabled) {
+      findings.push(
+        this.emit(
+          'guardduty_is_enabled',
+          { resourceId, region, detectorId, status },
+          { message: `GuardDuty detector "${detectorId}" in region ${region} is configured but suspended (status: ${status})` },
+        ),
+      );
+    }
+
+    // Data sources / features (Prowler only evaluates these when the detector is enabled)
+    if (enabled) {
+      const dataSources: any = info.DataSources ?? {};
+      const s3Protection = dataSources.S3Logs?.Status === 'ENABLED';
+      const eksAuditLogProtection = dataSources.Kubernetes?.AuditLogs?.Status === 'ENABLED';
+      const ec2MalwareProtection =
+        dataSources.MalwareProtection?.ScanEc2InstanceWithFindings?.EbsVolumes?.Status === 'ENABLED';
+
+      let rdsProtection = false;
+      let lambdaProtection = false;
+      let eksRuntimeMonitoring = false;
+      for (const feature of info.Features ?? []) {
+        if (feature?.Name === 'RDS_LOGIN_EVENTS' && feature?.Status === 'ENABLED') rdsProtection = true;
+        else if (feature?.Name === 'LAMBDA_NETWORK_LOGS' && feature?.Status === 'ENABLED') lambdaProtection = true;
+        else if (feature?.Name === 'EKS_RUNTIME_MONITORING' && feature?.Status === 'ENABLED') eksRuntimeMonitoring = true;
+      }
+
+      if (!s3Protection) {
+        findings.push(
+          this.emit(
+            'guardduty_s3_protection_enabled',
+            { resourceId, region, detectorId, s3Protection: false },
+            { message: `GuardDuty detector "${detectorId}" does not have S3 Protection enabled` },
+          ),
+        );
+      }
+      if (!eksAuditLogProtection) {
+        findings.push(
+          this.emit(
+            'guardduty_eks_audit_log_enabled',
+            { resourceId, region, detectorId, eksAuditLogProtection: false },
+            { message: `GuardDuty detector "${detectorId}" does not have EKS Audit Log Monitoring enabled` },
+          ),
+        );
+      }
+      if (!eksRuntimeMonitoring) {
+        findings.push(
+          this.emit(
+            'guardduty_eks_runtime_monitoring_enabled',
+            { resourceId, region, detectorId, eksRuntimeMonitoring: false },
+            { message: `GuardDuty detector "${detectorId}" does not have EKS Runtime Monitoring enabled` },
+          ),
+        );
+      }
+      if (!ec2MalwareProtection) {
+        findings.push(
+          this.emit(
+            'guardduty_ec2_malware_protection_enabled',
+            { resourceId, region, detectorId, ec2MalwareProtection: false },
+            { message: `GuardDuty detector "${detectorId}" does not have Malware Protection for EC2 enabled` },
+          ),
+        );
+      }
+      if (!rdsProtection) {
+        findings.push(
+          this.emit(
+            'guardduty_rds_protection_enabled',
+            { resourceId, region, detectorId, rdsProtection: false },
+            { message: `GuardDuty detector "${detectorId}" does not have RDS Protection enabled` },
+          ),
+        );
+      }
+      if (!lambdaProtection) {
+        findings.push(
+          this.emit(
+            'guardduty_lambda_protection_enabled',
+            { resourceId, region, detectorId, lambdaProtection: false },
+            { message: `GuardDuty detector "${detectorId}" does not have Lambda Protection enabled` },
+          ),
+        );
+      }
+    }
+
+    // guardduty_centrally_managed: administrator account, or admin with member accounts
+    let administratorAccount: string | undefined;
+    try {
+      const adminResult = await retry(async () => {
+        return await this.guardduty.send(new GetAdministratorAccountCommand({ DetectorId: detectorId }));
+      });
+      administratorAccount = adminResult.Administrator?.AccountId;
+    } catch (error) {
+      logger.debug(`GuardDuty GetAdministratorAccount failed for ${detectorId}`, { error: (error as Error).message });
+    }
+    let memberAccountCount = 0;
+    if (!administratorAccount) {
+      try {
+        memberAccountCount = await this.countGuardDutyMembers(detectorId);
+      } catch (error) {
+        logger.debug(`GuardDuty ListMembers failed for ${detectorId}`, { error: (error as Error).message });
+      }
+    }
+    if (!administratorAccount && memberAccountCount === 0) {
+      findings.push(
+        this.emit(
+          'guardduty_centrally_managed',
+          { resourceId, region, detectorId, administratorAccount: null, memberAccounts: 0 },
+          { message: `GuardDuty detector "${detectorId}" is not centrally managed (no administrator account and no member accounts)` },
+        ),
+      );
+    }
+
+    // guardduty_no_high_severity_findings: unarchived findings with severity 8
+    try {
+      const highSeverityCount = await this.countHighSeverityGuardDutyFindings(detectorId);
+      if (highSeverityCount > 0) {
+        findings.push(
+          this.emit(
+            'guardduty_no_high_severity_findings',
+            { resourceId, region, detectorId, highSeverityFindingCount: highSeverityCount },
+            { message: `GuardDuty detector "${detectorId}" has ${highSeverityCount} unarchived high severity finding(s)` },
+          ),
+        );
+      }
+    } catch (error) {
+      logger.debug(`GuardDuty ListFindings failed for ${detectorId}`, { error: (error as Error).message });
+    }
+
+    // guardduty_delegated_admin_enabled_all_regions
+    findings.push(...await this.checkGuardDutyDelegatedAdmin(region, detectorId, enabled));
+
+    return findings;
+  }
+
+  private async countGuardDutyMembers(detectorId: string): Promise<number> {
+    let count = 0;
+    let nextToken: string | undefined;
+    do {
+      const result = await retry(async () => {
+        return await this.guardduty.send(new ListMembersCommand({ DetectorId: detectorId, NextToken: nextToken }));
+      });
+      count += (result.Members ?? []).length;
+      nextToken = result.NextToken;
+    } while (nextToken);
+    return count;
+  }
+
+  private async countHighSeverityGuardDutyFindings(detectorId: string): Promise<number> {
+    let count = 0;
+    let nextToken: string | undefined;
+    do {
+      const result = await retry(async () => {
+        return await this.guardduty.send(new ListFindingsCommand({
+          DetectorId: detectorId,
+          FindingCriteria: {
+            Criterion: {
+              severity: { Eq: ['8'] },
+              'service.archived': { Eq: ['false'] },
+            },
+          },
+          NextToken: nextToken,
+        }));
+      });
+      count += (result.FindingIds ?? []).length;
+      nextToken = result.NextToken;
+    } while (nextToken);
+    return count;
+  }
+
+  private async checkGuardDutyDelegatedAdmin(
+    region: string,
+    detectorId: string | null,
+    detectorEnabled: boolean,
+  ): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const issues: string[] = [];
+
+    // Delegated administrator accounts (only visible from the org management or
+    // delegated admin account — access errors are treated as "no admin", as in Prowler)
+    let hasDelegatedAdmin = false;
+    try {
+      let nextToken: string | undefined;
+      do {
+        const result = await retry(async () => {
+          return await this.guardduty.send(new ListOrganizationAdminAccountsCommand({ NextToken: nextToken }));
+        });
+        for (const admin of result.AdminAccounts ?? []) {
+          if (admin?.AdminStatus === 'ENABLED') hasDelegatedAdmin = true;
+        }
+        nextToken = result.NextToken;
+      } while (nextToken);
+    } catch (error) {
+      logger.debug('GuardDuty ListOrganizationAdminAccounts failed', { error: (error as Error).message });
+    }
+    if (!hasDelegatedAdmin) issues.push('no delegated administrator configured');
+
+    if (!detectorEnabled) issues.push('detector not enabled');
+
+    // Organization auto-enable — only reported when org config data is available
+    let organizationConfigAvailable = false;
+    let autoEnableMembers = 'NONE';
+    if (detectorId) {
+      try {
+        const orgConfig: any = await retry(async () => {
+          return await this.guardduty.send(new DescribeOrganizationConfigurationCommand({ DetectorId: detectorId }));
+        });
+        autoEnableMembers = orgConfig.AutoEnableOrganizationMembers ?? 'NONE';
+        organizationConfigAvailable = true;
+      } catch (error) {
+        logger.debug('GuardDuty DescribeOrganizationConfiguration failed', { error: (error as Error).message });
+      }
+    }
+    if (organizationConfigAvailable && autoEnableMembers !== 'NEW' && autoEnableMembers !== 'ALL') {
+      issues.push('organization auto-enable not configured');
+    }
+
+    if (issues.length > 0) {
+      findings.push(
+        this.emit(
+          'guardduty_delegated_admin_enabled_all_regions',
+          {
+            resourceId: `guardduty::${region}::organization-admin`,
+            region,
+            detectorId,
+            hasDelegatedAdmin,
+            detectorEnabled,
+            autoEnableMembers: organizationConfigAvailable ? autoEnableMembers : null,
+            issues,
+          },
+          { message: `GuardDuty in region ${region} has issues: ${issues.join(', ')}` },
+        ),
+      );
     }
     return findings;
   }

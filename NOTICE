@@ -1,0 +1,8 @@
+This product includes cloud security check logic derived from Prowler
+(https://github.com/prowler-cloud/prowler), Copyright Prowler contributors,
+licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0).
+
+Derived files are marked with a header comment:
+"Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)"
+and live under services/cspm/src/scanners/ and services/cspm/src/checks/registry/.

@@ -22,6 +22,7 @@
  *  DATA_EXFIL       — High-volume GetObject / read ops on sensitive resources
  */
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
@@ -206,7 +207,7 @@ async function saveAnomaly(
         severity:       detection.severity,
         score:          detection.score,
         description:    detection.description,
-        detail:         detection.detail,
+        detail:         detection.detail as Prisma.InputJsonValue,
         sourceIp:       detection.sourceIp ?? event.sourceIp,
         country:        detection.country,
         eventName:      detection.eventName ?? event.eventName,

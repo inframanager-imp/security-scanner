@@ -6,6 +6,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { AlertChannel } from '@prisma/client';
 import { prisma } from '../config/database';
 import { encryptAlertConfig, decryptAlertConfig } from '../services/alertService';
 import { logger } from '../config/logger';
@@ -69,12 +70,15 @@ router.post('/', async (req: Request, res: Response) => {
     if (!name || !channel || !config) {
       return res.status(400).json({ error: 'name, channel, and config are required' });
     }
+    if (!Object.values(AlertChannel).includes(channel as AlertChannel)) {
+      return res.status(400).json({ error: `channel must be one of: ${Object.values(AlertChannel).join(', ')}` });
+    }
 
     const encryptedConfig = encryptAlertConfig(config);
 
     const created = await prisma.alertConfig.create({
       data: {
-        name, isActive, channel, minSeverity, categories,
+        name, isActive, channel: channel as AlertChannel, minSeverity, categories,
         providers, targetIds, onFreezeOnly, encryptedConfig,
       },
       select: { id: true, name: true, channel: true, isActive: true, createdAt: true },
@@ -103,6 +107,10 @@ router.put('/:id', async (req: Request, res: Response) => {
       onFreezeOnly: boolean; config: Record<string, string>;
     }>;
 
+    if (channel !== undefined && !Object.values(AlertChannel).includes(channel as AlertChannel)) {
+      return res.status(400).json({ error: `channel must be one of: ${Object.values(AlertChannel).join(', ')}` });
+    }
+
     const encryptedConfig = config
       ? encryptAlertConfig(config)
       : (existing.encryptedConfig as string);
@@ -112,7 +120,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       data: {
         ...(name        !== undefined && { name }),
         ...(isActive    !== undefined && { isActive }),
-        ...(channel     !== undefined && { channel }),
+        ...(channel     !== undefined && { channel: channel as AlertChannel }),
         ...(minSeverity !== undefined && { minSeverity }),
         ...(categories  !== undefined && { categories }),
         ...(providers   !== undefined && { providers }),

@@ -22,7 +22,7 @@ program
   .command('scan')
   .description('Execute AWS security scan')
   .option('-r, --region <region>', 'AWS region to scan', 'us-east-1')
-  .option('-s, --services <services>', 'Services to scan (comma-separated)', 'cloudtrail,iam,s3,ec2,rds,kms,secretsmanager')
+  .option('-s, --services <services>', 'Services to scan (comma-separated; default: all available services)')
   .option('-p, --profile <profile>', 'AWS CLI profile to use')
   .option('-f, --format <format>', 'Output format (json, html, csv, console)', 'console')
   .option('-o, --output <file>', 'Output file path')
@@ -40,7 +40,7 @@ program
       // Load config file if provided
       let scanOptions: ScanOptions = {
         region: options.region,
-        services: options.services.split(',').map((s: string) => s.trim()),
+        services: options.services ? options.services.split(',').map((s: string) => s.trim()) : undefined,
         profile: options.profile,
         outputFormat: options.format,
         outputFile: options.output,

@@ -1,6 +1,8 @@
 export interface ScanningResult {
   id: string;
   timestamp: Date;
+  /** Stable registry check ID (prowler-compatible), e.g. s3_bucket_default_encryption */
+  checkId?: string;
   service: string;
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
   title: string;

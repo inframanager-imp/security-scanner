@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Eye, FileText, Trash2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Eye, FileText, Trash2, CheckCircle2, AlertCircle, FileBarChart } from 'lucide-react';
 import { api } from '../api/client';
 import { accountsApi } from '../api/accounts';
 import { azureApi } from '../api/azure';
 import { gcpApi } from '../api/gcp';
+import { complianceApi } from '../api/compliance';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { ScanStatusBadge } from '../components/ui/Badge';
+import { FrameworkScoreOverview } from '../components/ui/FrameworkScoreOverview';
+import { VaptReportModal } from '../components/ui/VaptReportModal';
 import type { Account, AzureSubscription, GcpProject } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -115,7 +118,19 @@ export function Reports() {
     queryFn:  () => gcpApi.listProjects({ limit: 100 }),
   });
 
+  const { data: awsCompliance = [] } = useQuery({
+    queryKey: ['compliance', 'all', 'aws'],
+    queryFn:  () => complianceApi.getAllAccountsScores(),
+  });
+
+  const { data: azureCompliance = [] } = useQuery({
+    queryKey: ['compliance', 'all', 'azure'],
+    queryFn:  () => complianceApi.getAllAzureSubscriptionScores(),
+  });
+
   const isLoading = awsLoading || azureLoading || gcpLoading;
+
+  const [vaptModalRow, setVaptModalRow] = useState<ReportRow | null>(null);
 
   // Build unified rows
   const awsRows: ReportRow[] = (accounts as Account[]).map(a => ({
@@ -206,6 +221,9 @@ export function Reports() {
         </div>
       )}
 
+      {/* Framework score overview chart — same data/component as Compliance tab */}
+      <FrameworkScoreOverview awsAccounts={awsCompliance} azureSubs={azureCompliance} />
+
       {/* Provider filter tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200">
         {(['ALL', 'AWS', 'AZURE', 'GCP'] as const).map(p => (
@@ -278,15 +296,27 @@ export function Reports() {
                     </td>
                     <td className="px-4 py-3"><SeverityBar summary={s} /></td>
                     <td className="px-4 py-3">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        leftIcon={<Eye size={13} />}
-                        onClick={() => navigate(row.reportPath)}
-                        disabled={!row.scanStatus}
-                      >
-                        View
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          leftIcon={<Eye size={13} />}
+                          onClick={() => navigate(row.reportPath)}
+                          disabled={!row.scanStatus}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          leftIcon={<FileBarChart size={13} />}
+                          onClick={() => setVaptModalRow(row)}
+                          disabled={!row.scanStatus}
+                          title="Generate a professional VAPT-style security report (view HTML, print to PDF)"
+                        >
+                          VAPT Report
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -295,6 +325,16 @@ export function Reports() {
           </table>
         )}
       </Card>
+
+      {vaptModalRow && (
+        <VaptReportModal
+          open={!!vaptModalRow}
+          onClose={() => setVaptModalRow(null)}
+          provider={vaptModalRow.provider}
+          targetId={vaptModalRow.id}
+          targetName={vaptModalRow.name}
+        />
+      )}
     </div>
   );
 }

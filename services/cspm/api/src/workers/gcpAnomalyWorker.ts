@@ -76,8 +76,8 @@ async function processGcpAnomalyJob(job: Job<GcpJobData>): Promise<void> {
     const decrypted = decryptGcpCredentials(cred);
 
     const gcpClient = new GcpClient({
-      projectId:      project.projectId,
-      serviceAccount: decrypted.serviceAccountKey ? JSON.parse(decrypted.serviceAccountKey) : undefined,
+      projectId:   project.projectId,
+      credentials: decrypted.serviceAccountKey ? JSON.parse(decrypted.serviceAccountKey) : undefined,
     });
 
     // Time window

@@ -1,3 +1,4 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 /**
  * ECR Container Image Scanner
  *
@@ -23,6 +24,9 @@ import {
   GetAuthorizationTokenCommand,
   DescribeRepositoriesCommand,
   DescribeImagesCommand,
+  GetRegistryScanningConfigurationCommand,
+  GetLifecyclePolicyCommand,
+  GetRepositoryPolicyCommand,
   type Repository,
   type ImageDetail,
 } from '@aws-sdk/client-ecr';
@@ -487,6 +491,55 @@ async function scanLayer(
   }
 }
 
+// ─── Repository policy helpers (ported from Prowler's IAM policy lib) ─────────
+
+const RESTRICTIVE_CONDITION_KEYS = new Set([
+  'aws:principalarn', 'aws:principalaccount', 'aws:principalorgid', 'aws:principalorgpaths',
+  'aws:sourceaccount', 'aws:sourcearn', 'aws:sourceowner', 'aws:sourcevpc', 'aws:sourcevpce',
+]);
+
+function extractPrincipals(principal: any): string[] {
+  if (typeof principal === 'string') return [principal];
+  if (Array.isArray(principal)) return principal.filter((p: any) => typeof p === 'string');
+  if (principal && typeof principal === 'object') {
+    const values = principal.AWS ?? [];
+    if (typeof values === 'string') return [values];
+    if (Array.isArray(values)) return values.filter((p: any) => typeof p === 'string');
+  }
+  return [];
+}
+
+/** True when an allow-list condition operator scopes the statement to specific principals/accounts. */
+function hasRestrictiveCondition(condition: any): boolean {
+  if (!condition || typeof condition !== 'object') return false;
+  for (const [operator, block] of Object.entries(condition)) {
+    const op = operator.toLowerCase();
+    const isAllowListOperator =
+      op.startsWith('stringequals') || op.startsWith('stringlike') ||
+      op.startsWith('arnequals') || op.startsWith('arnlike');
+    if (!isAllowListOperator || !block || typeof block !== 'object') continue;
+    for (const [key, rawValues] of Object.entries(block as Record<string, any>)) {
+      if (!RESTRICTIVE_CONDITION_KEYS.has(key.toLowerCase())) continue;
+      const values = Array.isArray(rawValues) ? rawValues : [rawValues];
+      if (values.length === 0 || values.includes('*')) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** A policy is public when an Allow statement has a wildcard principal without a restrictive condition. */
+function isPolicyPublic(policy: any): boolean {
+  const raw = policy?.Statement;
+  const statements: any[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  for (const statement of statements) {
+    if (statement?.Effect !== 'Allow') continue;
+    if (!extractPrincipals(statement.Principal).includes('*')) continue;
+    if (!hasRestrictiveCondition(statement.Condition)) return true;
+  }
+  return false;
+}
+
 // ─── Main Scanner ─────────────────────────────────────────────────────────────
 
 export class ECRScanner extends BaseScanner {
@@ -504,19 +557,23 @@ export class ECRScanner extends BaseScanner {
           : 'Starting ECR full image vulnerability scan...',
       );
 
-      // Step 1: Get registry auth
-      const auth = await this.getRegistryAuth();
-      if (!auth) {
-        logger.warn('Could not obtain ECR registry auth token — skipping ECR scan');
-        return findings;
-      }
-
-      // Step 2: List repositories
+      // Step 1: List repositories and run configuration checks (no registry auth needed)
       const repos = await this.listAllRepositories();
       logger.info(`ECR: scanning ${repos.length} repositories`);
 
+      findings.push(...(await this.checkRegistryScanningConfiguration(repos)));
+
+      // Step 2: Get registry auth for image-layer CVE scanning
+      const auth = await this.getRegistryAuth();
+      if (!auth) {
+        logger.warn('Could not obtain ECR registry auth token — skipping image CVE scanning');
+      }
+
       for (const repo of repos) {
-        findings.push(...(await this.scanRepository(repo, auth, lastScanAt)));
+        findings.push(...(await this.checkRepositoryConfiguration(repo)));
+        if (auth) {
+          findings.push(...(await this.scanRepository(repo, auth, lastScanAt)));
+        }
       }
 
       logger.info(`ECR scan complete. ${findings.length} findings.`);
@@ -576,6 +633,134 @@ export class ECRScanner extends BaseScanner {
     }
   }
 
+  // ── Configuration checks (ported from Prowler) ──────────────────────────────
+
+  // ecr_registry_scan_images_on_push_enabled — registry-level scanning configuration
+  private async checkRegistryScanningConfiguration(repos: Repository[]): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    // Prowler only evaluates the registry when it is in use (repositories exist)
+    if (repos.length === 0) return findings;
+    const registryId = repos[0].registryId ?? 'default';
+
+    let scanType = 'BASIC';
+    let rules: any[] = [];
+    try {
+      const result: any = await this.client.ecr.send(new GetRegistryScanningConfigurationCommand({}));
+      scanType = result?.scanningConfiguration?.scanType ?? 'BASIC';
+      rules = result?.scanningConfiguration?.rules ?? [];
+    } catch (err) {
+      const message = (err as Error).message || '';
+      if (!message.includes('feature is disabled')) {
+        logger.debug('Could not get ECR registry scanning configuration', { error: message });
+        return findings;
+      }
+      // Feature disabled → BASIC scanning with no registry-level rules
+    }
+
+    if (rules.length === 0) {
+      findings.push(
+        this.emit(
+          'ecr_registry_scan_images_on_push_enabled',
+          { resourceId: `${registryId}::registry-scan-config`, registryId, scanType, rules: [] },
+          {
+            message: `ECR registry ${registryId} has ${scanType} scanning without scan on push enabled at the registry level.`,
+          },
+        ),
+      );
+      return findings;
+    }
+
+    // A rule with no repository filters, or with a wildcard "*" filter, covers all repositories
+    const coversAllRepositories = rules.some((rule: any) => {
+      const filters: any[] = rule?.repositoryFilters ?? [];
+      return filters.length === 0 || filters.some((f: any) => f?.filter === '*');
+    });
+    if (!coversAllRepositories) {
+      findings.push(
+        this.emit(
+          'ecr_registry_scan_images_on_push_enabled',
+          { resourceId: `${registryId}::registry-scan-config`, registryId, scanType, rules },
+          {
+            message: `ECR registry ${registryId} has ${scanType} scanning with scan on push enabled but limited by repository filters, so not all repositories are covered.`,
+          },
+        ),
+      );
+    }
+
+    return findings;
+  }
+
+  // ecr_repositories_tag_immutability / ecr_repositories_lifecycle_policy_enabled /
+  // ecr_repositories_not_publicly_accessible
+  private async checkRepositoryConfiguration(repo: Repository): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+    const repoName = repo.repositoryName ?? 'Unknown';
+
+    // ecr_repositories_tag_immutability
+    if (repo.imageTagMutability === 'MUTABLE') {
+      findings.push(
+        this.emit(
+          'ecr_repositories_tag_immutability',
+          { resourceId: `${repoName}::tag-immutability`, repositoryName: repoName, imageTagMutability: 'MUTABLE' },
+          {
+            message: `Repository "${repoName}" does not have image tag immutability configured, so a trusted tag can be repointed to a different image.`,
+            remediation: `aws ecr put-image-tag-mutability --repository-name ${repoName} --image-tag-mutability IMMUTABLE`,
+          },
+        ),
+      );
+    }
+
+    // ecr_repositories_lifecycle_policy_enabled
+    // (direct send: LifecyclePolicyNotFoundException is the expected FAIL path, retry() would re-issue it)
+    try {
+      await this.client.ecr.send(new GetLifecyclePolicyCommand({ repositoryName: repoName }));
+    } catch (err) {
+      const error = err as any;
+      if (error?.name === 'LifecyclePolicyNotFoundException' || String(error?.message ?? '').includes('LifecyclePolicyNotFound')) {
+        findings.push(
+          this.emit(
+            'ecr_repositories_lifecycle_policy_enabled',
+            { resourceId: `${repoName}::lifecycle-policy`, repositoryName: repoName, lifecyclePolicy: null },
+            {
+              message: `Repository "${repoName}" does not have a lifecycle policy configured.`,
+              remediation: `aws ecr put-lifecycle-policy --repository-name ${repoName} --lifecycle-policy-text '{"rules":[{"rulePriority":1,"selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":1},"action":{"type":"expire"}}]}'`,
+            },
+          ),
+        );
+      } else {
+        logger.debug(`Could not get lifecycle policy for ECR repository ${repoName}`, { error: (err as Error).message });
+      }
+    }
+
+    // ecr_repositories_not_publicly_accessible
+    try {
+      const result: any = await this.client.ecr.send(new GetRepositoryPolicyCommand({ repositoryName: repoName }));
+      if (result?.policyText) {
+        const policy = JSON.parse(result.policyText);
+        if (isPolicyPublic(policy)) {
+          findings.push(
+            this.emit(
+              'ecr_repositories_not_publicly_accessible',
+              { resourceId: `${repoName}::repository-policy`, repositoryName: repoName, policy },
+              {
+                message: `Repository "${repoName}" is publicly accessible: its repository policy allows a wildcard principal without restrictive conditions.`,
+                remediation: `Remove wildcard principals from the policy of "${repoName}" or delete it: aws ecr delete-repository-policy --repository-name ${repoName}`,
+              },
+            ),
+          );
+        }
+      }
+    } catch (err) {
+      const error = err as any;
+      // No repository policy at all → not publicly accessible
+      if (error?.name !== 'RepositoryPolicyNotFoundException' && !String(error?.message ?? '').includes('RepositoryPolicyNotFound')) {
+        logger.debug(`Could not get repository policy for ECR repository ${repoName}`, { error: (err as Error).message });
+      }
+    }
+
+    return findings;
+  }
+
   // ── Per-repository scanning ─────────────────────────────────────────────────
 
   private async scanRepository(
@@ -589,13 +774,13 @@ export class ECRScanner extends BaseScanner {
     // Config check: scan-on-push (emitted always; visible in Reports page)
     if (!repo.imageScanningConfiguration?.scanOnPush) {
       findings.push(
-        this.createFinding(
-          'ECR Scan on Push Disabled',
-          `Repository "${repoName}" does not have scan-on-push enabled. Enable it as a baseline alongside this independent layer scan.`,
-          'LOW',
+        this.emit(
+          'ecr_repositories_scan_images_on_push_enabled',
           { resourceId: `${repoName}::scan-on-push`, repositoryName: repoName },
-          `aws ecr put-image-scanning-configuration --repository-name ${repoName} --image-scanning-configuration scanOnPush=true`,
-          ['ecr', 'config'],
+          {
+            message: `Repository "${repoName}" does not have scan-on-push enabled. Enable it as a baseline alongside this independent layer scan.`,
+            remediation: `aws ecr put-image-scanning-configuration --repository-name ${repoName} --image-scanning-configuration scanOnPush=true`,
+          },
         ),
       );
     }
@@ -734,10 +919,8 @@ export class ECRScanner extends BaseScanner {
     // CRITICAL — one finding per CVE (capped)
     for (const item of bySeverity.CRITICAL.slice(0, MAX_CVE_PER_SEVERITY)) {
       findings.push(
-        this.createFinding(
-          'ECR Image OS Package CVE',
-          `Image "${imageRef}" — ${item.pkg.ecosystem} package "${item.pkg.name}@${item.pkg.version}" has CRITICAL vulnerability ${item.vuln.id}: ${item.vuln.summary ?? 'See advisory'}.`,
-          'CRITICAL',
+        this.emit(
+          'ecr_repositories_scan_vulnerabilities_in_latest_image',
           {
             resourceId: `${repoName}::${shortDigest}::${item.pkg.name}::${item.vuln.id}`,
             ...imageBase,
@@ -747,10 +930,13 @@ export class ECRScanner extends BaseScanner {
             fixedVersion: item.fixed,
             cveId: item.vuln.id,
           },
-          item.fixed
-            ? `Rebuild "${imageRef}" with ${item.pkg.name} upgraded to ${item.fixed}.`
-            : `No fix available yet. Monitor ${item.vuln.id} and rebuild when a patch is released.`,
-          ['ecr', 'cve', 'container', item.pkg.ecosystem.toLowerCase()],
+          {
+            message: `Image "${imageRef}" — ${item.pkg.ecosystem} package "${item.pkg.name}@${item.pkg.version}" has CRITICAL vulnerability ${item.vuln.id}: ${item.vuln.summary ?? 'See advisory'}.`,
+            remediation: item.fixed
+              ? `Rebuild "${imageRef}" with ${item.pkg.name} upgraded to ${item.fixed}.`
+              : `No fix available yet. Monitor ${item.vuln.id} and rebuild when a patch is released.`,
+            tags: [item.pkg.ecosystem.toLowerCase()],
+          },
         ),
       );
     }
@@ -758,10 +944,8 @@ export class ECRScanner extends BaseScanner {
     // HIGH — one finding per CVE (capped)
     for (const item of bySeverity.HIGH.slice(0, MAX_CVE_PER_SEVERITY)) {
       findings.push(
-        this.createFinding(
-          'ECR Image High Severity CVEs',
-          `Image "${imageRef}" — ${item.pkg.ecosystem} package "${item.pkg.name}@${item.pkg.version}" has HIGH vulnerability ${item.vuln.id}: ${item.vuln.summary ?? 'See advisory'}.`,
-          'HIGH',
+        this.emit(
+          'ecr_image_high_severity_cves',
           {
             resourceId: `${repoName}::${shortDigest}::${item.pkg.name}::${item.vuln.id}`,
             ...imageBase,
@@ -771,10 +955,13 @@ export class ECRScanner extends BaseScanner {
             fixedVersion: item.fixed,
             cveId: item.vuln.id,
           },
-          item.fixed
-            ? `Rebuild "${imageRef}" with ${item.pkg.name} upgraded to ${item.fixed}.`
-            : `Monitor ${item.vuln.id} and rebuild when a patch is released.`,
-          ['ecr', 'cve', 'container', item.pkg.ecosystem.toLowerCase()],
+          {
+            message: `Image "${imageRef}" — ${item.pkg.ecosystem} package "${item.pkg.name}@${item.pkg.version}" has HIGH vulnerability ${item.vuln.id}: ${item.vuln.summary ?? 'See advisory'}.`,
+            remediation: item.fixed
+              ? `Rebuild "${imageRef}" with ${item.pkg.name} upgraded to ${item.fixed}.`
+              : `Monitor ${item.vuln.id} and rebuild when a patch is released.`,
+            tags: [item.pkg.ecosystem.toLowerCase()],
+          },
         ),
       );
     }
@@ -786,18 +973,19 @@ export class ECRScanner extends BaseScanner {
       const listed = items.slice(0, 5).map(i => `${i.pkg.name} (${i.vuln.id})`).join(', ');
       const overflow = items.length > 5 ? ` + ${items.length - 5} more` : '';
       findings.push(
-        this.createFinding(
-          'ECR Image Medium/Low CVEs',
-          `Image "${imageRef}" has ${items.length} ${sev} CVE(s): ${listed}${overflow}.`,
-          sev === 'MEDIUM' ? 'MEDIUM' : 'LOW',
+        this.emit(
+          'ecr_image_medium_low_cves',
           {
             resourceId: `${repoName}::${shortDigest}::${sev.toLowerCase()}-summary`,
             ...imageBase,
             count: items.length,
             affectedPackages: items.slice(0, 10).map(i => `${i.pkg.name}@${i.pkg.version}`),
           },
-          `Rebuild "${imageRef}" with updated base image and dependencies.`,
-          ['ecr', 'cve', 'container'],
+          {
+            message: `Image "${imageRef}" has ${items.length} ${sev} CVE(s): ${listed}${overflow}.`,
+            remediation: `Rebuild "${imageRef}" with updated base image and dependencies.`,
+            severity: sev === 'MEDIUM' ? 'MEDIUM' : 'LOW',
+          },
         ),
       );
     }
@@ -808,18 +996,17 @@ export class ECRScanner extends BaseScanner {
     if (critTotal > MAX_CVE_PER_SEVERITY || highTotal > MAX_CVE_PER_SEVERITY) {
       const extra = (critTotal - MAX_CVE_PER_SEVERITY) + (highTotal - MAX_CVE_PER_SEVERITY);
       findings.push(
-        this.createFinding(
-          'ECR Image High Severity CVEs',
-          `Image "${imageRef}" has ${critTotal} CRITICAL and ${highTotal} HIGH CVEs total. ${extra} additional findings were omitted — rebuild with updated dependencies to resolve all.`,
-          'HIGH',
+        this.emit(
+          'ecr_image_high_severity_cves',
           {
             resourceId: `${repoName}::${shortDigest}::overflow-summary`,
             ...imageBase,
             criticalTotal: critTotal,
             highTotal,
           },
-          `Run a full image rebuild with updated base image and all dependencies to resolve all CVEs.`,
-          ['ecr', 'cve', 'container'],
+          {
+            message: `Image "${imageRef}" has ${critTotal} CRITICAL and ${highTotal} HIGH CVEs total. ${extra} additional findings were omitted — rebuild with updated dependencies to resolve all.`,
+          },
         ),
       );
     }

@@ -112,13 +112,16 @@ function ControlRow({ ctrl }: { ctrl: ControlResult | AzureControlResult }) {
 // ─── Framework detail modal ───────────────────────────────────────────────────
 
 const FW_COLORS: Record<string, { bar: string; header: string }> = {
-  PCI_DSS:   { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
-  SOC2:      { bar: 'bg-violet-500',  header: 'bg-violet-600'  },
-  ISO27001:  { bar: 'bg-emerald-500', header: 'bg-emerald-600' },
-  HIPAA:     { bar: 'bg-orange-500',  header: 'bg-orange-600'  },
-  CIS_AWS:   { bar: 'bg-cyan-500',    header: 'bg-cyan-600'    },
-  CIS_AZURE: { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
-  NIST:      { bar: 'bg-slate-500',   header: 'bg-slate-600'   },
+  PCI_DSS:     { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
+  SOC2:        { bar: 'bg-violet-500',  header: 'bg-violet-600'  },
+  ISO27001:    { bar: 'bg-emerald-500', header: 'bg-emerald-600' },
+  HIPAA:       { bar: 'bg-orange-500',  header: 'bg-orange-600'  },
+  CIS_AWS:     { bar: 'bg-cyan-500',    header: 'bg-cyan-600'    },
+  CIS_AZURE:   { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
+  NIST:        { bar: 'bg-slate-500',   header: 'bg-slate-600'   },
+  NIST_800_53: { bar: 'bg-slate-600',   header: 'bg-slate-700'   },
+  GDPR:        { bar: 'bg-purple-500',  header: 'bg-purple-600'  },
+  FEDRAMP:     { bar: 'bg-rose-500',    header: 'bg-rose-600'    },
 };
 
 function FrameworkModal({
@@ -237,7 +240,7 @@ function ReadinessSkeleton({ count = 5 }: { count?: number }) {
 
 // ─── AWS Readiness Section ────────────────────────────────────────────────────
 
-const AWS_ORDER: FrameworkId[] = ['CIS_AWS', 'PCI_DSS', 'SOC2', 'ISO27001', 'HIPAA'];
+const AWS_ORDER: FrameworkId[] = ['CIS_AWS', 'PCI_DSS', 'SOC2', 'ISO27001', 'HIPAA', 'NIST_800_53', 'GDPR', 'FEDRAMP'];
 
 export function AwsReadinessSection({ accountId }: { accountId: string }) {
   const [active, setActive] = useState<FrameworkScore | null>(null);

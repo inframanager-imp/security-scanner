@@ -33,6 +33,9 @@ import { retry } from '../utils/helpers';
 export class AWSClient {
   private region: string;
   private accountId?: string;
+  // Kept so scanners for services without a dedicated property here can build
+  // their own SDK client via getClientConfig() instead of editing this class.
+  private baseClientConfig!: { region: string; credentials: any };
 
   // Service clients
   sts: STSClient;
@@ -71,6 +74,7 @@ export class AWSClient {
       ? explicitCredentials
       : profile ? fromIni({ profile }) : fromEnv();
     const clientConfig = { region, credentials };
+    this.baseClientConfig = clientConfig;
 
     this.sts            = new STSClient(clientConfig);
     this.cloudtrail     = new CloudTrailClient(clientConfig);
@@ -98,6 +102,11 @@ export class AWSClient {
     this.ecs            = new ECSClient(clientConfig);
   }
 
+  /** Region + credentials for constructing SDK clients not predefined on this class. */
+  getClientConfig(): { region: string; credentials: any } {
+    return this.baseClientConfig;
+  }
+
   async getAccountId(): Promise<string> {
     if (this.accountId) return this.accountId;
     return retry(async () => {
@@ -123,6 +132,7 @@ export class AWSClient {
         sessionToken:    result.Credentials.SessionToken,
       };
       const clientConfig = { region: this.region, credentials };
+      this.baseClientConfig = clientConfig;
 
       this.cloudtrail     = new CloudTrailClient(clientConfig);
       this.iam            = new IAMClient(clientConfig);

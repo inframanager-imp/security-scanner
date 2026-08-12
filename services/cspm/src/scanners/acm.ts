@@ -1,3 +1,4 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   ListCertificatesCommand,
   DescribeCertificateCommand,
@@ -11,6 +12,10 @@ import { retry } from '../utils/helpers';
 
 const DAYS_30 = 30 * 24 * 60 * 60 * 1000;
 const DAYS_7  =  7 * 24 * 60 * 60 * 1000;
+
+// Weak key algorithms (Prowler default: RSA-1024, P-192), covering both the
+// hyphenated values the ACM API returns and the underscore SDK enum spellings.
+const INSECURE_KEY_ALGORITHMS = ['RSA-1024', 'RSA_1024', 'P-192', 'EC_prime192v1'];
 
 export class ACMScanner extends BaseScanner {
   constructor(client: AWSClient) {
@@ -69,11 +74,8 @@ export class ACMScanner extends BaseScanner {
 
     // 1. Certificate expiring within 7 days
     if (notAfter && notAfter - now <= DAYS_7 && notAfter > now) {
-      findings.push(this.createFinding(
-        'ACM Certificate Expiring Within 7 Days',
-        `ACM certificate for "${domain}" expires on ${new Date(notAfter).toISOString().slice(0, 10)}. ` +
-        `If not renewed, services using this certificate will show TLS errors to users.`,
-        'CRITICAL',
+      findings.push(this.emit(
+        'acm_certificates_expiration_check',
         {
           resourceId:  arn,
           certArn:     arn,
@@ -83,19 +85,17 @@ export class ACMScanner extends BaseScanner {
           inUse,
           inUseBy:     cert.InUseBy,
         },
-        `Renew the certificate immediately. ACM-managed certificates renew automatically if DNS/email validation is still valid. ` +
-        `Verify domain validation records are in place.`,
-        ['acm', 'certificate', 'expiry'],
+        {
+          message: `ACM certificate for "${domain}" expires on ${new Date(notAfter).toISOString().slice(0, 10)}. ` +
+            `If not renewed, services using this certificate will show TLS errors to users.`,
+        }
       ));
     }
 
     // 2. Certificate expiring within 30 days
     else if (notAfter && notAfter - now <= DAYS_30 && notAfter > now) {
-      findings.push(this.createFinding(
-        'ACM Certificate Expiring Within 30 Days',
-        `ACM certificate for "${domain}" expires on ${new Date(notAfter).toISOString().slice(0, 10)} ` +
-        `(${Math.floor((notAfter - now) / 86400000)} days remaining). Ensure auto-renewal is configured.`,
-        'HIGH',
+      findings.push(this.emit(
+        'acm_certificate_expiration_30_days',
         {
           resourceId:    arn,
           certArn:       arn,
@@ -105,19 +105,17 @@ export class ACMScanner extends BaseScanner {
           inUse,
           inUseBy:       cert.InUseBy,
         },
-        `Verify that ACM auto-renewal is active (check domain validation status in ACM console). ` +
-        `If using email validation, respond to renewal approval emails.`,
-        ['acm', 'certificate', 'expiry'],
+        {
+          message: `ACM certificate for "${domain}" expires on ${new Date(notAfter).toISOString().slice(0, 10)} ` +
+            `(${Math.floor((notAfter - now) / 86400000)} days remaining). Ensure auto-renewal is configured.`,
+        }
       ));
     }
 
     // 3. Certificate expired
     if (notAfter && notAfter < now) {
-      findings.push(this.createFinding(
-        'ACM Certificate Expired',
-        `ACM certificate for "${domain}" expired on ${new Date(notAfter).toISOString().slice(0, 10)}. ` +
-        `${inUse ? 'This certificate is still in use — services will be serving an expired TLS certificate!' : ''}`,
-        inUse ? 'CRITICAL' : 'HIGH',
+      findings.push(this.emit(
+        'acm_certificate_expired',
         {
           resourceId: arn,
           certArn:    arn,
@@ -126,35 +124,75 @@ export class ACMScanner extends BaseScanner {
           inUse,
           inUseBy:    cert.InUseBy,
         },
-        `Request a new certificate in ACM for "${domain}" and update all resources using the expired certificate.`,
-        ['acm', 'certificate', 'expiry'],
+        {
+          message: `ACM certificate for "${domain}" expired on ${new Date(notAfter).toISOString().slice(0, 10)}. ` +
+            `${inUse ? 'This certificate is still in use — services will be serving an expired TLS certificate!' : ''}`,
+          remediation: `Request a new certificate in ACM for "${domain}" and update all resources using the expired certificate.`,
+          severity: inUse ? 'CRITICAL' : 'HIGH',
+        }
       ));
     }
 
     // 4. Certificate not in use
     if (status === 'ISSUED' && !inUse) {
-      findings.push(this.createFinding(
-        'ACM Certificate Issued But Not In Use',
-        `ACM certificate for "${domain}" is issued but not associated with any AWS resource (CloudFront, ALB, API Gateway). ` +
-        `Unused certificates waste cost and may indicate forgotten resources.`,
-        'LOW',
+      findings.push(this.emit(
+        'acm_certificate_not_in_use',
         { resourceId: `${arn}::unused`, certArn: arn, domain, status },
-        `Either associate the certificate with a resource or delete it: aws acm delete-certificate --certificate-arn ${arn}`,
-        ['acm', 'certificate'],
+        {
+          message: `ACM certificate for "${domain}" is issued but not associated with any AWS resource (CloudFront, ALB, API Gateway). ` +
+            `Unused certificates waste cost and may indicate forgotten resources.`,
+          remediation: `Either associate the certificate with a resource or delete it: aws acm delete-certificate --certificate-arn ${arn}`,
+        }
       ));
     }
 
     // 5. Validation pending
     if (status === 'PENDING_VALIDATION') {
-      findings.push(this.createFinding(
-        'ACM Certificate Validation Pending',
-        `ACM certificate for "${domain}" is stuck in PENDING_VALIDATION state. ` +
-        `The domain validation record (DNS CNAME or email) has not been completed.`,
-        'MEDIUM',
+      findings.push(this.emit(
+        'acm_certificate_validation_pending',
         { resourceId: `${arn}::pending`, certArn: arn, domain, status },
-        `Complete domain validation by adding the required DNS CNAME record or responding to the validation email.`,
-        ['acm', 'certificate'],
+        {
+          message: `ACM certificate for "${domain}" is stuck in PENDING_VALIDATION state. ` +
+            `The domain validation record (DNS CNAME or email) has not been completed.`,
+        }
       ));
+    }
+
+    // Prowler evaluates the following checks only for certificates in use
+    if (inUse) {
+      // 6. Certificate Transparency logging (imported certificates are exempt)
+      const ctLoggingPreference: string = cert.Options?.CertificateTransparencyLoggingPreference ?? '';
+      if (cert.Type !== 'IMPORTED' && ctLoggingPreference !== 'ENABLED') {
+        findings.push(this.emit(
+          'acm_certificates_transparency_logs_enabled',
+          {
+            resourceId: `${arn}::ct-logging`,
+            certArn:    arn,
+            domain,
+            type:       cert.Type ?? 'UNKNOWN',
+            transparencyLoggingPreference: ctLoggingPreference || null,
+          },
+          {
+            message: `ACM certificate for "${domain}" has Certificate Transparency logging disabled. ` +
+              `Misissued or rogue certificates for the domain cannot be detected via CT logs, and unlogged public certificates may be distrusted by browsers.`,
+            remediation: `Enable CT logging: aws acm update-certificate-options --certificate-arn ${arn} --options CertificateTransparencyLoggingPreference=ENABLED`,
+          }
+        ));
+      }
+
+      // 7. Weak key algorithm
+      const keyAlgorithm: string = cert.KeyAlgorithm ?? '';
+      if (INSECURE_KEY_ALGORITHMS.includes(keyAlgorithm)) {
+        findings.push(this.emit(
+          'acm_certificates_with_secure_key_algorithms',
+          { resourceId: `${arn}::key-algorithm`, certArn: arn, domain, keyAlgorithm },
+          {
+            message: `ACM certificate for "${domain}" uses the weak key algorithm ${keyAlgorithm}. ` +
+              `Weak keys are vulnerable to factoring or discrete-log attacks that can expose the private key and enable TLS interception.`,
+            remediation: `Request a replacement certificate for "${domain}" with RSA-2048+ or ECDSA P-256+, update the resources using it, then delete the weak certificate.`,
+          }
+        ));
+      }
     }
 
     return findings;

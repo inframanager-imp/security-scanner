@@ -1,0 +1,55 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
+import { CheckMetadata } from '../../types';
+
+export const mqChecks: CheckMetadata[] = [
+  {
+    checkId: 'mq_broker_not_publicly_accessible',
+    provider: 'aws',
+    service: 'mq',
+    title: 'MQ Broker Publicly Accessible',
+    severity: 'HIGH',
+    description: 'Checks that the Amazon MQ broker is not publicly accessible; public brokers expose messaging endpoints and consoles directly to the Internet.',
+    remediation: 'Recreate or configure the broker as non-publicly accessible in private subnets, restrict security groups to trusted producers/consumers, and reach it via VPN, peering or Direct Connect.',
+    tags: ['mq', 'public-access', 'network'],
+  },
+  {
+    checkId: 'mq_broker_cluster_deployment_mode',
+    provider: 'aws',
+    service: 'mq',
+    title: 'MQ RabbitMQ Broker Not in Cluster Deployment Mode',
+    severity: 'MEDIUM',
+    description: 'Checks that RabbitMQ brokers use the CLUSTER_MULTI_AZ deployment mode, removing single-instance availability risk.',
+    remediation: 'Deploy RabbitMQ brokers in cluster (multi-AZ) mode, design clients for auto-reconnect with retries and idempotent processing, and test failover regularly.',
+    tags: ['mq', 'rabbitmq', 'high-availability', 'resilience'],
+  },
+  {
+    checkId: 'mq_broker_active_deployment_mode',
+    provider: 'aws',
+    service: 'mq',
+    title: 'MQ ActiveMQ Broker Not in Active/Standby Deployment Mode',
+    severity: 'LOW',
+    description: 'Checks that ActiveMQ brokers use the ACTIVE_STANDBY_MULTI_AZ deployment mode for multi-AZ resilience.',
+    remediation: 'Deploy ActiveMQ brokers in active/standby multi-AZ mode, configure client failover connection strings, and validate recovery with regular failover testing.',
+    tags: ['mq', 'activemq', 'high-availability', 'resilience'],
+  },
+  {
+    checkId: 'mq_broker_auto_minor_version_upgrades',
+    provider: 'aws',
+    service: 'mq',
+    title: 'MQ Broker Auto Minor Version Upgrade Disabled',
+    severity: 'LOW',
+    description: 'Checks that the Amazon MQ broker has automatic minor version upgrades enabled so engine security patches are applied during maintenance windows.',
+    remediation: 'Enable auto minor version upgrade on the broker, align upgrades with a defined maintenance window, and validate changes in staging before production.',
+    tags: ['mq', 'patching', 'version'],
+  },
+  {
+    checkId: 'mq_broker_logging_enabled',
+    provider: 'aws',
+    service: 'mq',
+    title: 'MQ Broker Logging Disabled',
+    severity: 'LOW',
+    description: 'Checks that the MQ broker ships logs to CloudWatch Logs: general logs for RabbitMQ, and both general and audit logs for ActiveMQ.',
+    remediation: 'Enable general logging (and audit logging for ActiveMQ) on the broker, set log retention, and alert on anomalous events for detection and forensics.',
+    tags: ['mq', 'logging', 'audit'],
+  },
+];

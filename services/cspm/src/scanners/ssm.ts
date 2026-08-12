@@ -1,8 +1,12 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   DescribeParametersCommand,
   GetParameterCommand,
   DescribeInstancePatchStatesCommand,
   DescribeInstanceInformationCommand,
+  ListDocumentsCommand,
+  DescribeDocumentPermissionCommand,
+  GetDocumentCommand,
 } from '@aws-sdk/client-ssm';
 import {
   DescribeInstancesCommand,
@@ -37,6 +41,19 @@ const CREDENTIAL_VALUE_PREFIXES: { label: string; test: (v: string) => boolean }
 // How many suspicious params we'll actually fetch values for, to bound API/IAM cost
 const MAX_PARAMS_TO_FETCH = 5;
 
+// Confirmed-credential substrings inside SSM document content (Prowler runs a
+// full secret scanner; we match known credential formats plus keyword assignments).
+const DOCUMENT_SECRET_VALUE_PATTERNS: { label: string; pattern: RegExp }[] = [
+  { label: 'AWS access key', pattern: /(?:AKIA|ASIA)[0-9A-Z]{16}/ },
+  { label: 'private key',    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY/ },
+  { label: 'GitHub token',   pattern: /\bgh[pousr]_[A-Za-z0-9]{30,}/ },
+  { label: 'Slack token',    pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/ },
+];
+// secret-like key followed by a hardcoded value (secure {{ssm-secure:...}} and
+// {{resolve:...}} dynamic references are excluded by the lookahead)
+const DOCUMENT_SECRET_ASSIGNMENT_PATTERN =
+  /(password|passwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|private[_-]?key|client[_-]?secret|credential)\w*["']?\s*[:=]\s*["']?(?!\{\{)[^\s"',;]{6,}/i;
+
 export class SSMScanner extends BaseScanner {
   constructor(client: AWSClient) {
     super(client, 'SSM');
@@ -50,6 +67,7 @@ export class SSMScanner extends BaseScanner {
       this.checkPlaintextSecrets().then(f => findings.push(...f)),
       this.checkPatchCompliance().then(f => findings.push(...f)),
       this.checkUnmanagedInstances().then(f => findings.push(...f)),
+      this.checkDocuments().then(f => findings.push(...f)),
     ]);
 
     logger.info(`SSM scan complete. ${findings.length} findings.`);
@@ -79,20 +97,18 @@ export class SSMScanner extends BaseScanner {
     } catch { return findings; }
 
     if (suspicious.length > 0) {
-      findings.push(this.createFinding(
-        'SSM Parameter Store Plaintext Secrets Detected',
-        `${suspicious.length} SSM Parameter(s) with secret-like names are stored as plaintext "String" type ` +
-        `instead of "SecureString": ${suspicious.slice(0, 5).map(p => p.Name).join(', ')}${suspicious.length > 5 ? '...' : ''}. ` +
-        `Plaintext parameters are readable by anyone with ssm:GetParameter permission and appear in logs unredacted.`,
-        'HIGH',
+      findings.push(this.emit(
+        'ssm_parameter_store_plaintext_secrets',
         {
           resourceId:  'ssm::plaintext-secrets',
           count:       suspicious.length,
           paramNames:  suspicious.slice(0, 10).map(p => p.Name),
         },
-        `Convert to SecureString type: aws ssm put-parameter --name <name> --value <value> --type SecureString --key-id <kms-key-id> --overwrite. ` +
-        `Use KMS CMK for encryption.`,
-        ['ssm', 'secrets', 'encryption'],
+        {
+          message: `${suspicious.length} SSM Parameter(s) with secret-like names are stored as plaintext "String" type ` +
+            `instead of "SecureString": ${suspicious.slice(0, 5).map(p => p.Name).join(', ')}${suspicious.length > 5 ? '...' : ''}. ` +
+            `Plaintext parameters are readable by anyone with ssm:GetParameter permission and appear in logs unredacted.`,
+        }
       ));
 
       // Confirm by fetching a small sample and matching values against known credential prefixes.
@@ -108,20 +124,131 @@ export class SSMScanner extends BaseScanner {
           if (!value) continue;
           const matched = CREDENTIAL_VALUE_PREFIXES.find(p => p.test(value));
           if (matched) {
-            findings.push(this.createFinding(
-              'SSM Plaintext Parameter Contains Real Credential',
-              `SSM Parameter "${paramName}" is stored as plaintext "String" and its value matches the format of ${matched.label}. ` +
-              `This is a confirmed credential leak, not a heuristic match.`,
-              'CRITICAL',
+            findings.push(this.emit(
+              'ssm_parameter_confirmed_credential',
               { resourceId: `ssm::credential::${paramName}`, paramName, credentialType: matched.label },
-              `Rotate the credential immediately and re-create the parameter as SecureString with a KMS CMK.`,
-              ['ssm', 'secrets', 'confirmed-credential'],
+              {
+                message: `SSM Parameter "${paramName}" is stored as plaintext "String" and its value matches the format of ${matched.label}. ` +
+                  `This is a confirmed credential leak, not a heuristic match.`,
+              }
             ));
           }
         } catch { /* no permission to read value — heuristic finding above still stands */ }
       }
     }
     return findings;
+  }
+
+  // ssm_documents_set_as_public / ssm_document_secrets: evaluate documents owned by this account
+  private async checkDocuments(): Promise<ScanningResult[]> {
+    const findings: ScanningResult[] = [];
+
+    let accountId = '';
+    try {
+      accountId = await this.client.getAccountId();
+    } catch { /* account id unavailable; the public-share ("all") case is still detected */ }
+
+    const documents: any[] = [];
+    try {
+      let nextToken: string | undefined;
+      do {
+        const result = await retry(() =>
+          this.client.ssm.send(new ListDocumentsCommand({
+            Filters: [{ Key: 'Owner', Values: ['Self'] }],
+            NextToken: nextToken,
+          }))
+        );
+        documents.push(...(result.DocumentIdentifiers ?? []));
+        nextToken = result.NextToken;
+      } while (nextToken);
+    } catch { return findings; }
+
+    for (const document of documents) {
+      const name: string = document.Name ?? '';
+      if (!name) continue;
+
+      // ssm_documents_set_as_public: shared with "all" or with accounts outside
+      // the trusted list (only the owning account is trusted by default)
+      try {
+        const permissions = await retry(() =>
+          this.client.ssm.send(new DescribeDocumentPermissionCommand({ Name: name, PermissionType: 'Share' }))
+        );
+        const accountIds: string[] = permissions.AccountIds ?? [];
+        if (accountIds.includes('all')) {
+          findings.push(this.emit(
+            'ssm_documents_set_as_public',
+            { resourceId: `ssm::document::${name}`, documentName: name, sharedWith: ['all'] },
+            {
+              message: `SSM document "${name}" is public: it is shared with all AWS accounts. ` +
+                `Anyone can read its content, including scripts, parameters and any embedded secrets.`,
+              remediation: `Remove public sharing: aws ssm modify-document-permission --name ${name} --permission-type Share --account-ids-to-remove all`,
+            }
+          ));
+        } else {
+          const externalAccounts = accountIds.filter(id => id !== accountId);
+          if (externalAccounts.length > 0) {
+            findings.push(this.emit(
+              'ssm_documents_set_as_public',
+              { resourceId: `ssm::document::${name}`, documentName: name, sharedWith: externalAccounts },
+              {
+                message: `SSM document "${name}" is shared with external AWS account(s): ${externalAccounts.join(', ')}. ` +
+                  `Review whether each account is trusted to read this document.`,
+                remediation: `Remove untrusted accounts from the share list: aws ssm modify-document-permission --name ${name} --permission-type Share --account-ids-to-remove <account-id>`,
+              }
+            ));
+          }
+        }
+      } catch (error) {
+        logger.debug(`Failed to describe permissions for SSM document ${name}`, { error: (error as Error).message });
+      }
+
+      // ssm_document_secrets: scan document content for hardcoded credentials
+      try {
+        const result = await retry(() =>
+          this.client.ssm.send(new GetDocumentCommand({ Name: name }))
+        );
+        const content: string = result.Content ?? '';
+        if (content) {
+          const secretsFound = this.findSecretsInDocumentContent(content);
+          if (secretsFound.length > 0) {
+            findings.push(this.emit(
+              'ssm_document_secrets',
+              { resourceId: `ssm::document::${name}::secrets`, documentName: name, secretsFound: secretsFound.slice(0, 10) },
+              {
+                message: `Potential secret(s) found in SSM document "${name}": ` +
+                  `${secretsFound.slice(0, 5).join(', ')}${secretsFound.length > 5 ? '...' : ''}. ` +
+                  `Anyone who can read the document can exfiltrate these credentials.`,
+                remediation: `Remove the hardcoded values from document "${name}", store them in Secrets Manager or SecureString parameters ` +
+                  `referenced via {{ssm-secure:/path}}, and rotate any exposed credentials.`,
+              }
+            ));
+          }
+        }
+      } catch (error) {
+        logger.debug(`Failed to get content of SSM document ${name}`, { error: (error as Error).message });
+      }
+    }
+
+    return findings;
+  }
+
+  private findSecretsInDocumentContent(content: string): string[] {
+    const secretsFound: string[] = [];
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Secure dynamic references are the recommended pattern, not a leak
+      if (line.includes('{{ssm-secure:') || line.includes('{{resolve:')) continue;
+      for (const { label, pattern } of DOCUMENT_SECRET_VALUE_PATTERNS) {
+        if (pattern.test(line)) {
+          secretsFound.push(`${label} on line ${i + 1}`);
+        }
+      }
+      if (DOCUMENT_SECRET_ASSIGNMENT_PATTERN.test(line)) {
+        secretsFound.push(`secret keyword assignment on line ${i + 1}`);
+      }
+    }
+    return secretsFound;
   }
 
   private async checkPatchCompliance(): Promise<ScanningResult[]> {
@@ -166,12 +293,8 @@ export class SSMScanner extends BaseScanner {
       const totalCritical = noncompliant.reduce((s, i) => s + (i.CriticalNonCompliantCount ?? 0), 0);
       const totalSecurity = noncompliant.reduce((s, i) => s + (i.SecurityNonCompliantCount ?? 0), 0);
 
-      findings.push(this.createFinding(
-        'EC2 Instances Missing Critical Security Patches',
-        `${noncompliant.length} managed instance(s) have unresolved patch compliance issues: ` +
-        `${totalCritical} critical missing patches, ${totalSecurity} security missing patches. ` +
-        `Instances: ${noncompliant.slice(0, 5).map(i => i.InstanceId).join(', ')}`,
-        totalCritical > 0 ? 'CRITICAL' : 'HIGH',
+      findings.push(this.emit(
+        'ssm_managed_compliant_patching',
         {
           resourceId:       'ssm::patch-compliance',
           instanceCount:    noncompliant.length,
@@ -179,9 +302,12 @@ export class SSMScanner extends BaseScanner {
           securityMissing:  totalSecurity,
           instanceIds:      noncompliant.slice(0, 10).map(i => i.InstanceId),
         },
-        `Run patch remediation via SSM Patch Manager: aws ssm send-command --document-name AWS-RunPatchBaseline ` +
-        `--targets Key=InstanceIds,Values=<instance-ids> --parameters Operation=Install`,
-        ['ssm', 'patch', 'compliance'],
+        {
+          message: `${noncompliant.length} managed instance(s) have unresolved patch compliance issues: ` +
+            `${totalCritical} critical missing patches, ${totalSecurity} security missing patches. ` +
+            `Instances: ${noncompliant.slice(0, 5).map(i => i.InstanceId).join(', ')}`,
+          severity: totalCritical > 0 ? 'CRITICAL' : 'HIGH',
+        }
       ));
     }
     return findings;
@@ -228,20 +354,18 @@ export class SSMScanner extends BaseScanner {
     const unmanaged  = allInstanceIds.filter(id => !ssmSet.has(id));
 
     if (unmanaged.length > 0) {
-      findings.push(this.createFinding(
-        'EC2 Instances Not Managed by SSM',
-        `${unmanaged.length} running EC2 instance(s) are not registered with AWS Systems Manager. ` +
-        `Unmanaged instances cannot use Session Manager (SSH-free access), patch management, or Run Command. ` +
-        `Instances: ${unmanaged.slice(0, 5).join(', ')}${unmanaged.length > 5 ? '...' : ''}`,
-        'MEDIUM',
+      findings.push(this.emit(
+        'ec2_instance_managed_by_ssm',
         {
           resourceId:    'ssm::unmanaged-instances',
           instanceCount: unmanaged.length,
           instanceIds:   unmanaged.slice(0, 10),
         },
-        `Install the SSM Agent on unmanaged instances and attach an IAM role with AmazonSSMManagedInstanceCore policy. ` +
-        `Use Session Manager instead of SSH to eliminate the need for inbound port 22.`,
-        ['ssm', 'ec2', 'access'],
+        {
+          message: `${unmanaged.length} running EC2 instance(s) are not registered with AWS Systems Manager. ` +
+            `Unmanaged instances cannot use Session Manager (SSH-free access), patch management, or Run Command. ` +
+            `Instances: ${unmanaged.slice(0, 5).join(', ')}${unmanaged.length > 5 ? '...' : ''}`,
+        }
       ));
     }
     return findings;

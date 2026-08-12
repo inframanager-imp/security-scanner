@@ -4,6 +4,12 @@
  * A control PASSES when zero OPEN/ACKNOWLEDGED findings map to it.
  * A control is NOT_EVALUATED when no scanner covers it (findingTitles is empty).
  * Score = passing / (passing + failing) * 100  (NOT_EVALUATED excluded from denominator).
+ *
+ * Finding → control matching:
+ *  - Findings that carry a stable registry checkId are matched against
+ *    control.checkIds (resolved from TITLE_TO_CHECK_IDS below).
+ *  - Legacy findings (checkId = null, created before the registry migration)
+ *    fall back to byte-identical title matching against control.findingTitles.
  */
 
 export type FrameworkId = 'PCI_DSS' | 'SOC2' | 'ISO27001' | 'HIPAA' | 'CIS_AWS' | 'NIST_800_53' | 'GDPR' | 'FEDRAMP';
@@ -14,6 +20,12 @@ export interface ComplianceControl {
   description: string;
   /** Empty array = control cannot be evaluated by our scanners → NOT_EVALUATED */
   findingTitles: string[];
+  /**
+   * Stable registry checkIds resolved from findingTitles. Used to match
+   * findings that carry a non-null checkId; findingTitles remains the
+   * fallback for legacy findings with checkId = null.
+   */
+  checkIds: string[];
 }
 
 export interface ComplianceFramework {
@@ -38,6 +50,136 @@ export interface FrameworkScore {
   notEvaluatedControls: number;
   totalControls: number;
   controls: ControlResult[];
+}
+
+/** Control definition as authored below — checkIds are derived, not hand-written. */
+type ComplianceControlDef = Omit<ComplianceControl, 'checkIds'>;
+
+interface ComplianceFrameworkDef extends Omit<ComplianceFramework, 'controls'> {
+  controls: ComplianceControlDef[];
+}
+
+// ---------------------------------------------------------------------------
+// Finding title → stable registry checkId resolution
+//
+// Hardcoded snapshot of src/checks/registry/aws/*.ts (title → checkId), so the
+// api build stays decoupled from the scanner registry. Titles here are
+// byte-identical to both the registry entries and the control findingTitles
+// below. A title may map to more than one checkId when two checks emit the
+// same title (e.g. the ec2 and vpc EBS-default-encryption checks).
+//
+// Titles with NO registry entry stay title-only on purpose (legacy/stale
+// titles still present on old findings): 'ECR Enhanced Scanning Not Enabled',
+// 'ECR Image Scan Failed'.
+// ---------------------------------------------------------------------------
+
+const TITLE_TO_CHECK_IDS: Record<string, string[]> = {
+  'AWS Config Changes Not Monitored': ['cloudwatch_log_metric_filter_and_alarm_for_aws_config_configuration_changes_enabled'],
+  'AWS Config Not Enabled': ['config_recorder_all_regions_enabled'],
+  'AWS Organization Changes Not Monitored': ['cloudwatch_log_metric_filter_aws_organizations_changes'],
+  'Bucket Has Public ACL Grants': ['s3_bucket_public_access'],
+  'CMK Deletion Not Monitored': ['cloudwatch_log_metric_filter_disable_or_scheduled_deletion_of_kms_cmk'],
+  'CloudTrail Config Changes Not Monitored': ['cloudwatch_log_metric_filter_and_alarm_for_cloudtrail_configuration_changes_enabled'],
+  'CloudTrail Not Logging': ['cloudtrail_trail_not_logging'],
+  'CloudWatch Logs Not Configured': ['cloudtrail_cloudwatch_logging_enabled'],
+  'CloudWatch Monitoring Not Configured': ['cloudwatch_cloudtrail_log_group_not_configured'],
+  'Console Access Without MFA': ['iam_user_console_access_mfa_unverified'],
+  'Console Authentication Failures Not Monitored': ['cloudwatch_log_metric_filter_authentication_failures'],
+  'Console Sign-In Without MFA Not Monitored': ['cloudwatch_log_metric_filter_sign_in_without_mfa'],
+  'Database Publicly Accessible': ['rds_instance_no_public_access'],
+  'Default Security Group Not Restricted': ['ec2_securitygroup_default_restrict_traffic'],
+  'Deletion Protection Not Enabled': ['rds_instance_deletion_protection'],
+  'Detailed Monitoring Not Enabled': ['ec2_instance_detailed_monitoring_enabled'],
+  'EBS Default Encryption Not Enabled': ['ec2_ebs_default_encryption', 'vpc_ebs_default_encryption_disabled'],
+  'ECR Image High Severity CVEs': ['ecr_image_high_severity_cves'],
+  'ECR Image Medium/Low CVEs': ['ecr_image_medium_low_cves'],
+  'ECR Image OS Package CVE': ['ecr_repositories_scan_vulnerabilities_in_latest_image'],
+  'ECR Scan on Push Disabled': ['ecr_repositories_scan_images_on_push_enabled'],
+  'IAM Access Analyzer Not Enabled': ['accessanalyzer_enabled'],
+  'IAM Policy Changes Not Monitored': ['cloudwatch_log_metric_filter_policy_changes'],
+  'IAM Support Role Not Configured': ['iam_support_role_created'],
+  'IMDSv1 Enabled': ['ec2_instance_imdsv2_enabled'],
+  'Inactive Access Key': ['iam_user_accesskey_unused'],
+  'Inactive User': ['iam_user_console_access_unused'],
+  'Instance Has Public IP Without Security Group': ['ec2_instance_public_ip_without_security_group'],
+  'KMS Key Disabled': ['kms_cmk_are_used'],
+  'KMS Key Pending Deletion': ['kms_cmk_not_deleted_unintentionally'],
+  'KMS Key Rotation Not Enabled': ['kms_cmk_rotation_enabled'],
+  'Lambda Deprecated Runtime': ['lambda_function_deprecated_runtime'],
+  'Lambda EOL Runtime': ['awslambda_function_using_supported_runtimes'],
+  'Lambda No Code Signing': ['lambda_function_code_signing_enabled'],
+  'Lambda No Dead Letter Queue': ['awslambda_function_no_dead_letter_queue'],
+  'Lambda Public Function': ['awslambda_function_not_publicly_accessible'],
+  'Lambda Sensitive Environment Variable': ['awslambda_function_no_secrets_in_variables'],
+  'Lambda Sensitive Function Not in VPC': ['awslambda_function_inside_vpc'],
+  'Lambda Vulnerable Dependency': ['lambda_function_vulnerable_dependency'],
+  'Log File Validation Not Enabled': ['cloudtrail_log_file_validation_enabled'],
+  'MFA Not Verified for User': ['iam_user_mfa_enabled_console_access'],
+  'Management Events Not Logged': ['cloudtrail_multi_region_enabled_logging_management_events'],
+  'Multi-AZ Not Enabled': ['rds_instance_multi_az'],
+  'Multiple Access Keys': ['iam_user_multiple_access_keys'],
+  'NACL Changes Not Monitored': ['cloudwatch_changes_to_network_acls_alarm_configured'],
+  'Network Gateway Changes Not Monitored': ['cloudwatch_changes_to_network_gateways_alarm_configured'],
+  'No CloudTrail Found': ['cloudtrail_trail_not_configured'],
+  'No Policies Attached': ['iam_user_no_policies_attached'],
+  'Old Access Key': ['iam_rotate_access_key_90_days'],
+  'Overly Permissive Network ACL': ['ec2_networkacl_allow_ingress_any_port'],
+  'Overly Permissive Policy': ['iam_user_overly_permissive_policy'],
+  'Overly Permissive Security Group Rule': ['ec2_securitygroup_allow_ingress_from_internet_to_high_risk_tcp_ports'],
+  'Password Policy Minimum Length': ['iam_password_policy_minimum_length_14'],
+  'Password Policy Reuse Prevention': ['iam_password_policy_reuse_24'],
+  'Password Policy Review Required': ['iam_password_policy_not_configured'],
+  'Public Access Not Fully Blocked': ['s3_bucket_level_public_access_block'],
+  'Publicly Reachable EC2 Instance': ['ec2_instance_internet_reachable'],
+  'RDS Cluster Not Encrypted': ['rds_cluster_storage_encrypted'],
+  'RDS Not Encrypted': ['rds_instance_storage_encrypted'],
+  'Root Access Key Exists': ['iam_no_root_access_key'],
+  'Root Account MFA Not Enabled': ['iam_root_mfa_enabled'],
+  'Root Account Security': ['iam_root_account_security_unverified'],
+  'Root Account Usage Not Monitored': ['cloudwatch_log_metric_filter_root_usage'],
+  'Route Table Changes Not Monitored': ['cloudwatch_changes_to_network_route_tables_alarm_configured'],
+  'S3 Access Logging Not Enabled': ['s3_bucket_server_access_logging_enabled'],
+  'S3 Bucket Not Configured': ['cloudtrail_trail_s3_bucket_not_configured'],
+  'S3 Bucket Not Encrypted': ['s3_bucket_default_encryption'],
+  'S3 Bucket Policy Changes Not Monitored': ['cloudwatch_log_metric_filter_for_s3_bucket_policy_changes'],
+  'S3 HTTPS Not Enforced': ['s3_bucket_secure_transport_policy'],
+  'S3 Logs Not KMS Encrypted': ['cloudtrail_kms_encryption_enabled'],
+  'S3 MFA Delete Not Enabled': ['s3_bucket_no_mfa_delete'],
+  'S3 Object Logging Not Enabled': ['cloudwatch_s3_object_level_logging_disabled'],
+  'Secret Not Replicated': ['secretsmanager_secret_cross_region_replication'],
+  'Secret Rotation Not Enabled': ['secretsmanager_automatic_rotation_enabled'],
+  'Secret Scheduled for Deletion': ['secretsmanager_secret_scheduled_for_deletion'],
+  'Secret Using Default Encryption': ['secretsmanager_secret_encrypted_with_cmk'],
+  'Security Group Changes Not Monitored': ['cloudwatch_log_metric_filter_security_group_changes'],
+  'Sensitive Port 1433 (MSSQL) Exposed to Internet': ['ec2_instance_port_sqlserver_exposed_to_internet'],
+  'Sensitive Port 22 (SSH) Exposed to Internet': ['ec2_instance_port_ssh_exposed_to_internet'],
+  'Sensitive Port 27017 (MongoDB) Exposed to Internet': ['ec2_instance_port_mongodb_exposed_to_internet'],
+  'Sensitive Port 3306 (MySQL) Exposed to Internet': ['ec2_instance_port_mysql_exposed_to_internet'],
+  'Sensitive Port 3389 (RDP) Exposed to Internet': ['ec2_instance_port_rdp_exposed_to_internet'],
+  'Sensitive Port 5432 (PostgreSQL) Exposed to Internet': ['ec2_instance_port_postgresql_exposed_to_internet'],
+  'Sensitive Port 6379 (Redis) Exposed to Internet': ['ec2_instance_port_redis_exposed_to_internet'],
+  'Sensitive Port 9200 (Elasticsearch) Exposed to Internet': ['ec2_instance_port_elasticsearch_exposed_to_internet'],
+  'Short Backup Retention': ['rds_instance_backup_enabled'],
+  'Short Cluster Backup Retention': ['rds_cluster_backup_retention'],
+  'Single Region CloudTrail': ['cloudtrail_multi_region_enabled'],
+  'Unauthorized API Calls Not Monitored': ['cloudwatch_log_metric_filter_unauthorized_api_calls'],
+  'Unused Access Key': ['iam_user_accesskey_never_used'],
+  'User Never Logged In': ['iam_user_never_logged_in'],
+  'Using SSE-S3 Instead of KMS': ['s3_bucket_kms_encryption'],
+  'VPC Changes Not Monitored': ['cloudwatch_changes_to_vpcs_alarm_configured'],
+  'VPC Flow Logs Not Enabled': ['vpc_flow_logs_enabled'],
+  'VPC Peering Route Not Least Access': ['vpc_peering_routing_tables_with_least_privilege'],
+};
+
+/** Resolve a control's findingTitles to deduplicated registry checkIds. Unmapped titles are skipped (title-only fallback). */
+function resolveCheckIds(titles: string[]): string[] {
+  const ids: string[] = [];
+  for (const title of titles) {
+    for (const id of TITLE_TO_CHECK_IDS[title] ?? []) {
+      if (!ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +235,7 @@ const CIS_MONITORING_FINDINGS = [
 // Framework definitions
 // ---------------------------------------------------------------------------
 
-export const FRAMEWORKS: ComplianceFramework[] = [
+const FRAMEWORK_DEFS: ComplianceFrameworkDef[] = [
   // ─────────────────────────────────────────────────────────────────────────
   // PCI DSS v3.2.1
   // ─────────────────────────────────────────────────────────────────────────
@@ -1506,13 +1648,33 @@ export const FRAMEWORKS: ComplianceFramework[] = [
   },
 ];
 
+/**
+ * Exported frameworks with checkIds resolved from each control's
+ * findingTitles. findingTitles is kept verbatim so legacy findings
+ * (checkId = null) still match by title.
+ */
+export const FRAMEWORKS: ComplianceFramework[] = FRAMEWORK_DEFS.map((fw) => ({
+  ...fw,
+  controls: fw.controls.map((ctrl) => ({
+    ...ctrl,
+    checkIds: resolveCheckIds(ctrl.findingTitles),
+  })),
+}));
+
 // ---------------------------------------------------------------------------
 // Scoring helper
 // ---------------------------------------------------------------------------
 
 /**
- * Given a set of active (OPEN or ACKNOWLEDGED) finding titles for an account,
- * compute the compliance score for every framework.
+ * Given the active (OPEN or ACKNOWLEDGED) findings for an account, compute the
+ * compliance score for every framework.
+ *
+ * A finding maps to a control when its checkId is non-null and listed in
+ * control.checkIds, OR its checkId is null (legacy finding) and its title is
+ * listed in control.findingTitles. Callers supplying the checkId arguments
+ * must therefore pass ONLY null-checkId findings in the title set/counts;
+ * callers omitting them (legacy call shape) pass all findings by title, which
+ * preserves the pre-checkId behaviour.
  *
  * NOT_EVALUATED controls (empty findingTitles) are excluded from the score
  * denominator so they do not artificially inflate compliance.
@@ -1520,17 +1682,26 @@ export const FRAMEWORKS: ComplianceFramework[] = [
 export function scoreFrameworks(
   activeFindingTitles: Set<string>,
   activeFindingCounts: Map<string, number>,
+  activeCheckIds?: Set<string>,
+  activeCheckIdCounts?: Map<string, number>,
 ): FrameworkScore[] {
   return FRAMEWORKS.map((fw) => {
     const controls: ControlResult[] = fw.controls.map((ctrl) => {
-      if (ctrl.findingTitles.length === 0) {
+      if (ctrl.findingTitles.length === 0 && ctrl.checkIds.length === 0) {
         return { ...ctrl, status: 'NOT_EVALUATED', failingFindings: 0 };
       }
-      const failingFindings = ctrl.findingTitles.reduce(
-        (sum, t) => sum + (activeFindingCounts.get(t) ?? 0),
-        0,
-      );
-      const hasFailing = ctrl.findingTitles.some((t) => activeFindingTitles.has(t));
+      const failingFindings =
+        ctrl.findingTitles.reduce(
+          (sum, t) => sum + (activeFindingCounts.get(t) ?? 0),
+          0,
+        ) +
+        ctrl.checkIds.reduce(
+          (sum, id) => sum + (activeCheckIdCounts?.get(id) ?? 0),
+          0,
+        );
+      const hasFailing =
+        ctrl.findingTitles.some((t) => activeFindingTitles.has(t)) ||
+        ctrl.checkIds.some((id) => activeCheckIds?.has(id) ?? false);
       return {
         ...ctrl,
         status: hasFailing ? 'FAIL' : 'PASS',
@@ -1557,4 +1728,45 @@ export function scoreFrameworks(
       controls,
     };
   });
+}
+
+// ─── Compliance tag lookup (finding → framework/control) ─────────────────────
+// Powers the "Compliance" column on the Reports/AccountReport findings
+// tables — reverse index built once at module load (a few hundred
+// title/checkId → control entries), not recomputed per request.
+
+export interface ComplianceTag {
+  frameworkShortName: string;
+  controlId: string;
+}
+
+let complianceTagIndex: { byTitle: Map<string, ComplianceTag[]>; byCheckId: Map<string, ComplianceTag[]> } | null = null;
+
+function buildComplianceTagIndex() {
+  const byTitle = new Map<string, ComplianceTag[]>();
+  const byCheckId = new Map<string, ComplianceTag[]>();
+  for (const fw of FRAMEWORKS) {
+    for (const ctrl of fw.controls) {
+      const tag: ComplianceTag = { frameworkShortName: fw.shortName, controlId: ctrl.id };
+      for (const title of ctrl.findingTitles) {
+        const list = byTitle.get(title) ?? [];
+        list.push(tag);
+        byTitle.set(title, list);
+      }
+      for (const checkId of ctrl.checkIds) {
+        const list = byCheckId.get(checkId) ?? [];
+        list.push(tag);
+        byCheckId.set(checkId, list);
+      }
+    }
+  }
+  return { byTitle, byCheckId };
+}
+
+/** Which compliance framework controls (if any) a finding maps to — checkId first, title as the legacy fallback. */
+export function getComplianceTags(title: string, checkId: string | null): ComplianceTag[] {
+  complianceTagIndex ??= buildComplianceTagIndex();
+  const byCheckId = checkId ? complianceTagIndex.byCheckId.get(checkId) : undefined;
+  if (byCheckId?.length) return byCheckId;
+  return complianceTagIndex.byTitle.get(title) ?? [];
 }

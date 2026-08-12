@@ -142,6 +142,9 @@ model Finding {
   id              String        @id @default(uuid())
   scanId          String
   service         String
+  // Stable registry check ID (prowler-compatible), e.g. s3_bucket_default_encryption.
+  // Nullable while scanners are migrated off hardcoded titles.
+  checkId         String?
   severity        Severity
   title           String
   description     String        @db.Text
@@ -156,15 +159,22 @@ model Finding {
   businessContext Json? // tag-derived: env, dataClass, owner, etc.
   exploitability  String? // KNOWN_EXPLOIT | POC | THEORETICAL
   enrichedAt      DateTime?
+  // AI triage (content lives in AiArtifact; these exist for filter/sort only)
+  aiTriagedAt     DateTime?
+  aiFpLikelihood  Int? // 0–100, higher = more likely a false positive
+  aiClusterKey    String?
   createdAt       DateTime      @default(now())
   scan            Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
   @@index([scanId])
   @@index([severity])
   @@index([service])
+  @@index([checkId])
   @@index([findingStatus])
   @@index([riskScore(sort: Desc)])
   @@index([reachability])
+  @@index([aiFpLikelihood])
+  @@index([aiClusterKey])
 }
 
 // ─── Azure Models ──────────────────────────────────────────────────────────────
@@ -254,6 +264,10 @@ model AzureFinding {
   businessContext Json?
   exploitability  String?
   enrichedAt      DateTime?
+  // AI triage (content lives in AiArtifact; these exist for filter/sort only)
+  aiTriagedAt     DateTime?
+  aiFpLikelihood  Int? // 0–100, higher = more likely a false positive
+  aiClusterKey    String?
   createdAt       DateTime      @default(now())
   scan            AzureScan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
@@ -263,6 +277,8 @@ model AzureFinding {
   @@index([findingStatus])
   @@index([riskScore(sort: Desc)])
   @@index([reachability])
+  @@index([aiFpLikelihood])
+  @@index([aiClusterKey])
 }
 
 // ─── Config Change Tracking ────────────────────────────────────────────────────
@@ -590,6 +606,10 @@ model GcpFinding {
   businessContext Json?
   exploitability  String?
   enrichedAt      DateTime?
+  // AI triage (content lives in AiArtifact; these exist for filter/sort only)
+  aiTriagedAt     DateTime?
+  aiFpLikelihood  Int? // 0–100, higher = more likely a false positive
+  aiClusterKey    String?
   createdAt       DateTime      @default(now())
   scan            GcpScan       @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
@@ -597,6 +617,8 @@ model GcpFinding {
   @@index([severity])
   @@index([service])
   @@index([findingStatus])
+  @@index([aiFpLikelihood])
+  @@index([aiClusterKey])
 }
 
 // ─── Alerting ──────────────────────────────────────────────────────────────────

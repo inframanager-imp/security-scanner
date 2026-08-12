@@ -54,6 +54,11 @@ export interface ScanSummary {
   total: number;
 }
 
+export interface ComplianceTag {
+  frameworkShortName: string;
+  controlId: string;
+}
+
 export interface Finding {
   id: string;
   scanId: string;
@@ -68,6 +73,7 @@ export interface Finding {
   findingStatus: FindingStatus;
   tags: string[];
   discoveredAt: string;
+  complianceTags?: ComplianceTag[];
 }
 
 export interface DashboardSummary {
@@ -184,6 +190,7 @@ export interface AzureFinding {
   resourceId?:    string | null;
   discoveredAt:   string;
   createdAt:      string;
+  complianceTags?: ComplianceTag[];
 }
 
 export interface AzureActivityEvent {

@@ -2,7 +2,9 @@
  * Evidence Auto-Collection Service
  *
  * Automatically generates ComplianceEvidence records by evaluating active
- * findings against each framework control's findingTitles mapping.
+ * findings against each framework control. Findings with a stable registry
+ * checkId are matched via control.checkIds; legacy findings (checkId = null)
+ * fall back to byte-identical title matching via control.findingTitles.
  *
  * Evidence lifecycle:
  *  - AUTO_FINDING: derived from OPEN / ACKNOWLEDGED scanner findings
@@ -35,15 +37,29 @@ export async function collectEvidenceForAccount(
       scanId: { in: scanIds },
       findingStatus: { in: ['OPEN', 'ACKNOWLEDGED'] },
     },
-    select: { id: true, title: true, severity: true },
+    select: { id: true, title: true, severity: true, checkId: true },
   });
 
-  const activeTitles = new Set(findings.map((f) => f.title));
+  // Findings with a stable checkId are matched via control.checkIds; legacy
+  // findings (checkId = null) fall back to title matching.
+  const activeTitles = new Set<string>();
   const titleToIds = new Map<string, string[]>();
+  const activeCheckIds = new Set<string>();
+  const checkIdToIds = new Map<string, string[]>();
+  const checkIdTitles = new Map<string, string>(); // representative title per checkId, for summaries
   for (const f of findings) {
-    const arr = titleToIds.get(f.title) ?? [];
-    arr.push(f.id);
-    titleToIds.set(f.title, arr);
+    if (f.checkId) {
+      activeCheckIds.add(f.checkId);
+      const arr = checkIdToIds.get(f.checkId) ?? [];
+      arr.push(f.id);
+      checkIdToIds.set(f.checkId, arr);
+      if (!checkIdTitles.has(f.checkId)) checkIdTitles.set(f.checkId, f.title);
+    } else {
+      activeTitles.add(f.title);
+      const arr = titleToIds.get(f.title) ?? [];
+      arr.push(f.id);
+      titleToIds.set(f.title, arr);
+    }
   }
 
   const targetFrameworks = frameworkId
@@ -56,17 +72,29 @@ export async function collectEvidenceForAccount(
 
   for (const fw of targetFrameworks) {
     for (const ctrl of fw.controls) {
-      if (ctrl.findingTitles.length === 0) continue; // NOT_EVALUATED — skip
+      if (ctrl.findingTitles.length === 0 && ctrl.checkIds.length === 0) continue; // NOT_EVALUATED — skip
 
       const failingTitles = ctrl.findingTitles.filter((t) => activeTitles.has(t));
-      const isCompliant = failingTitles.length === 0;
+      const failingCheckIds = ctrl.checkIds.filter((c) => activeCheckIds.has(c));
+      const isCompliant = failingTitles.length === 0 && failingCheckIds.length === 0;
       const status = isCompliant ? 'COMPLIANT' : 'NON_COMPLIANT';
 
-      const linkedFindingIds = failingTitles.flatMap((t) => titleToIds.get(t) ?? []);
+      const linkedFindingIds = [
+        ...failingTitles.flatMap((t) => titleToIds.get(t) ?? []),
+        ...failingCheckIds.flatMap((c) => checkIdToIds.get(c) ?? []),
+      ];
+
+      // Human-readable labels for the summary: legacy title matches plus the
+      // representative finding titles of checkId matches (deduplicated).
+      const failingLabels = [...failingTitles];
+      for (const c of failingCheckIds) {
+        const label = checkIdTitles.get(c) ?? c;
+        if (!failingLabels.includes(label)) failingLabels.push(label);
+      }
 
       const summary = isCompliant
         ? `All ${ctrl.findingTitles.length} monitored finding type(s) are clear.`
-        : `${failingTitles.length} finding type(s) failing: ${failingTitles.slice(0, 3).join(', ')}${failingTitles.length > 3 ? ` +${failingTitles.length - 3} more` : ''}.`;
+        : `${failingLabels.length} finding type(s) failing: ${failingLabels.slice(0, 3).join(', ')}${failingLabels.length > 3 ? ` +${failingLabels.length - 3} more` : ''}.`;
 
       const existing = await prisma.complianceEvidence.findFirst({
         where: {
@@ -95,7 +123,7 @@ export async function collectEvidenceForAccount(
           data: {
             status,
             summary,
-            detail: { failingTitles, linkedFindingIds: linkedFindingIds.slice(0, 50) },
+            detail: { failingTitles, failingCheckIds, linkedFindingIds: linkedFindingIds.slice(0, 50) },
             evaluatedResources: evaluation.evaluatedResources as any,
             passingCount: evaluation.passingCount,
             failingCount: evaluation.failingCount,
@@ -116,7 +144,7 @@ export async function collectEvidenceForAccount(
             evidenceType: 'AUTO_FINDING',
             status,
             summary,
-            detail: { failingTitles, linkedFindingIds: linkedFindingIds.slice(0, 50) },
+            detail: { failingTitles, failingCheckIds, linkedFindingIds: linkedFindingIds.slice(0, 50) },
             evaluatedResources: evaluation.evaluatedResources as any,
             passingCount: evaluation.passingCount,
             failingCount: evaluation.failingCount,

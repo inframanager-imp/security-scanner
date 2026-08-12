@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ShieldCheck, ChevronRight, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
@@ -10,6 +10,7 @@ import {
   type AzureFrameworkId,
 } from '../api/compliance';
 import { Card } from '../components/ui/Card';
+import { FrameworkScoreOverview } from '../components/ui/FrameworkScoreOverview';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,9 +77,38 @@ function ScoreBar({ score, barClass }: { score: number; barClass: string }) {
   );
 }
 
+// ─── Framework score cell ─────────────────────────────────────────────────────
+// Looks the row's own score up by frameworkId rather than assuming the
+// header columns and the score array are in the same order/length — under
+// "All Clouds" the header list is the AWS ∪ Azure union, but any one row
+// only has scores for its own provider's frameworks, so most rows need a
+// placeholder cell for the columns that don't apply to them.
+
+function FrameworkCell({
+  score,
+  barClass,
+}: {
+  score?: { score: number; passingControls: number; totalControls: number };
+  barClass: string;
+}) {
+  if (!score) {
+    return (
+      <td className="px-4 py-3 min-w-[150px]">
+        <span className="text-xs text-gray-300">—</span>
+      </td>
+    );
+  }
+  return (
+    <td className="px-4 py-3 min-w-[150px]">
+      <div className="mb-0.5 text-xs text-gray-500">{score.passingControls}/{score.totalControls} controls</div>
+      <ScoreBar score={score.score} barClass={barClass} />
+    </td>
+  );
+}
+
 // ─── AWS Row ──────────────────────────────────────────────────────────────────
 
-function AwsRow({ acct, onView }: { acct: AccountComplianceSummary; onView: () => void }) {
+function AwsRow({ acct, headers, onView }: { acct: AccountComplianceSummary; headers: { id: string; name: string }[]; onView: () => void }) {
   const avgScore = Math.round(acct.scores.reduce((s, f) => s + f.score, 0) / (acct.scores.length || 1));
   return (
     <tr className="hover:bg-gray-50 transition-colors">
@@ -92,12 +122,16 @@ function AwsRow({ acct, onView }: { acct: AccountComplianceSummary; onView: () =
           </div>
         </div>
       </td>
-      {acct.scores.map(fw => (
-        <td key={fw.frameworkId} className="px-4 py-3 min-w-[150px]">
-          <div className="mb-0.5 text-xs text-gray-500">{fw.passingControls}/{fw.totalControls} controls</div>
-          <ScoreBar score={fw.score} barClass={AWS_FRAMEWORK_COLORS[fw.frameworkId as FrameworkId]?.bar ?? 'bg-gray-400'} />
-        </td>
-      ))}
+      {headers.map(h => {
+        const fw = acct.scores.find(s => s.frameworkId === h.id);
+        return (
+          <FrameworkCell
+            key={h.id}
+            score={fw}
+            barClass={AWS_FRAMEWORK_COLORS[h.id as FrameworkId]?.bar ?? 'bg-gray-400'}
+          />
+        );
+      })}
       <td className="px-4 py-3 whitespace-nowrap text-right">
         <button onClick={onView} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors">
           Details <ChevronRight size={14} />
@@ -109,7 +143,7 @@ function AwsRow({ acct, onView }: { acct: AccountComplianceSummary; onView: () =
 
 // ─── Azure Row ────────────────────────────────────────────────────────────────
 
-function AzureRow({ sub, onView }: { sub: AzureSubscriptionComplianceSummary; onView: () => void }) {
+function AzureRow({ sub, headers, onView }: { sub: AzureSubscriptionComplianceSummary; headers: { id: string; name: string }[]; onView: () => void }) {
   const avgScore = Math.round(sub.scores.reduce((s, f) => s + f.score, 0) / (sub.scores.length || 1));
   return (
     <tr className="hover:bg-gray-50 transition-colors">
@@ -123,53 +157,22 @@ function AzureRow({ sub, onView }: { sub: AzureSubscriptionComplianceSummary; on
           </div>
         </div>
       </td>
-      {sub.scores.map(fw => (
-        <td key={fw.frameworkId} className="px-4 py-3 min-w-[150px]">
-          <div className="mb-0.5 text-xs text-gray-500">{fw.passingControls}/{fw.totalControls} controls</div>
-          <ScoreBar score={fw.score} barClass={AZURE_FRAMEWORK_COLORS[fw.frameworkId as AzureFrameworkId]?.bar ?? 'bg-gray-400'} />
-        </td>
-      ))}
+      {headers.map(h => {
+        const fw = sub.scores.find(s => s.frameworkId === h.id);
+        return (
+          <FrameworkCell
+            key={h.id}
+            score={fw}
+            barClass={AZURE_FRAMEWORK_COLORS[h.id as AzureFrameworkId]?.bar ?? 'bg-gray-400'}
+          />
+        );
+      })}
       <td className="px-4 py-3 whitespace-nowrap text-right">
         <button onClick={onView} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors">
           Details <ChevronRight size={14} />
         </button>
       </td>
     </tr>
-  );
-}
-
-// ─── Framework Gauge Chart ────────────────────────────────────────────────────
-
-const G_SIZE = 96;
-const G_R    = 36;
-const G_CIRC = 2 * Math.PI * G_R;
-
-function gaugeStroke(score: number): string {
-  if (score >= 80) return '#10b981';
-  if (score >= 60) return '#f59e0b';
-  return '#ef4444';
-}
-
-function FrameworkGauge({ name, avg, count }: { name: string; avg: number; count: number }) {
-  const color  = gaugeStroke(avg);
-  const offset = G_CIRC * (1 - avg / 100);
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="relative inline-flex items-center justify-center">
-        <svg width={G_SIZE} height={G_SIZE} viewBox={`0 0 ${G_SIZE} ${G_SIZE}`}>
-          <circle cx={G_SIZE / 2} cy={G_SIZE / 2} r={G_R} fill="none" stroke="#e5e7eb" strokeWidth={8} />
-          <circle
-            cx={G_SIZE / 2} cy={G_SIZE / 2} r={G_R} fill="none"
-            stroke={color} strokeWidth={8}
-            strokeDasharray={G_CIRC} strokeDashoffset={offset}
-            strokeLinecap="round" transform={`rotate(-90 ${G_SIZE / 2} ${G_SIZE / 2})`}
-          />
-        </svg>
-        <span className="absolute text-sm font-bold tabular-nums" style={{ color }}>{avg}%</span>
-      </div>
-      <p className="text-xs font-semibold text-gray-700 text-center leading-tight">{name}</p>
-      <p className="text-[10px] text-gray-400">{count} account{count !== 1 ? 's' : ''}</p>
-    </div>
   );
 }
 
@@ -200,28 +203,6 @@ export function Compliance() {
   const compliantCount = allAvg.filter(s => s >= 80).length;
   const atRiskCount    = allAvg.filter(s => s < 60).length;
 
-  // Per-framework averages across all accounts (for gauge chart)
-  const frameworkGauges = useMemo(() => {
-    const map = new Map<string, { total: number; count: number }>();
-    for (const acct of awsAccounts) {
-      for (const f of acct.scores) {
-        const key = f.shortName;
-        const prev = map.get(key) ?? { total: 0, count: 0 };
-        map.set(key, { total: prev.total + f.score, count: prev.count + 1 });
-      }
-    }
-    for (const sub of azureSubs) {
-      for (const f of sub.scores) {
-        const key = f.shortName;
-        const prev = map.get(key) ?? { total: 0, count: 0 };
-        map.set(key, { total: prev.total + f.score, count: prev.count + 1 });
-      }
-    }
-    return Array.from(map.entries())
-      .map(([name, { total, count }]) => ({ name, avg: Math.round(total / count), count }))
-      .sort((a, b) => b.avg - a.avg);
-  }, [awsAccounts, azureSubs]);
-
   // Framework legend headers for each tab
   const awsFrameworkHeaders  = awsAccounts[0]?.scores.map(f => ({ id: f.frameworkId, name: f.shortName }))
     ?? [
@@ -234,7 +215,10 @@ export function Compliance() {
       { id: 'ISO27001', name: 'ISO 27001' }, { id: 'SOC2', name: 'SOC 2' }, { id: 'HIPAA', name: 'HIPAA' },
     ];
 
-  // Legend shown depends on active tab
+  // Framework columns shown depend on the active tab — "All Clouds" needs the
+  // AWS ∪ Azure union (not just AWS's), otherwise Azure rows' scores render
+  // into AWS-labeled columns positionally and land under the wrong framework
+  // entirely. Used for both the legend badges and the table's own headers/rows.
   const legendHeaders = provFilter === 'AZURE' ? azureFrameworkHeaders
     : provFilter === 'AWS' ? awsFrameworkHeaders
     : [...awsFrameworkHeaders, ...azureFrameworkHeaders.filter(ah => !awsFrameworkHeaders.some(wh => wh.id === ah.id))];
@@ -264,19 +248,7 @@ export function Compliance() {
       </div>
 
       {/* Framework score overview chart */}
-      {frameworkGauges.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg px-6 py-4">
-          <p className="text-sm font-semibold text-gray-800 mb-4">
-            Framework Score Overview
-            <span className="ml-2 text-xs font-normal text-gray-400">average across all accounts</span>
-          </p>
-          <div className="flex flex-wrap gap-6 justify-start">
-            {frameworkGauges.map(({ name, avg, count }) => (
-              <FrameworkGauge key={name} name={name} avg={avg} count={count} />
-            ))}
-          </div>
-        </div>
-      )}
+      <FrameworkScoreOverview awsAccounts={awsAccounts} azureSubs={azureSubs} />
 
       {/* Framework legend */}
       <div className="flex flex-wrap gap-3">
@@ -322,7 +294,7 @@ export function Compliance() {
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Cloud</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account</th>
-                {(provFilter === 'AWS' ? awsFrameworkHeaders : provFilter === 'AZURE' ? azureFrameworkHeaders : awsFrameworkHeaders).map(fw => (
+                {legendHeaders.map(fw => (
                   <th key={fw.id} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide min-w-[150px]">
                     {fw.name}
                   </th>
@@ -333,13 +305,13 @@ export function Compliance() {
             <tbody className="divide-y divide-gray-50">
               {isLoading ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-400">
+                  <td colSpan={legendHeaders.length + 3} className="px-4 py-8 text-center text-sm text-gray-400">
                     Loading compliance scores…
                   </td>
                 </tr>
               ) : (provFilter === 'ALL' ? awsAccounts.length + azureSubs.length : provFilter === 'AWS' ? awsAccounts.length : azureSubs.length) === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center">
+                  <td colSpan={legendHeaders.length + 3} className="px-4 py-12 text-center">
                     <ShieldCheck size={32} className="mx-auto mb-2 text-gray-300" />
                     <p className="text-sm text-gray-500">No accounts found.</p>
                   </td>
@@ -350,6 +322,7 @@ export function Compliance() {
                     <AwsRow
                       key={acct.accountId}
                       acct={acct}
+                      headers={legendHeaders}
                       onView={() => navigate(`/compliance/${acct.accountId}`)}
                     />
                   ))}
@@ -357,6 +330,7 @@ export function Compliance() {
                     <AzureRow
                       key={sub.subscriptionId}
                       sub={sub}
+                      headers={legendHeaders}
                       onView={() => navigate(`/compliance/azure/${sub.subscriptionId}`)}
                     />
                   ))}

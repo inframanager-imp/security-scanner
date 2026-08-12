@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/database';
 import { authenticate } from '../middleware/authenticate';
 import { enqueueScan, removeJob } from '../services/scanJobService';
+import { ScanEngine } from '../../../src/scanners/engine';
 
 const router = Router();
 router.use(authenticate);
@@ -66,17 +67,16 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const services = body.services || [
-      'cloudtrail', 'iam', 's3',
-      'ec2', 'ebs', 'rds', 'kms', 'secretsmanager',
-      'cloudwatch', 'vpc', 'lambda', 'ecr',
-      'threatdetection',
-      'elb', 'dynamodb', 'elasticache',
-      'apigateway', 'waf', 'ssm',
-      'cloudfront', 'acm',
-      'sns', 'sqs', 'redshift', 'ecs',
-    ];
-    const regions = body.regions || [cred.defaultRegion, ...cred.additionalRegions];
+    const services = body.services || new ScanEngine().getAvailableServices();
+    // Scan every standard AWS region by default (the account-level region
+    // pre-check in ScanEngine skips any that turn out to have no resources,
+    // so this doesn't cost much for accounts that only use a handful).
+    // additionalRegions lets an account narrow scope explicitly if it was
+    // configured — that opt-in choice is still respected.
+    const regions = body.regions
+      || (cred.additionalRegions.length > 0
+            ? [cred.defaultRegion, ...cred.additionalRegions]
+            : new ScanEngine().getAvailableRegions());
 
     const scan = await prisma.scan.create({
       data: {

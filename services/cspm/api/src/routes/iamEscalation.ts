@@ -85,7 +85,7 @@ router.get('/', async (req: Request, res: Response) => {
         select: {
           id: true, provider: true, targetId: true, escalationType: true,
           severity: true, actor: true, actorType: true, targetPrincipal: true,
-          resourceType: true, resourceName: true, eventName: true,
+          resourceType: true, resourceId: true, eventName: true,
           eventTime: true, summary: true, status: true, createdAt: true,
         },
       }),

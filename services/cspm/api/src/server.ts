@@ -101,12 +101,15 @@ async function main(): Promise<void> {
     logger.warn('Auto-start threat monitoring failed (non-fatal)', { error: (err as Error).message });
   }
 
-  // Start listening
+  // Start listening — bind to loopback only so the API is reachable solely via
+  // the nginx reverse proxy (override with HOST env if you ever need otherwise).
   const port = env.PORT;
-  server.listen(port, () => {
-    logger.info(`AWS Scanner API running on port ${port}`, {
+  const host = process.env.HOST ?? '127.0.0.1';
+  server.listen(port, host, () => {
+    logger.info(`AWS Scanner API running on ${host}:${port}`, {
       env: env.NODE_ENV,
       port,
+      host,
     });
   });
 
