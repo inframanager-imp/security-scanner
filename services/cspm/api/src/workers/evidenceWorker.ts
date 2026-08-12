@@ -16,15 +16,11 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { collectEvidenceForAccount } from '../services/evidenceService';
+import { buildEvidenceRefreshJobId, type EvidenceJobData } from '../services/evidenceJobId';
 
 export const EVIDENCE_QUEUE = 'evidence-refresh';
 
-export interface EvidenceJob {
-  provider: 'AWS' | 'AZURE' | 'GCP';
-  accountId: string;
-  frameworkId?: string;
-  triggeredBy?: 'SCAN' | 'SCHEDULED' | 'MANUAL';
-}
+export type EvidenceJob = EvidenceJobData;
 
 let queueSingleton: Queue<EvidenceJob> | null = null;
 
@@ -37,8 +33,7 @@ export function getEvidenceQueue(): Queue<EvidenceJob> {
 
 export async function enqueueEvidenceRefresh(data: EvidenceJob): Promise<string> {
   const queue = getEvidenceQueue();
-  // Coalesce same-account refreshes within a 1-minute window
-  const jobId = `${data.provider}:${data.accountId}:${data.frameworkId ?? 'all'}:${Math.floor(Date.now() / 60000)}`;
+  const jobId = buildEvidenceRefreshJobId(data, Math.floor(Date.now() / 60000));
   const job = await queue.add('refresh-evidence', data, {
     jobId,
     attempts: 2,

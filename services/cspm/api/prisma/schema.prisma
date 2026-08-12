@@ -112,7 +112,11 @@ model Scan {
   accountId    String
   status       ScanStatus   @default(QUEUED)
   triggeredBy  String?
-  jobId        String?      @unique
+  // Not @unique: BullMQ job ids are only unique per-queue-in-the-moment, not
+  // globally over time — old rows keep their jobId forever, so a recycled
+  // BullMQ id eventually collides and this update() throws on every scan
+  // (harmless — the scan still runs — but it happened on 100% of scans).
+  jobId        String?
   services     String[]
   regions      String[]
   startedAt    DateTime?
@@ -219,7 +223,8 @@ model AzureScan {
   id             String            @id @default(uuid())
   subscriptionId String
   status         ScanStatus        @default(QUEUED)
-  jobId          String?           @unique
+  // Not @unique — see Scan.jobId for why (BullMQ ids recycle over time).
+  jobId          String?
   services       String[]
   startedAt      DateTime?
   completedAt    DateTime?
@@ -561,7 +566,8 @@ model GcpScan {
   id           String          @id @default(uuid())
   projectId    String
   status       ScanStatus      @default(QUEUED)
-  jobId        String?         @unique
+  // Not @unique — see Scan.jobId for why (BullMQ ids recycle over time).
+  jobId        String?
   services     String[]
   startedAt    DateTime?
   completedAt  DateTime?
