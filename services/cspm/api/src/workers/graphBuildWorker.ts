@@ -15,6 +15,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { buildGraphForAccount } from '../services/graphEnrichmentService';
+import { buildCoalescingJobId } from '../services/coalescingJobId';
 
 export const GRAPH_BUILD_QUEUE = 'graph-build';
 
@@ -36,7 +37,7 @@ export function getGraphBuildQueue(): Queue<GraphBuildJob> {
 export async function enqueueGraphBuild(data: GraphBuildJob): Promise<string> {
   const queue = getGraphBuildQueue();
   // Coalesce duplicate runs within 30s using a deterministic jobId
-  const jobId = `${data.provider}:${data.accountId}:${Math.floor(Date.now() / 30000)}`;
+  const jobId = buildCoalescingJobId([data.provider, data.accountId], Date.now(), 30000);
   const job = await queue.add('build-graph', data, {
     jobId,
     attempts: 2,
