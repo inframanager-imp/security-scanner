@@ -31,6 +31,11 @@ import { AzureEventGridScanner }     from './scanners/eventGridScanner';
 import { AzureIoTHubScanner }        from './scanners/iotHubScanner';
 import { AzureSearchScanner }        from './scanners/searchScanner';
 import { AzureAutomationScanner }    from './scanners/automationScanner';
+import { AzureDefenderScanner }      from './scanners/defenderScanner';
+import { AzureMonitorScanner }       from './scanners/monitorScanner';
+import { AzureDatabricksScanner }    from './scanners/databricksScanner';
+import { AzureAppInsightsScanner }   from './scanners/appinsightsScanner';
+import { AzurePolicyScanner }        from './scanners/policyScanner';
 import { ScanningResult, ScanReport } from '../utils/types';
 
 export interface AzureScanOptions {
@@ -71,6 +76,11 @@ export const AZURE_SERVICES = [
   'iothub',
   'search',
   'automation',
+  'defender',
+  'monitor',
+  'databricks',
+  'appinsights',
+  'policy',
 ];
 
 export class AzureScanEngine {
@@ -114,6 +124,11 @@ export class AzureScanEngine {
       iothub:       () => new AzureIoTHubScanner(client).scan(),
       search:       () => new AzureSearchScanner(client).scan(),
       automation:   () => new AzureAutomationScanner(client).scan(),
+      defender:     () => new AzureDefenderScanner(client).scan(),
+      monitor:      () => new AzureMonitorScanner(client).scan(),
+      databricks:   () => new AzureDatabricksScanner(client).scan(),
+      appinsights:  () => new AzureAppInsightsScanner(client).scan(),
+      policy:       () => new AzurePolicyScanner(client).scan(),
     };
 
     for (const svc of services) {

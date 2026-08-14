@@ -1,5 +1,15 @@
+// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { AzureBaseScanner } from './baseScanner';
 import { ScanningResult } from '../../utils/types';
+
+async function getConfig(pgClient: any, rg: string, name: string, param: string): Promise<string | undefined> {
+  try {
+    const cfg = await pgClient.configurations.get(rg, name, param);
+    return cfg?.value;
+  } catch {
+    return undefined;
+  }
+}
 
 export class AzurePostgresScanner extends AzureBaseScanner {
   constructor(client: import('../client').AzureClient) {
@@ -25,32 +35,28 @@ export class AzurePostgresScanner extends AzureBaseScanner {
         // 1. Public network access enabled
         const publicAccess = server.network?.publicNetworkAccess ?? 'Enabled';
         if (publicAccess === 'Enabled') {
-          findings.push(this.finding(
-            'PostgreSQL Flexible Server has public network access enabled',
-            `PostgreSQL Flexible Server "${name}" is accessible from the public internet. Combined with weak firewall rules, this exposes the database to brute-force and SQL injection attacks.`,
-            'HIGH',
+          findings.push(this.emit(
+            'azure_postgresql_public_network_access_disabled',
             { server: name, resourceGroup: rg, version },
-            'Set network.publicNetworkAccess to "Disabled" and configure private access (VNet integration) to restrict connectivity to trusted networks.',
-            ['postgresql', 'network', 'public-access'],
+            {
+              message: `PostgreSQL Flexible Server "${name}" is accessible from the public internet. Combined with weak firewall rules, this exposes the database to brute-force and SQL injection attacks.`,
+            },
           ));
         }
 
         // 2. SSL enforcement
-        try {
-          const sslConfig = await pgClient.configurations.get(rg, name, 'require_secure_transport');
-          if (sslConfig.value !== 'on') {
-            findings.push(this.finding(
-              'PostgreSQL Flexible Server does not require SSL connections',
-              `PostgreSQL Flexible Server "${name}" has require_secure_transport set to "${sslConfig.value}". Unencrypted connections transmit credentials and data in plaintext.`,
-              'CRITICAL',
-              { server: name, resourceGroup: rg, requireSecureTransport: sslConfig.value },
-              'Set the require_secure_transport server parameter to "on". Update all application connection strings to use SSL mode "require" or higher.',
-              ['postgresql', 'encryption-in-transit', 'ssl'],
-            ));
-          }
-        } catch { /* configuration check optional */ }
+        const sslValue = await getConfig(pgClient, rg, name, 'require_secure_transport');
+        if (sslValue !== undefined && sslValue !== 'on') {
+          findings.push(this.emit(
+            'azure_postgresql_ssl_enforced',
+            { server: name, resourceGroup: rg, requireSecureTransport: sslValue },
+            {
+              message: `PostgreSQL Flexible Server "${name}" has require_secure_transport set to "${sslValue}". Unencrypted connections transmit credentials and data in plaintext.`,
+            },
+          ));
+        }
 
-        // 3. Firewall rules — check for all-IP rules
+        // 3. Firewall rules — check for all-IP rules and the "allow Azure services" rule
         try {
           const rules: any[] = [];
           for await (const rule of pgClient.firewallRules.listByServer(rg, name)) rules.push(rule);
@@ -59,22 +65,36 @@ export class AzurePostgresScanner extends AzureBaseScanner {
             r.startIpAddress === '0.0.0.0' && r.endIpAddress === '255.255.255.255',
           );
           if (openRule) {
-            findings.push(this.finding(
-              'PostgreSQL Flexible Server firewall allows access from all IP addresses',
-              `PostgreSQL Flexible Server "${name}" has a firewall rule allowing 0.0.0.0–255.255.255.255. Any internet host can attempt to connect to the database.`,
-              'CRITICAL',
+            findings.push(this.emit(
+              'azure_postgresql_firewall_no_open_range',
               { server: name, resourceGroup: rg, rule: openRule.name },
-              'Remove the open-range firewall rule. Restrict access to specific application server IPs or use private access (VNet integration) instead.',
-              ['postgresql', 'firewall', 'network'],
+              {
+                message: `PostgreSQL Flexible Server "${name}" has a firewall rule allowing 0.0.0.0–255.255.255.255. Any internet host can attempt to connect to the database.`,
+              },
             ));
           } else if (rules.some(r => r.startIpAddress === '0.0.0.0')) {
-            findings.push(this.finding(
-              'PostgreSQL Flexible Server has an overly permissive firewall rule',
-              `PostgreSQL Flexible Server "${name}" has a firewall rule starting from 0.0.0.0. This allows connections from a broad range of internet hosts.`,
-              'HIGH',
+            findings.push(this.emit(
+              'azure_postgresql_firewall_no_open_range',
               { server: name, resourceGroup: rg },
-              'Replace broad firewall rules with specific application server IP ranges or switch to private VNet access.',
-              ['postgresql', 'firewall'],
+              {
+                message: `PostgreSQL Flexible Server "${name}" has a firewall rule starting from 0.0.0.0. This allows connections from a broad range of internet hosts.`,
+              },
+            ));
+          }
+
+          // postgresql_flexible_server_allow_access_services_disabled — the
+          // special "Allow public access from any Azure service" rule is a
+          // firewall entry with start/end IP both 0.0.0.0.
+          const allowAzureServicesRule = rules.find(r =>
+            r.startIpAddress === '0.0.0.0' && r.endIpAddress === '0.0.0.0',
+          );
+          if (allowAzureServicesRule) {
+            findings.push(this.emit(
+              'postgresql_flexible_server_allow_access_services_disabled',
+              { server: name, resourceGroup: rg, rule: allowAzureServicesRule.name },
+              {
+                message: `PostgreSQL Flexible Server "${name}" has "Allow public access from any Azure service within Azure" enabled, permitting any Azure tenant's resources to reach the server.`,
+              },
             ));
           }
         } catch { /* firewall rules optional */ }
@@ -82,39 +102,36 @@ export class AzurePostgresScanner extends AzureBaseScanner {
         // 4. Backup retention period
         const backupRetention = server.backup?.backupRetentionDays ?? 7;
         if (backupRetention < 7) {
-          findings.push(this.finding(
-            'PostgreSQL Flexible Server has insufficient backup retention period',
-            `PostgreSQL Flexible Server "${name}" retains backups for only ${backupRetention} day(s). Short retention limits recovery options after data corruption or accidental deletion.`,
-            'MEDIUM',
+          findings.push(this.emit(
+            'azure_postgresql_backup_retention_sufficient',
             { server: name, resourceGroup: rg, backupRetentionDays: backupRetention },
-            'Set backup.backupRetentionDays to at least 7 days (35 days recommended for production) to ensure adequate recovery point objectives.',
-            ['postgresql', 'backup'],
+            {
+              message: `PostgreSQL Flexible Server "${name}" retains backups for only ${backupRetention} day(s). Short retention limits recovery options after data corruption or accidental deletion.`,
+            },
           ));
         }
 
         // 5. Geo-redundant backup disabled
         const geoBackup = server.backup?.geoRedundantBackup ?? 'Disabled';
         if (geoBackup === 'Disabled') {
-          findings.push(this.finding(
-            'PostgreSQL Flexible Server has geo-redundant backup disabled',
-            `PostgreSQL Flexible Server "${name}" does not use geo-redundant backups. A regional disaster would leave the server unrecoverable from backup in another region.`,
-            'MEDIUM',
+          findings.push(this.emit(
+            'azure_postgresql_geo_redundant_backup_enabled',
             { server: name, resourceGroup: rg },
-            'Enable geo-redundant backup to allow restore to a paired Azure region in case of a full regional failure.',
-            ['postgresql', 'backup', 'disaster-recovery'],
+            {
+              message: `PostgreSQL Flexible Server "${name}" does not use geo-redundant backups. A regional disaster would leave the server unrecoverable from backup in another region.`,
+            },
           ));
         }
 
         // 6. High Availability not configured
         const haMode = server.highAvailability?.mode ?? 'Disabled';
         if (haMode === 'Disabled') {
-          findings.push(this.finding(
-            'PostgreSQL Flexible Server has High Availability disabled',
-            `PostgreSQL Flexible Server "${name}" has no High Availability configuration. A server failure requires manual intervention and results in extended downtime.`,
-            'MEDIUM',
+          findings.push(this.emit(
+            'azure_postgresql_high_availability_enabled',
             { server: name, resourceGroup: rg },
-            'Enable High Availability (ZoneRedundant or SameZone mode) to allow automatic failover with minimal downtime.',
-            ['postgresql', 'availability'],
+            {
+              message: `PostgreSQL Flexible Server "${name}" has no High Availability configuration. A server failure requires manual intervention and results in extended downtime.`,
+            },
           ));
         }
 
@@ -122,42 +139,84 @@ export class AzurePostgresScanner extends AzureBaseScanner {
         const authConfig = server.authConfig;
         const entraEnabled = authConfig?.activeDirectoryAuth === 'Enabled';
         if (!entraEnabled) {
-          findings.push(this.finding(
-            'PostgreSQL Flexible Server does not use Microsoft Entra ID authentication',
-            `PostgreSQL Flexible Server "${name}" relies solely on password-based authentication. Passwords cannot be centrally managed, rotated automatically, or scoped by application identity.`,
-            'MEDIUM',
+          findings.push(this.emit(
+            'postgresql_flexible_server_entra_id_authentication_enabled',
             { server: name, resourceGroup: rg },
-            'Enable Microsoft Entra ID authentication (authConfig.activeDirectoryAuth = "Enabled") and migrate applications to use Managed Identity or service principal tokens.',
-            ['postgresql', 'authentication', 'entra-id'],
+            {
+              message: `PostgreSQL Flexible Server "${name}" relies solely on password-based authentication. Passwords cannot be centrally managed, rotated automatically, or scoped by application identity.`,
+            },
           ));
         }
 
         // 8. PostgreSQL version EOL check
         if (version === '11') {
-          findings.push(this.finding(
-            'PostgreSQL Flexible Server runs an end-of-life PostgreSQL version',
-            `PostgreSQL Flexible Server "${name}" runs PostgreSQL ${version}. PostgreSQL 11 reached EOL in November 2023 and no longer receives security patches from the community.`,
-            'HIGH',
+          findings.push(this.emit(
+            'azure_postgresql_version_not_eol',
             { server: name, resourceGroup: rg, version },
-            'Upgrade to PostgreSQL 15 or 16. Test application compatibility in a non-production environment using the major version upgrade feature of Flexible Server.',
-            ['postgresql', 'eol-version'],
+            {
+              message: `PostgreSQL Flexible Server "${name}" runs PostgreSQL ${version}. PostgreSQL 11 reached EOL in November 2023 and no longer receives security patches from the community.`,
+            },
           ));
         }
 
-        // 9. Connection throttling / log_connections
-        try {
-          const logConn = await pgClient.configurations.get(rg, name, 'log_connections');
-          if (logConn.value !== 'on') {
-            findings.push(this.finding(
-              'PostgreSQL Flexible Server does not log database connections',
-              `PostgreSQL Flexible Server "${name}" has log_connections set to "${logConn.value}". Without connection logging, unauthorized access attempts cannot be detected from logs.`,
-              'LOW',
-              { server: name, resourceGroup: rg, logConnections: logConn.value },
-              'Set the log_connections server parameter to "on" to record all new client connections to the server.',
-              ['postgresql', 'logging'],
+        // 9. Connection throttling / logging server parameters
+        const logConn = await getConfig(pgClient, rg, name, 'log_connections');
+        if (logConn !== undefined && logConn !== 'on') {
+          findings.push(this.emit(
+            'postgresql_flexible_server_log_connections_on',
+            { server: name, resourceGroup: rg, logConnections: logConn },
+            {
+              message: `PostgreSQL Flexible Server "${name}" has log_connections set to "${logConn}". Without connection logging, unauthorized access attempts cannot be detected from logs.`,
+            },
+          ));
+        }
+
+        const connThrottling = await getConfig(pgClient, rg, name, 'connection_throttling');
+        if (connThrottling !== undefined && connThrottling !== 'on') {
+          findings.push(this.emit(
+            'postgresql_flexible_server_connection_throttling_on',
+            { server: name, resourceGroup: rg, connectionThrottling: connThrottling },
+            {
+              message: `PostgreSQL Flexible Server "${name}" has connection_throttling set to "${connThrottling}". Without throttling, the server is more vulnerable to brute-force login attempts.`,
+            },
+          ));
+        }
+
+        const logCheckpoints = await getConfig(pgClient, rg, name, 'log_checkpoints');
+        if (logCheckpoints !== undefined && logCheckpoints !== 'on') {
+          findings.push(this.emit(
+            'postgresql_flexible_server_log_checkpoints_on',
+            { server: name, resourceGroup: rg, logCheckpoints },
+            {
+              message: `PostgreSQL Flexible Server "${name}" has log_checkpoints set to "${logCheckpoints}". Checkpoint activity is not recorded for performance and integrity troubleshooting.`,
+            },
+          ));
+        }
+
+        const logDisconnections = await getConfig(pgClient, rg, name, 'log_disconnections');
+        if (logDisconnections !== undefined && logDisconnections !== 'on') {
+          findings.push(this.emit(
+            'postgresql_flexible_server_log_disconnections_on',
+            { server: name, resourceGroup: rg, logDisconnections },
+            {
+              message: `PostgreSQL Flexible Server "${name}" has log_disconnections set to "${logDisconnections}". Session end events are not recorded, leaving an incomplete audit trail.`,
+            },
+          ));
+        }
+
+        const logRetentionDays = await getConfig(pgClient, rg, name, 'log_retention_days');
+        if (logRetentionDays !== undefined) {
+          const days = Number(logRetentionDays);
+          if (isNaN(days) || days <= 3 || days >= 8) {
+            findings.push(this.emit(
+              'postgresql_flexible_server_log_retention_days_greater_3',
+              { server: name, resourceGroup: rg, logRetentionDays },
+              {
+                message: `PostgreSQL Flexible Server "${name}" has log_retention_days set to "${logRetentionDays}", outside the recommended 4-7 day range.`,
+              },
             ));
           }
-        } catch { /* optional */ }
+        }
       }
     } catch (err) {
       findings.push(this.finding(

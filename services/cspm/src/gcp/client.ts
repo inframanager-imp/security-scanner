@@ -14,6 +14,12 @@ import { pubsub as pubsubApi } from '@googleapis/pubsub';
 import { artifactregistry as artifactregistryApi } from '@googleapis/artifactregistry';
 import { logging as loggingApi } from '@googleapis/logging';
 import { monitoring as monitoringApi } from '@googleapis/monitoring';
+import { apikeys as apikeysApi } from '@googleapis/apikeys';
+import { dns as dnsApi } from '@googleapis/dns';
+import { dataproc as dataprocApi } from '@googleapis/dataproc';
+import { serviceusage as serviceusageApi } from '@googleapis/serviceusage';
+import { accessapproval as accessapprovalApi } from '@googleapis/accessapproval';
+import { essentialcontacts as essentialcontactsApi } from '@googleapis/essentialcontacts';
 
 export interface GcpClientOptions {
   projectId:           string;
@@ -60,4 +66,10 @@ export default class GcpClient {
   logging()              { return loggingApi({ version: 'v2', auth: this.auth }); }
   monitoring()           { return monitoringApi({ version: 'v3', auth: this.auth }); }
   cloudresourcemanagerV1() { return cloudresourcemanagerApi({ version: 'v1', auth: this.auth }); }
+  apikeys()               { return apikeysApi({ version: 'v2', auth: this.auth }); }
+  dns()                   { return dnsApi({ version: 'v1', auth: this.auth }); }
+  dataproc()               { return dataprocApi({ version: 'v1', auth: this.auth }); }
+  serviceusage()           { return serviceusageApi({ version: 'v1', auth: this.auth }); }
+  accessapproval()         { return accessapprovalApi({ version: 'v1', auth: this.auth }); }
+  essentialcontacts()      { return essentialcontactsApi({ version: 'v1', auth: this.auth }); }
 }

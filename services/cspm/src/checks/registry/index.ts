@@ -1,12 +1,16 @@
 import { CheckMetadata } from '../types';
 import { awsChecks } from './aws';
+import { azureChecks } from './azure';
+import { gcpChecks } from './gcp';
 
 const byId = new Map<string, CheckMetadata>();
-for (const check of awsChecks) {
-  if (byId.has(check.checkId)) {
-    throw new Error(`Duplicate checkId in registry: ${check.checkId}`);
+for (const checks of [awsChecks, azureChecks, gcpChecks]) {
+  for (const check of checks) {
+    if (byId.has(check.checkId)) {
+      throw new Error(`Duplicate checkId in registry: ${check.checkId}`);
+    }
+    byId.set(check.checkId, check);
   }
-  byId.set(check.checkId, check);
 }
 
 export function getCheckMetadata(checkId: string): CheckMetadata {

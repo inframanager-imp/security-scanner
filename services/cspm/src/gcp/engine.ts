@@ -12,6 +12,10 @@ import { GcpCloudFunctionsScanner }   from './scanners/cloudFunctionsScanner';
 import { GcpPubSubScanner }           from './scanners/pubSubScanner';
 import { GcpArtifactRegistryScanner } from './scanners/artifactRegistryScanner';
 import { GcpLoggingScanner }          from './scanners/loggingScanner';
+import { GcpApiKeysScanner }          from './scanners/apikeysScanner';
+import { GcpDnsScanner }              from './scanners/dnsScanner';
+import { GcpDataprocScanner }         from './scanners/dataprocScanner';
+import { GcpGeminiScanner }           from './scanners/geminiScanner';
 import { ScanningResult, ScanReport } from '../utils/types';
 
 export interface GcpScanOptions {
@@ -33,6 +37,10 @@ export const GCP_SERVICES = [
   'pubsub',
   'artifactregistry',
   'logging',
+  'apikeys',
+  'dns',
+  'dataproc',
+  'gemini',
 ];
 
 export class GcpScanEngine {
@@ -57,6 +65,10 @@ export class GcpScanEngine {
       pubsub:           () => new GcpPubSubScanner(client).scan(),
       artifactregistry: () => new GcpArtifactRegistryScanner(client).scan(),
       logging:          () => new GcpLoggingScanner(client).scan(),
+      apikeys:          () => new GcpApiKeysScanner(client).scan(),
+      dns:              () => new GcpDnsScanner(client).scan(),
+      dataproc:         () => new GcpDataprocScanner(client).scan(),
+      gemini:           () => new GcpGeminiScanner(client).scan(),
     };
 
     for (const svc of services) {
