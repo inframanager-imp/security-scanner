@@ -12,6 +12,7 @@ import { Card } from '../components/ui/Card';
 import { ScanStatusBadge } from '../components/ui/Badge';
 import { FrameworkScoreOverview } from '../components/ui/FrameworkScoreOverview';
 import { VaptReportModal } from '../components/ui/VaptReportModal';
+import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
 import type { Account, AzureSubscription, GcpProject } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ function ProviderBadge({ provider }: { provider: CloudProvider }) {
   const cfg = PROVIDER_CONFIG[provider];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color} border ${cfg.border}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+      <CloudProviderLogo provider={provider} className="h-3.5 w-3.5 shrink-0" />
       {cfg.label}
     </span>
   );

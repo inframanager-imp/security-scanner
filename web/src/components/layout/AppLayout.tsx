@@ -25,6 +25,11 @@ import {
   Database,
   Bug,
   Hexagon,
+  Cloud,
+  Code2,
+  Activity,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../../hooks/useAuth';
@@ -40,18 +45,20 @@ interface NavLeaf {
 interface NavSection {
   id: string;
   title: string;
+  icon: ReactNode;
   items: NavLeaf[];
 }
 
 // ─── Nav definition ───────────────────────────────────────────────────────────
 
 // Standalone landing item (always visible, above the grouped sections).
-const dashboardItem: NavLeaf = { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'Dashboard' };
+const dashboardItem: NavLeaf = { to: '/dashboard', icon: <LayoutDashboard size={20} strokeWidth={2} />, label: 'Dashboard' };
 
 const navSections: NavSection[] = [
   {
     id: 'cloud',
     title: 'Cloud Security',
+    icon: <Cloud size={15} className="text-blue-400 shrink-0" />,
     items: [
       { to: '/cloud',          icon: <Layers size={16} />,          label: 'Cloud Subscriptions' },
       { to: '/compliance',     icon: <ShieldCheck size={16} />,     label: 'Compliance'          },
@@ -66,6 +73,7 @@ const navSections: NavSection[] = [
   {
     id: 'appsec',
     title: 'Application Security',
+    icon: <Code2 size={15} className="text-indigo-400 shrink-0" />,
     items: [
       { to: '/appsec/targets',  icon: <ClipboardList size={16} />,   label: 'Targets'             },
       { to: '/appsec/overview', icon: <LayoutDashboard size={16} />, label: 'App Posture'         },
@@ -79,6 +87,7 @@ const navSections: NavSection[] = [
   {
     id: 'risk',
     title: 'Risk & Exposure',
+    icon: <ShieldAlert size={15} className="text-amber-400 shrink-0" />,
     items: [
       { to: '/asset-graph',       icon: <Network size={16} />,      label: 'Asset Graph'             },
       { to: '/identity-graph',    icon: <Users size={16} />,        label: 'Identity & Attack Paths' },
@@ -93,6 +102,7 @@ const navSections: NavSection[] = [
   {
     id: 'ops',
     title: 'Operations',
+    icon: <Activity size={15} className="text-emerald-400 shrink-0" />,
     items: [
       { to: '/reports',           icon: <AlertTriangle size={16} />,label: 'Reports'           },
       { to: '/integrations',      icon: <Link2 size={16} />,        label: 'Integrations'      },
@@ -163,43 +173,53 @@ function getPageTitle(pathname: string): string {
 
 // ─── Nav leaf + collapsible section ─────────────────────────────────────────────
 
-function NavLeaf({ item, end }: { item: NavLeaf; end?: boolean }) {
+// ─── Nav leaf + collapsible section ─────────────────────────────────────────────
+
+function NavLeaf({
+  item, end, isCollapsed,
+}: { item: NavLeaf; end?: boolean; isCollapsed?: boolean }) {
   return (
     <NavLink
       to={item.to}
       end={end}
+      title={isCollapsed ? item.label : undefined}
       className={({ isActive }) =>
         clsx(
-          'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
-          isActive
-            ? 'bg-gradient-to-r from-[#1D4ED8] to-[#2563EB] text-white shadow-lg shadow-blue-900/40'
-            : 'text-[#D8E6FF] hover:text-white hover:bg-white/5',
+          'cca-nav-item',
+          isActive && 'active'
         )
       }
     >
-      {item.icon}
-      <span className="flex-1">{item.label}</span>
+      <span className="shrink-0 text-[#4b9cd3]">{item.icon}</span>
+      {!isCollapsed && <span className="truncate">{item.label}</span>}
     </NavLink>
   );
 }
 
 function NavSectionRow({
-  section, isOpen, onToggle,
-}: { section: NavSection; isOpen: boolean; onToggle: () => void }) {
+  section, isOpen, onToggle, isCollapsed, hasActivePage,
+}: { section: NavSection; isOpen: boolean; onToggle: () => void; isCollapsed?: boolean; hasActivePage?: boolean }) {
   return (
-    <div>
-      <button
-        onClick={onToggle}
-        className="flex items-center w-full px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#8EA6C8] hover:text-[#D8E6FF] transition-colors"
-      >
-        <span className="flex-1 text-left">{section.title}</span>
-        <ChevronRight size={12} className={clsx('transition-transform duration-150 shrink-0', isOpen && 'rotate-90')} />
-      </button>
-      {isOpen && (
-        <div className="space-y-0.5 mb-1">
-          {section.items.map((it) => <NavLeaf key={it.to} item={it} />)}
-        </div>
+    <div
+      className={clsx(
+        'cca-nav-group my-1',
+        isOpen && !isCollapsed && 'expanded',
+        hasActivePage && 'has-active-page'
       )}
+    >
+      <div className="cca-card-header" onClick={onToggle}>
+        <div className="cca-card-header-left">
+          <span className="text-[#4b9cd3]">{section.icon}</span>
+          <span className="cca-card-title">{section.title}</span>
+        </div>
+        <div className="cca-card-chevron">
+          <ChevronRight size={14} className="text-[#0284C7]" />
+        </div>
+      </div>
+
+      <div className="cca-card-body">
+        {section.items.map((it) => <NavLeaf key={it.to} item={it} />)}
+      </div>
     </div>
   );
 }
@@ -210,6 +230,7 @@ export function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const crumb = getBreadcrumb(location.pathname);
+  const [isCollapsed, setIsCollapsed] = useState(true);
 
   // Accordion: one section open at a time, auto-expands the active section on nav.
   const activeSection = sectionForPath(location.pathname);
@@ -221,45 +242,99 @@ export function AppLayout() {
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Sidebar */}
-      <aside className="sidebar-ocean relative flex flex-col w-[280px] shrink-0 text-white">
-        {/* Realistic ocean wave photo, faded into the navy gradient */}
-        <div className="sidebar-wave-img" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-64 bg-gradient-to-t from-[#031327]/80 via-[#072245]/25 to-transparent" />
-
-        {/* Logo */}
-        <div className="relative z-10 flex items-center gap-3 px-5 py-5 border-b border-white/10">
-          <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg shadow-blue-900/50">
-            <Hexagon size={20} className="text-white" />
-          </div>
-          <div>
-            <span className="text-white font-bold text-lg leading-none">Cloud Scanner</span>
-            <span className="block text-[#8EA6C8] text-xs mt-1">Security Platform</span>
+      <aside
+        onMouseEnter={() => setIsCollapsed(false)}
+        onMouseLeave={() => setIsCollapsed(true)}
+        className={clsx(
+          'sidebar-cca relative flex flex-col shrink-0 text-slate-800 border-r border-[#E1F0FA] transition-all duration-300 ease-in-out z-30',
+          isCollapsed ? 'w-[68px] is-collapsed' : 'w-[245px]',
+        )}
+      >
+        {/* Header & Logo */}
+        <div className="relative z-10 flex items-center justify-between px-3.5 py-4 border-b border-[#E1F0FA]">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-gradient-to-tr from-blue-600 to-sky-400 text-white shrink-0">
+              <Hexagon size={20} className="text-white fill-white/20" />
+            </div>
+            {!isCollapsed && (
+              <div className="flex flex-col truncate">
+                <span className="text-[14px] font-medium text-[#4b9cd3] leading-[1.2] -tracking-[0.01em] block truncate">Cloud Scanner</span>
+                <span className="text-[14px] font-medium text-[#4b9cd3] leading-[1.2] -tracking-[0.01em] block truncate">Security Platform</span>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="relative z-10 flex-1 px-3 py-4 space-y-0.5 overflow-y-auto no-scrollbar">
-          <NavLeaf item={dashboardItem} end />
-          <div className="my-2 border-t border-white/10" />
-          {navSections.map((section) => (
-            <NavSectionRow
-              key={section.id}
-              section={section}
-              isOpen={openId === section.id}
-              onToggle={() => setOpenId(openId === section.id ? null : section.id)}
-            />
-          ))}
+        <nav className="relative z-10 flex-1 px-2 py-2.5 space-y-1.5 overflow-y-auto no-scrollbar">
+          {/* Dashboard Item */}
+          <div className={clsx('cca-nav-group my-1', (location.pathname === '/dashboard' || location.pathname === '/') && 'has-active-page')}>
+            <NavLink to="/dashboard" className="cca-card-header w-full">
+              <div className="cca-card-header-left">
+                <span className="text-[#4b9cd3]">{dashboardItem.icon}</span>
+                <span className="cca-card-title">{dashboardItem.label}</span>
+              </div>
+            </NavLink>
+          </div>
+
+          {/* Domain Section Groups */}
+          {navSections.map((section) => {
+            const hasActivePage = activeSection === section.id;
+            return (
+              <NavSectionRow
+                key={section.id}
+                section={section}
+                isOpen={openId === section.id}
+                onToggle={() => setOpenId(openId === section.id ? null : section.id)}
+                isCollapsed={isCollapsed}
+                hasActivePage={hasActivePage}
+              />
+            );
+          })}
         </nav>
 
-        {/* Sign Out (profile detail moved to the top bar) */}
-        <div className="relative z-10 px-3 py-4 border-t border-white/10">
-          <button
-            onClick={logout}
-            className="flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm text-[#D8E6FF] hover:text-white hover:bg-white/5 transition-colors duration-150"
-          >
-            <LogOut size={16} />
-            Sign Out
-          </button>
+        {/* User Profile & Sign Out Footer */}
+        <div className="relative z-10 px-3 py-3 border-t border-[#E1F0FA] bg-[#F7FAFD]">
+          {!isCollapsed ? (
+            <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-white border border-[#E1F0FA]">
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                <div className="h-8 w-8 rounded-lg bg-[#4b9cd3] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {user?.email?.[0]?.toUpperCase() ?? 'U'}
+                </div>
+                <div className="truncate leading-tight">
+                  <p className="text-xs font-semibold text-slate-800 truncate max-w-[130px]">
+                    {user?.email ?? 'User'}
+                  </p>
+                  <p className="text-[10px] font-semibold text-[#4b9cd3] uppercase tracking-wider truncate">
+                    {user?.role ?? 'Admin'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={logout}
+                title="Sign Out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-1">
+              <div
+                className="h-8 w-8 rounded-lg bg-[#4b9cd3] flex items-center justify-center text-white text-xs font-bold"
+                title={user?.email ?? 'User'}
+              >
+                {user?.email?.[0]?.toUpperCase() ?? 'U'}
+              </div>
+              <button
+                onClick={logout}
+                title="Sign Out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -268,7 +343,7 @@ export function AppLayout() {
         {/* Top Bar */}
         <header className="flex items-center gap-2 px-6 py-4 bg-white border-b border-gray-200 shrink-0">
           {crumb.section && (
-            <div className="flex items-center gap-1 text-gray-400 text-sm">
+            <div className="flex items-center gap-1 text-gray-400 text-sm font-medium">
               <span>{crumb.section}</span>
               <ChevronRight size={14} />
             </div>
@@ -295,3 +370,4 @@ export function AppLayout() {
     </div>
   );
 }
+

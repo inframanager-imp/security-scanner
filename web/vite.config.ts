@@ -5,13 +5,12 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  // Store Vite cache in WSL native filesystem to avoid NTFS rename issues
   cacheDir: path.join(os.tmpdir(), 'vite-aws-scanner'),
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:3001', changeOrigin: true },
-      '/socket.io': { target: 'http://localhost:3001', ws: true, changeOrigin: true },
+      '/api': { target: 'https://sec-plat.hnsolutions.in', changeOrigin: true, secure: true },
+      '/socket.io': { target: 'https://sec-plat.hnsolutions.in', ws: true, changeOrigin: true, secure: true },
     },
   },
 });

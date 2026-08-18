@@ -9,6 +9,7 @@ import { StatCard, Card } from '../components/ui/Card';
 import { SeverityDonut } from '../components/charts/SeverityDonut';
 import { TrendLine } from '../components/charts/TrendLine';
 import { ScanStatusBadge } from '../components/ui/Badge';
+import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ function ProviderBadge({ provider }: { provider: CloudProvider }) {
   const cfg = PROVIDER_CONFIG[provider];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color} border ${cfg.border}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+      <CloudProviderLogo provider={provider} className="h-3.5 w-3.5 shrink-0" />
       {cfg.label}
     </span>
   );

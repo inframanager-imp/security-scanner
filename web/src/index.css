@@ -3,8 +3,23 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-heading: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
   body {
     @apply bg-gray-50 text-gray-900 antialiased;
+    font-family: var(--font-sans);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
   }
 }
 
@@ -17,40 +32,194 @@
   display: none;             /* Chrome/Safari */
 }
 
-/* ── Ocean Blue sidebar ───────────────────────────────────────────────────── */
-.sidebar-ocean {
-  background:
-    radial-gradient(circle at 20% 80%, rgba(37, 99, 235, 0.35), transparent 35%),
-    linear-gradient(180deg, #061b3a 0%, #082a5e 45%, #031327 100%);
+/* ── Cloud Cost Analyzer Light Theme Sidebar ───────────────────────────── */
+.sidebar-cca {
+  background: #FFFFFF;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   position: relative;
   overflow: hidden;
-}
-.sidebar-ocean::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: 120px;
-  width: 100%;
-  height: 140px;
-  background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.35), transparent 70%);
-  opacity: 0.8;
-  pointer-events: none;
+  box-sizing: border-box;
 }
 
-/* Realistic ocean wave photo at the bottom of the sidebar, faded into the gradient. */
-.sidebar-wave-img {
+/* Card Section Group */
+.cca-nav-group {
+  background: transparent;
+  border-radius: 12px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  border: 1px solid transparent;
+  position: relative;
+}
+
+/* Expanded Card Group in Expanded/Hovered Sidebar */
+.sidebar-cca:not(.is-collapsed) .cca-nav-group.expanded {
+  background: #F7FAFD;
+  border: 1px solid #E1F0FA;
+}
+
+/* Active Group Indicator in Collapsed Mini Sidebar */
+.sidebar-cca.is-collapsed .cca-nav-group.has-active-page {
+  background: #F7FAFD !important;
+  border: 1px solid #E1F0FA !important;
+  border-radius: 12px;
+}
+
+.sidebar-cca.is-collapsed .cca-nav-group.has-active-page::before {
+  content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 0;
-  height: 260px;
-  background-image: url('/ocean-wave.jpg');
-  background-size: cover;
-  background-position: center 20%;
-  opacity: 0.9;
-  filter: saturate(1.1) brightness(0.95);
-  -webkit-mask-image: linear-gradient(to top, #000 60%, transparent 100%);
-  mask-image: linear-gradient(to top, #000 60%, transparent 100%);
-  pointer-events: none;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 22px;
+  background: #4b9cd3;
+  border-radius: 4px;
+  z-index: 2;
+}
+
+.sidebar-cca.is-collapsed .cca-nav-group:not(.has-active-page) {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.sidebar-cca.is-collapsed .cca-nav-group:not(.has-active-page)::before {
+  display: none !important;
+}
+
+/* Card Header */
+.cca-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 0;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 0.15s ease;
+  min-height: 42px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sidebar-cca:not(.is-collapsed) .cca-card-header {
+  padding: 12px 14px;
+  justify-content: space-between;
+}
+
+.cca-card-header:hover {
+  background: rgba(75, 156, 211, 0.06);
+}
+
+.cca-card-header-left {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+}
+
+.sidebar-cca:not(.is-collapsed) .cca-card-header-left {
+  justify-content: flex-start;
+  gap: 10px;
+  width: auto;
+}
+
+.cca-card-header-left svg {
+  color: #4b9cd3;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2px;
+  flex-shrink: 0;
+}
+
+.cca-card-title {
+  display: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #1E293B;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sidebar-cca:not(.is-collapsed) .cca-card-title {
+  display: block;
+}
+
+.cca-card-chevron {
+  display: none;
+  color: #0284C7;
+  transition: transform 0.25s ease;
+  align-items: center;
+}
+
+.sidebar-cca:not(.is-collapsed) .cca-card-chevron {
+  display: flex;
+}
+
+.cca-card-group.expanded .cca-card-chevron {
+  transform: rotate(90deg);
+}
+
+/* Card Body Sub-Items */
+.cca-card-body {
+  display: none;
+}
+
+.sidebar-cca:not(.is-collapsed) .cca-nav-group.expanded .cca-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px 6px 6px;
+}
+
+/* Navigation Leaf Item (.cca-nav-item) */
+.cca-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px 7px 12px;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.cca-nav-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #0F172A;
+}
+
+.cca-nav-item svg {
+  color: #4b9cd3;
+  width: 16px;
+  height: 16px;
+  stroke-width: 2px;
+  flex-shrink: 0;
+}
+
+/* ACTIVE Sub-Item State */
+.cca-nav-item.active {
+  background: #EBF5FC;
+  color: #1C5A85;
+  font-weight: 600;
+}
+
+.cca-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 20px;
+  background: #4b9cd3;
+  border-radius: 4px;
+}
+
+.cca-nav-item.active svg {
+  color: #4b9cd3;
 }

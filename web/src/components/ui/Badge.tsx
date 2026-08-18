@@ -56,9 +56,10 @@ interface ScanStatusBadgeProps {
 }
 
 export function ScanStatusBadge({ status, className }: ScanStatusBadgeProps) {
+  const formattedStatus = status ? status.charAt(0).toUpperCase() + status.slice(1).toLowerCase() : status;
   return (
     <BaseBadge className={clsx(scanStatusStyles[status], className)}>
-      {status}
+      {formattedStatus}
     </BaseBadge>
   );
 }
