@@ -8,7 +8,6 @@ import {
   ListReportGroupsCommand,
   BatchGetReportGroupsCommand,
 } from '@aws-sdk/client-codebuild';
-import { GetRoleCommand } from '@aws-sdk/client-iam';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
 import { ScanningResult } from '../utils/types';
@@ -17,12 +16,6 @@ import { retry } from '../utils/helpers';
 
 const INACTIVE_DAYS_THRESHOLD = 90;
 const HIGH_RISK_WEBHOOK_FILTER_TYPES = ['ACTOR_ACCOUNT_ID', 'HEAD_REF', 'BASE_REF'];
-
-// Approved GitHub organizations for codebuild_project_uses_allowed_github_organizations.
-// Mirrors Prowler's codebuild_github_allowed_organizations audit config, whose default
-// is empty: every GitHub-sourced project whose service role trusts CodeBuild fails
-// until the approved organizations are listed here.
-const ALLOWED_GITHUB_ORGANIZATIONS: string[] = [];
 
 // Bitbucket URLs with embedded credentials (mirrors Prowler's regexes)
 const BITBUCKET_TOKEN_PATTERN = /^https:\/\/x-token-auth:[^@]+@bitbucket\.org\/.+\.git/;
@@ -72,11 +65,6 @@ export class CodeBuildScanner extends BaseScanner {
           findings.push(...this.validateProject(project, lastBuildEndTimes));
         } catch (error) {
           logger.debug(`Failed to scan CodeBuild project ${projectName}`, { error: (error as Error).message });
-        }
-        try {
-          findings.push(...await this.validateGithubOrganization(project));
-        } catch (error) {
-          logger.debug(`Failed to check GitHub organization for CodeBuild project ${projectName}`, { error: (error as Error).message });
         }
       }
 
@@ -316,90 +304,6 @@ export class CodeBuildScanner extends BaseScanner {
     }
 
     return findings;
-  }
-
-  /**
-   * codebuild_project_uses_allowed_github_organizations: GitHub-sourced projects
-   * whose service role trusts CodeBuild hand AWS credentials to builds triggered
-   * from the repository, so the repository organization must be on the allowlist.
-   * Projects whose organization cannot be derived from the source URL produce no
-   * finding (mirrors Prowler).
-   */
-  private async validateGithubOrganization(project: any): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-    const projectName: string = project.name ?? '';
-    const sourceType: string = project.source?.type ?? '';
-    if (sourceType !== 'GITHUB' && sourceType !== 'GITHUB_ENTERPRISE') return findings;
-
-    const location: string = project.source?.location ?? '';
-    const orgName = this.extractGithubOrganization(location);
-    if (!orgName) return findings;
-
-    if (!(await this.roleTrustsCodeBuild(project.serviceRole ?? ''))) return findings;
-
-    if (!ALLOWED_GITHUB_ORGANIZATIONS.includes(orgName)) {
-      findings.push(this.emit(
-        'codebuild_project_uses_allowed_github_organizations',
-        {
-          project: projectName,
-          sourceType,
-          location,
-          gitHubOrganization: orgName,
-          allowedOrganizations: ALLOWED_GITHUB_ORGANIZATIONS,
-        },
-        {
-          message: `CodeBuild project "${projectName}" uses GitHub organization "${orgName}", which is not in the allowed organizations list`,
-          remediation: `Point project "${projectName}" at a repository under an approved GitHub organization, or add "${orgName}" to the allowed organizations list after review`,
-        }
-      ));
-    }
-
-    return findings;
-  }
-
-  private extractGithubOrganization(repoUrl: string): string | null {
-    try {
-      const url = new URL(repoUrl);
-      const segments = url.pathname.split('/').filter(Boolean);
-      return segments.length >= 2 ? segments[0] : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private async roleTrustsCodeBuild(roleArn: string): Promise<boolean> {
-    if (!roleArn) return false;
-    const roleName = roleArn.split('/').pop() ?? '';
-    if (!roleName) return false;
-    try {
-      const result: any = await retry(async () => {
-        return await this.client.iam.send(new GetRoleCommand({ RoleName: roleName }));
-      });
-      const rawDocument: string = result?.Role?.AssumeRolePolicyDocument ?? '';
-      if (!rawDocument) return false;
-      let document: any;
-      try {
-        document = JSON.parse(decodeURIComponent(rawDocument));
-      } catch {
-        try {
-          document = JSON.parse(rawDocument);
-        } catch {
-          return false;
-        }
-      }
-      const rawStatements = document?.Statement;
-      const statements: any[] = Array.isArray(rawStatements) ? rawStatements : rawStatements ? [rawStatements] : [];
-      for (const statement of statements) {
-        if (statement?.Effect !== 'Allow') continue;
-        const service = statement?.Principal?.Service;
-        const services: string[] = Array.isArray(service) ? service : service ? [service] : [];
-        if (services.includes('codebuild.amazonaws.com')) return true;
-      }
-      return false;
-    } catch (error) {
-      logger.debug(`Failed to get trust policy for CodeBuild service role ${roleName}`, { error: (error as Error).message });
-      return false;
-    }
   }
 
   // codebuild_report_group_export_encrypted

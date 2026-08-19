@@ -13,8 +13,8 @@ import {
 
 // ─── Circular SVG gauge ───────────────────────────────────────────────────────
 
-const SIZE   = 110;
-const RADIUS = 44;
+const SIZE   = 92;
+const RADIUS = 36;
 const CIRC   = 2 * Math.PI * RADIUS;
 
 function gaugeColor(score: number): string {
@@ -29,9 +29,7 @@ function CircularGauge({ score }: { score: number }) {
   return (
     <div className="relative inline-flex items-center justify-center">
       <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-        {/* track */}
         <circle cx={SIZE/2} cy={SIZE/2} r={RADIUS} fill="none" stroke="#e5e7eb" strokeWidth={9} />
-        {/* progress */}
         <circle
           cx={SIZE/2} cy={SIZE/2} r={RADIUS} fill="none"
           stroke={color} strokeWidth={9}
@@ -119,7 +117,7 @@ const FW_COLORS: Record<string, { bar: string; header: string }> = {
   CIS_AWS:     { bar: 'bg-cyan-500',    header: 'bg-cyan-600'    },
   CIS_AZURE:   { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
   NIST:        { bar: 'bg-slate-500',   header: 'bg-slate-600'   },
-  NIST_800_53: { bar: 'bg-slate-600',   header: 'bg-slate-700'   },
+  NIST_800_53: { bar: 'bg-slate-500',   header: 'bg-slate-600'   },
   GDPR:        { bar: 'bg-purple-500',  header: 'bg-purple-600'  },
   FEDRAMP:     { bar: 'bg-rose-500',    header: 'bg-rose-600'    },
 };
@@ -202,7 +200,7 @@ function GaugeCard({
   onClick: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-2 w-36">
+    <div className="flex flex-col items-center gap-2 w-28">
       <CircularGauge score={fw.score} />
       <p className="text-sm text-gray-500 text-center font-medium tracking-wide">
         {fw.shortName}
@@ -226,7 +224,7 @@ function ReadinessSkeleton({ count = 5 }: { count?: number }) {
       <div className="h-4 w-52 bg-gray-100 rounded animate-pulse mb-8 mx-auto" />
       <div className="flex justify-center gap-10 flex-wrap">
         {[...Array(count)].map((_, i) => (
-          <div key={i} className="flex flex-col items-center gap-2 w-36">
+          <div key={i} className="flex flex-col items-center gap-2 w-28">
             <div className="rounded-full bg-gray-100 animate-pulse" style={{ width: SIZE, height: SIZE }} />
             <div className="h-3 w-16 bg-gray-100 rounded animate-pulse" />
             <div className="h-6 w-12 bg-gray-100 rounded animate-pulse" />
@@ -251,7 +249,7 @@ export function AwsReadinessSection({ accountId }: { accountId: string }) {
     enabled:  !!accountId,
   });
 
-  if (isLoading) return <ReadinessSkeleton count={5} />;
+  if (isLoading) return <ReadinessSkeleton count={AWS_ORDER.length} />;
 
   if (isError || !frameworks || frameworks.length === 0) {
     return (
@@ -270,7 +268,10 @@ export function AwsReadinessSection({ accountId }: { accountId: string }) {
     <>
       <div className="bg-white rounded-xl border border-gray-200 p-8">
         <p className="text-base font-semibold text-gray-800 mb-8 text-center">Readiness for Other Audits</p>
-        <div className="flex justify-center flex-wrap gap-10">
+        {/* Fixed 8-column grid so all 8 frameworks sit in one even row on
+            wide screens; collapses to fewer columns as the viewport narrows
+            rather than flex-wrap's uneven left-to-right overflow. */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-x-4 gap-y-10 justify-items-center">
           {ordered.map((fw) => (
             <GaugeCard key={fw.frameworkId} fw={fw} onClick={() => setActive(fw)} />
           ))}

@@ -8,35 +8,18 @@ import {
   ListUserPoolClientsCommand,
   DescribeUserPoolClientCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
-import {
-  CognitoIdentityClient,
-  ListIdentityPoolsCommand,
-  DescribeIdentityPoolCommand,
-  GetIdentityPoolRolesCommand,
-} from '@aws-sdk/client-cognito-identity';
-import { GetWebACLForResourceCommand } from '@aws-sdk/client-wafv2';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
 import { ScanningResult } from '../utils/types';
 import logger from '../utils/logger';
 import { retry } from '../utils/helpers';
 
-// cognito_user_pool_password_policy_* family: one generic loop driven by this table
-const PASSWORD_POLICY_REQUIREMENT_CHECKS: { checkId: string; field: string; label: string }[] = [
-  { checkId: 'cognito_user_pool_password_policy_lowercase', field: 'RequireLowercase', label: 'lowercase letter' },
-  { checkId: 'cognito_user_pool_password_policy_number', field: 'RequireNumbers', label: 'number' },
-  { checkId: 'cognito_user_pool_password_policy_symbol', field: 'RequireSymbols', label: 'symbol' },
-  { checkId: 'cognito_user_pool_password_policy_uppercase', field: 'RequireUppercase', label: 'uppercase letter' },
-];
-
 export class CognitoScanner extends BaseScanner {
   private cognitoIdp: CognitoIdentityProviderClient;
-  private cognitoIdentity: CognitoIdentityClient;
 
   constructor(client: AWSClient) {
     super(client, 'Cognito');
     this.cognitoIdp = new CognitoIdentityProviderClient(client.getClientConfig());
-    this.cognitoIdentity = new CognitoIdentityClient(client.getClientConfig());
   }
 
   async scan(_options?: ScannerOptions): Promise<ScanningResult[]> {
@@ -54,9 +37,6 @@ export class CognitoScanner extends BaseScanner {
         const poolFindings = await this.validateUserPool(poolId, poolName);
         findings.push(...poolFindings);
       }
-
-      const identityPoolFindings = await this.scanIdentityPools();
-      findings.push(...identityPoolFindings);
 
       logger.info(`Cognito scan complete. Found ${findings.length} findings.`);
     } catch (error) {
@@ -164,43 +144,6 @@ export class CognitoScanner extends BaseScanner {
     const clientFindings = await this.checkUserPoolClients(poolId, poolName, evidence);
     findings.push(...clientFindings);
 
-    // Password policy checks: table-driven loop over lowercase/number/symbol/uppercase
-    for (const check of PASSWORD_POLICY_REQUIREMENT_CHECKS) {
-      const value = (passwordPolicy as any)?.[check.field] ?? false;
-      if (!value) {
-        findings.push(this.emit(
-          check.checkId,
-          { ...evidence, passwordPolicy: !!passwordPolicy, [check.field]: value },
-          { message: `User pool "${poolName}" password policy does not require at least one ${check.label}` }
-        ));
-      }
-    }
-
-    // cognito_user_pool_waf_acl_attached
-    const wafFindings = await this.checkWafAclAttached(poolId, poolName, evidence);
-    findings.push(...wafFindings);
-
-    return findings;
-  }
-
-  private async checkWafAclAttached(poolId: string, poolName: string, evidence: any): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-    try {
-      const userPoolArn = evidence.userPoolArn || `arn:aws:cognito-idp:${evidence.region || '*'}:${evidence.accountId || '*'}:userpool/${poolId}`;
-      const result: any = await retry(async () => {
-        return await this.client.wafv2?.send(new GetWebACLForResourceCommand({ ResourceArn: userPoolArn })) ?? null;
-      });
-      const webAcl = result?.WebACL;
-      if (!webAcl) {
-        findings.push(this.emit(
-          'cognito_user_pool_waf_acl_attached',
-          { ...evidence, wafAclAttached: false },
-          { message: `User pool "${poolName}" is not protected by an AWS WAF Web ACL. Layer-7 filtering is unavailable against credential stuffing, bot abuse and malicious payloads.` }
-        ));
-      }
-    } catch (error) {
-      logger.debug(`Failed to check WAF ACL for Cognito user pool ${poolId}`, { error: (error as Error).message });
-    }
     return findings;
   }
 
@@ -346,72 +289,6 @@ export class CognitoScanner extends BaseScanner {
         }
       } catch (error) {
         logger.debug(`Failed to describe user pool client ${clientId} of pool ${poolId}`, { error: (error as Error).message });
-      }
-    }
-
-    return findings;
-  }
-
-  private async scanIdentityPools(): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-
-    let identityPools: any[] = [];
-    try {
-      identityPools = await retry(async () => {
-        const collected: any[] = [];
-        let nextToken: string | undefined;
-        do {
-          const result: any = await this.cognitoIdentity.send(
-            new ListIdentityPoolsCommand({ MaxResults: 60, NextToken: nextToken })
-          );
-          collected.push(...(result.IdentityPools || []));
-          nextToken = result.NextToken;
-        } while (nextToken);
-        return collected;
-      });
-    } catch (error) {
-      logger.debug('Failed to list Cognito identity pools', { error: (error as Error).message });
-      return findings;
-    }
-
-    logger.info(`Cognito: scanning ${identityPools.length} identity pool(s)`);
-
-    for (const pool of identityPools) {
-      const poolId = pool.IdentityPoolId || 'Unknown';
-      const poolName = pool.IdentityPoolName || poolId;
-
-      let poolDetails: any;
-      try {
-        const result: any = await retry(async () => {
-          return await this.cognitoIdentity.send(new DescribeIdentityPoolCommand({ IdentityPoolId: poolId }));
-        });
-        poolDetails = result;
-      } catch (error) {
-        logger.debug(`Failed to describe identity pool ${poolId}`, { error: (error as Error).message });
-        continue;
-      }
-
-      const allowUnauthenticated = poolDetails.AllowUnauthenticatedIdentities ?? false;
-      if (allowUnauthenticated) {
-        let unauthRole: string | undefined;
-        try {
-          const roles: any = await retry(async () => {
-            return await this.cognitoIdentity.send(new GetIdentityPoolRolesCommand({ IdentityPoolId: poolId }));
-          });
-          unauthRole = roles.Roles?.unauthenticated;
-        } catch {
-          // role retrieval failed; still report the guest access finding
-        }
-
-        const message = unauthRole
-          ? `Identity pool "${poolName}" has guest access enabled, allowing unauthenticated identities to assume role ${unauthRole}`
-          : `Identity pool "${poolName}" has guest access enabled, allowing unauthenticated identities`;
-
-        findings.push(this.emit(
-          'cognito_identity_pool_guest_access_disabled',
-          { identityPoolId: poolId, identityPoolName: poolName, allowUnauthenticatedIdentities: true, unauthenticatedRole: unauthRole },
-          { message }
-        ));
       }
     }
 

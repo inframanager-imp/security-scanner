@@ -42,6 +42,11 @@ export default function Dashboard({ tenantId }: DashboardProps) {
 
   const { vulnerability_counts, compliance_score, open_findings, total_findings, easm_summary, history_chart, sla_breaches } = data;
 
+  const chartMaxVal = Math.max(
+    10,
+    ...(history_chart ?? []).flatMap((hc: any) => [hc.Critical, hc.High, hc.Medium])
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fade-in 0.3s ease' }}>
       
@@ -58,7 +63,7 @@ export default function Dashboard({ tenantId }: DashboardProps) {
               {compliance_score}%
             </div>
             <div style={{ fontSize: '0.7rem', color: compliance_score > 70 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 600 }}>
-              {compliance_score > 70 ? '🛡️ Secure Posture' : '⚠️ Action Required'}
+              {compliance_score > 70 ? 'Secure Posture' : '⚠️ Action Required'}
             </div>
           </div>
         </div>
@@ -119,10 +124,9 @@ export default function Dashboard({ tenantId }: DashboardProps) {
           {/* Custom bar chart simulation */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '220px', padding: '10px 0', borderBottom: '1px solid var(--border-glass)' }}>
             {history_chart.map((hc: any, index: number) => {
-              const maxVal = 10;
-              const critHeight = (hc.Critical / maxVal) * 180;
-              const highHeight = (hc.High / maxVal) * 180;
-              const medHeight = (hc.Medium / maxVal) * 180;
+              const critHeight = (hc.Critical / chartMaxVal) * 180;
+              const highHeight = (hc.High / chartMaxVal) * 180;
+              const medHeight = (hc.Medium / chartMaxVal) * 180;
               
               return (
                 <div key={index} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, gap: '8px' }}>
@@ -160,7 +164,7 @@ export default function Dashboard({ tenantId }: DashboardProps) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', maxHeight: '230px' }}>
             {sla_breaches.length === 0 ? (
               <div style={{ textAlign: 'center', color: 'var(--color-muted)', padding: '40px 0', fontSize: '0.85rem' }}>
-                ✅ No SLA warnings. All targets are within remediation policies.
+                No SLA warnings. All targets are within remediation policies.
               </div>
             ) : (
               sla_breaches.map((sb: any) => (

@@ -4,7 +4,6 @@ import { redis } from '../config/redis';
 import { prisma } from '../config/database';
 import { logger } from '../config/logger';
 import * as credentialService from '../services/credentialService';
-import { dedupKey } from '../services/dedupService';
 import { getIO } from '../socket/index';
 import { ScanEngine } from '../../../src/scanners/engine';
 import type { ScanOptions } from '../../../src/utils/types';
@@ -21,7 +20,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
 
   logger.info(`Starting scan job: ${scanId}`, { accountId, services, regions });
 
-  // Update scan to RUNNING
   await prisma.scan.update({
     where: { id: scanId },
     data: {
@@ -30,7 +28,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     },
   });
 
-  // Emit scan:started event
   try {
     const io = getIO();
     io.to(`scan:${scanId}`).emit('scan:started', { scanId, startedAt: new Date() });
@@ -41,7 +38,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
   const startTime = Date.now();
 
   try {
-    // Get account + credentials
     const cred = await prisma.awsCredential.findUnique({ where: { accountId } });
 
     if (!cred) {
@@ -63,7 +59,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       region: cred.defaultRegion,
     };
 
-    // Handle ASSUME_ROLE: call STS to get temporary credentials
     if (cred.authMethod === 'ASSUME_ROLE' && cred.roleArn) {
       const stsClient = new STSClient({
         region: cred.defaultRegion,
@@ -99,7 +94,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       select: { completedAt: true },
     });
 
-    // Run scan via ScanEngine
     const engine = new ScanEngine();
     const scanOptions: ScanOptions = {
       services,
@@ -111,25 +105,39 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     const report = await engine.executeScan(scanOptions);
 
     // ── Deduplication ──────────────────────────────────────────────────────
-    // See dedupService.ts for the fingerprint/key logic and why checkId is
-    // preferred over service:title. Extracted there so it's unit-testable.
 
-    // Fetch all existing active findings for this account in one query
+    /**
+     * Extracts a stable resource identifier from an evidence object.
+     * Tries service-specific keys first, then generic fallbacks.
+     */
+    function resourceFingerprint(evidence: unknown): string {
+      const e = (evidence ?? {}) as Record<string, unknown>;
+      if (e.resourceId != null) return String(e.resourceId);
+      for (const key of [
+        'functionName', 'trailName', 'bucket', 'username', 'accessKeyId',
+        'keyId', 'dbId', 'clusterId', 'secretName', 'sgId', 'instanceId',
+        'naclId', 'vpcId', 'requirementId', 'peeringConnectionId',
+        'resourceName', 'arn', 'name', 'id',
+      ]) {
+        if (e[key] != null) return String(e[key]);
+      }
+      return 'account-level';
+    }
+
     const existingFindings = await prisma.finding.findMany({
       where: {
         scan: { accountId },
         findingStatus: { in: ['OPEN', 'ACKNOWLEDGED'] },
       },
-      select: { service: true, title: true, checkId: true, evidence: true },
+      select: { service: true, title: true, evidence: true },
     });
 
     const existingKeys = new Set(
       existingFindings.map(
-        (f) => dedupKey(f.service, f.title, f.checkId, f.evidence),
+        (f) => `${f.service}:${f.title}:${resourceFingerprint(f.evidence)}`,
       ),
     );
 
-    // Partition: new findings vs already-known
     const findingData = report.findings.map((finding) => ({
       scanId,
       checkId: finding.checkId ?? null,
@@ -144,11 +152,9 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       discoveredAt: finding.timestamp || new Date(),
     }));
 
-    // Use accumulated set: prevents duplicates both against the DB (existingKeys)
-    // AND within the current batch (two findings with the same key in one scan run).
     const seenKeys = new Set<string>(existingKeys);
     const toInsert = findingData.filter((f) => {
-      const key = dedupKey(f.service, f.title, f.checkId, f.evidence);
+      const key = `${f.service}:${f.title}:${resourceFingerprint(f.evidence)}`;
       if (seenKeys.has(key)) return false;
       seenKeys.add(key);
       return true;
@@ -172,8 +178,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       }
     }
 
-    // Enqueue asset-graph rebuild + risk enrichment for this account.
-    // Failures here must not block the scan finalization.
     try {
       const { enqueueGraphBuild } = await import('./graphBuildWorker');
       await enqueueGraphBuild({ provider: 'AWS', accountId, triggeredBy: 'SCAN' });
@@ -188,8 +192,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       logger.warn('scanWorker.evidence-enqueue-failed', { scanId, error: (err as Error).message });
     }
 
-    // Create ScanSummary reflecting what this scan detected in total
-    // (both new and already-known), so trend data stays accurate.
     await prisma.scanSummary.create({
       data: {
         scanId,
@@ -204,7 +206,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
 
     const durationMs = Date.now() - startTime;
 
-    // Update scan to COMPLETED
     await prisma.scan.update({
       where: { id: scanId },
       data: {
@@ -216,7 +217,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
 
     const summary = report.summary;
 
-    // Emit scan:completed event
     try {
       const io = getIO();
       io.to(`scan:${scanId}`).emit('scan:completed', {
@@ -244,7 +244,6 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       },
     });
 
-    // Emit scan:failed event
     try {
       const io = getIO();
       io.to(`scan:${scanId}`).emit('scan:failed', {
@@ -264,9 +263,6 @@ export function createScanWorker(): Worker<ScanJobData> {
   const worker = new Worker<ScanJobData>('scans', processScanJob, {
     connection: redis,
     concurrency: 3,
-    // Full AWS scans run for minutes; the default 30s lock expires mid-scan and
-    // causes "could not renew lock" + duplicate stalled re-runs. Give the job a
-    // long lock and match the stalled-check cadence to it.
     lockDuration: 600000,      // 10 min
     stalledInterval: 600000,   // 10 min
     maxStalledCount: 1,

@@ -126,22 +126,12 @@ function normalizeFilters(filters?: VaptReportFilters): Required<VaptReportFilte
   };
 }
 
-/**
- * AND-able extra conditions derived from the active filters. Kept separate
- * from scan-scoping (accountId/scanId) so the same logic works whether the
- * caller needs a nested relation filter (findMany/count) or a flat scanId
- * filter (groupBy — see the comment above each groupBy call for why).
- */
 function extraFilterConditions(filters: Required<VaptReportFilters>, kind: 'aws' | 'azure' | 'gcp'): object[] {
   const conditions: object[] = [];
   if (filters.tags.length > 0) {
     conditions.push({ tags: { hasSome: filters.tags } });
   }
   if (kind === 'aws' && filters.region.length > 0) {
-    // Region isn't a first-class column on Finding — it's recorded (when a
-    // scanner populates it) inside the evidence JSON blob. Best-effort: OR
-    // across the selected regions' JSON-path match. Findings from services
-    // that don't record a region (e.g. IAM) won't match any region filter.
     conditions.push({ OR: filters.region.map(r => ({ evidence: { path: ['region'], equals: r } })) });
   }
   if (kind === 'azure' && filters.resourceGroup.length > 0) {
@@ -165,14 +155,6 @@ function toSummary(counts: { critical: number; high: number; medium: number; low
   return { ...counts, total: counts.critical + counts.high + counts.medium + counts.low + counts.info };
 }
 
-/**
- * Tally severities from a `groupBy(['severity'])` result into the stat-grid
- * shape. Deliberately NOT sourced from ScanSummary (a point-in-time snapshot
- * taken when the scan completed) — findings get triaged (resolved/marked
- * false-positive) afterwards, so ScanSummary drifts from what's *currently*
- * open, and wouldn't reflect filters at all. Tallying the same filtered
- * open-findings query used for the findings list keeps every section in sync.
- */
 function tallyBySeverity(rows: Array<{ severity: string; _count: { severity: number } }>) {
   const out = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const r of rows) {
@@ -195,10 +177,6 @@ async function buildAwsModel(targetId: string, filters: Required<VaptReportFilte
   });
 
   const extra = extraFilterConditions(filters, 'aws');
-  // Threat Detection (service THREAT) findings are anomaly/behavioral
-  // signals, not static posture — excluded from the VAPT report for the
-  // same reason they're excluded from Reports/AccountReport (see the
-  // matching comment in engine.ts / routes/findings.ts).
   const findMany_where: Prisma.FindingWhereInput = {
     scan: { accountId: targetId }, findingStatus: { in: OPEN_STATUSES }, service: { not: 'THREAT' },
     ...(extra.length ? { AND: extra as Prisma.FindingWhereInput[] } : {}),
@@ -213,9 +191,6 @@ async function buildAwsModel(targetId: string, filters: Required<VaptReportFilte
     prisma.finding.count({ where: findMany_where }),
   ]);
 
-  // Compliance scoring — same active-finding-set logic used by GET /api/compliance.
-  // groupBy does not reliably support nested relation filters in Prisma, so
-  // resolve scan IDs first (same workaround routes/compliance.ts uses).
   const scanIds = (await prisma.scan.findMany({ where: { accountId: targetId }, select: { id: true } })).map(s => s.id);
   const groupBy_where: Prisma.FindingWhereInput = {
     scanId: { in: scanIds }, findingStatus: { in: OPEN_STATUSES }, service: { not: 'THREAT' },
@@ -244,11 +219,6 @@ async function buildAwsModel(targetId: string, filters: Required<VaptReportFilte
   const summaryCounts = tallyBySeverity(severityRows);
   const risk = computeRisk(summaryCounts.critical, summaryCounts.high, summaryCounts.medium, summaryCounts.low);
 
-  // IAM Users table — same dedup-aware query as routes/iamUsers.ts (an
-  // unchanged user's inventory record stays attached to whichever scan
-  // first created it, not necessarily the latest one — see that route for
-  // the full explanation). Not narrowed by the report's tags/region filters:
-  // IAM is account-wide, not a regional or taggable-resource concept.
   const iamUserFindings = await prisma.finding.findMany({
     where: {
       scan:          { accountId: targetId },

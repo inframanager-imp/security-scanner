@@ -8,11 +8,9 @@ import {
   ChevronUp,
   Search,
   CheckSquare,
-  FileBarChart,
 } from 'lucide-react';
 import { findingsApi } from '../api/findings';
 import { accountsApi } from '../api/accounts';
-import { VaptReportModal } from '../components/ui/VaptReportModal';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Select } from '../components/ui/Select';
@@ -21,11 +19,11 @@ import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { SeverityBadge, FindingStatusBadge } from '../components/ui/Badge';
 import { Pagination } from '../components/ui/Table';
+import { ComplianceTagBadges } from '../components/ui/ComplianceTagBadges';
 import type { Finding, Severity, FindingStatus } from '../types';
 import { getResourceName } from '../utils/resourceName';
 import { AwsReadinessSection } from '../components/ui/ReadinessSection';
 import { IamUsersTable } from '../components/ui/IamUsersTable';
-import { ComplianceTagBadges } from '../components/ui/ComplianceTagBadges';
 
 const SEVERITY_OPTIONS = [
   { value: '', label: 'All Severities' },
@@ -111,7 +109,6 @@ function ExpandedDetail({ finding }: ExpandedDetailProps) {
   );
 }
 
-// Sortable column header
 function SortTh({
   label,
   field,
@@ -164,7 +161,6 @@ export function AccountReport() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<FindingStatus>('ACKNOWLEDGED');
-  const [vaptModalOpen, setVaptModalOpen] = useState(false);
 
   const { data: account } = useQuery({
     queryKey: ['accounts', accountId],
@@ -269,7 +265,6 @@ export function AccountReport() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
           <Button
@@ -327,37 +322,14 @@ export function AccountReport() {
               Update {selected.size} selected
             </Button>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<FileBarChart size={14} />}
-            onClick={() => setVaptModalOpen(true)}
-            title="Generate a professional VAPT-style security report (view HTML, print to PDF)"
-          >
-            VAPT Report
-          </Button>
         </div>
       </div>
 
-      {accountId && (
-        <VaptReportModal
-          open={vaptModalOpen}
-          onClose={() => setVaptModalOpen(false)}
-          provider="AWS"
-          targetId={accountId}
-          targetName={account?.name ?? 'this account'}
-        />
-      )}
-
-      {/* Compliance Readiness */}
       {accountId && <AwsReadinessSection accountId={accountId} />}
 
-      {/* IAM Users */}
       {accountId && <IamUsersTable accountId={accountId} />}
 
-      {/* Findings Table */}
       <Card padding={false}>
-        {/* Filter Bar */}
         <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-end gap-3">
           <Select
             value={severity}
@@ -366,7 +338,6 @@ export function AccountReport() {
             className="w-36"
           />
 
-          {/* Multi-service selector */}
           <MultiSelect
             options={serviceOptions}
             value={selectedServices}
@@ -400,7 +371,6 @@ export function AccountReport() {
           </span>
         </div>
 
-        {/* Table */}
         {isLoading ? (
           <div className="p-6 space-y-3">
             {[...Array(6)].map((_, i) => (
@@ -576,7 +546,6 @@ export function AccountReport() {
           </div>
         )}
 
-        {/* Pagination */}
         {findingsPage && findingsPage.totalPages > 1 && (
           <Pagination
             page={page}
@@ -588,7 +557,6 @@ export function AccountReport() {
         )}
       </Card>
 
-      {/* Bulk Update Modal */}
       <Modal
         open={bulkModalOpen}
         onClose={() => setBulkModalOpen(false)}

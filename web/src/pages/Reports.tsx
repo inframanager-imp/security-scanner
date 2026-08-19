@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Eye, FileText, Trash2, CheckCircle2, AlertCircle, FileBarChart } from 'lucide-react';
+import { Eye, FileText, Trash2, CheckCircle2, AlertCircle, FileDown, FileBarChart, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
 import { accountsApi } from '../api/accounts';
 import { azureApi } from '../api/azure';
@@ -12,7 +12,38 @@ import { Card } from '../components/ui/Card';
 import { ScanStatusBadge } from '../components/ui/Badge';
 import { FrameworkScoreOverview } from '../components/ui/FrameworkScoreOverview';
 import { VaptReportModal } from '../components/ui/VaptReportModal';
+import type { ReportProvider } from '../api/reports';
+import { useAuthStore } from '../store/authStore';
 import type { Account, AzureSubscription, GcpProject } from '../types';
+
+async function fetchCompiledReport(scope: { accountId: string } | null, format: 'html' | 'pdf'): Promise<Blob> {
+  const token = useAuthStore.getState().accessToken;
+  const params = new URLSearchParams();
+  if (scope) params.set('targetId', scope.accountId);
+  if (format === 'pdf') params.set('format', 'pdf');
+  const res = await fetch(`/api/cspm/report-schedules/compile?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`Report compile failed: HTTP ${res.status}`);
+  return res.blob();
+}
+
+function openBlobInNewTab(blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,6 +124,11 @@ export function Reports() {
   const queryClient  = useQueryClient();
   const [provFilter, setProvFilter]   = useState<ProviderFilter>('ALL');
   const [dedupeResult, setDedupeResult] = useState<DeduplicateResult | null>(null);
+  const [scopeKey, setScopeKey]       = useState<string>('ALL'); // 'ALL' or an AWS accountId
+  const [compiling, setCompiling]     = useState<'html' | 'pdf' | null>(null);
+  const [compileError, setCompileError] = useState<string | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [vaptTarget, setVaptTarget] = useState<{ provider: ReportProvider; id: string; name: string } | null>(null);
 
   const dedupeMutation = useMutation({
     mutationFn: () => api.post<DeduplicateResult>('/findings/deduplicate', {}),
@@ -122,7 +158,6 @@ export function Reports() {
     queryKey: ['compliance', 'all', 'aws'],
     queryFn:  () => complianceApi.getAllAccountsScores(),
   });
-
   const { data: azureCompliance = [] } = useQuery({
     queryKey: ['compliance', 'all', 'azure'],
     queryFn:  () => complianceApi.getAllAzureSubscriptionScores(),
@@ -130,9 +165,6 @@ export function Reports() {
 
   const isLoading = awsLoading || azureLoading || gcpLoading;
 
-  const [vaptModalRow, setVaptModalRow] = useState<ReportRow | null>(null);
-
-  // Build unified rows
   const awsRows: ReportRow[] = (accounts as Account[]).map(a => ({
     id:         a.id,
     provider:   'AWS',
@@ -169,42 +201,113 @@ export function Reports() {
   const allRows = [...awsRows, ...azureRows, ...gcpRows].sort((a, b) => a.name.localeCompare(b.name));
   const rows    = provFilter === 'ALL' ? allRows : allRows.filter(r => r.provider === provFilter);
 
-  // Summary stats
   const totalFindings = allRows.reduce((s, r) => s + (r.summary ? r.summary.critical + r.summary.high + r.summary.medium + r.summary.low + r.summary.info : 0), 0);
   const totalCritical = allRows.reduce((s, r) => s + (r.summary?.critical ?? 0), 0);
   const totalHigh     = allRows.reduce((s, r) => s + (r.summary?.high     ?? 0), 0);
 
+  const exportableRows = allRows.filter(r => r.provider === 'AWS');
+  const scopedRow = scopeKey === 'ALL' ? null : exportableRows.find(r => r.accountId === scopeKey) ?? null;
+
+  const handleCompile = async (mode: 'html' | 'pdf') => {
+    setCompiling(mode);
+    setCompileError(null);
+    try {
+      const scope = scopedRow ? { accountId: scopedRow.accountId } : null;
+      const blob = await fetchCompiledReport(scope, mode);
+      if (mode === 'pdf') {
+        downloadBlob(blob, `${(scopedRow?.name ?? 'all-accounts').replace(/[^a-z0-9]+/gi, '-')}-security-report.pdf`);
+      } else {
+        openBlobInNewTab(blob);
+      }
+    } catch (e) {
+      setCompileError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCompiling(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
 
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Security Reports</h2>
           <p className="text-sm text-gray-500 mt-0.5">Findings overview across all cloud accounts</p>
         </div>
-        {provFilter === 'ALL' || provFilter === 'AWS' ? (
-          <div className="flex flex-col items-end gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              leftIcon={<Trash2 size={14} />}
-              onClick={() => { setDedupeResult(null); dedupeMutation.mutate(); }}
-              disabled={dedupeMutation.isPending}
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <select
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              value={scopeKey}
+              onChange={(e) => setScopeKey(e.target.value)}
+              title="Compiled export scope (AWS only, for now)"
             >
-              {dedupeMutation.isPending ? 'Cleaning...' : 'Clean Duplicates'}
-            </Button>
-            {dedupeResult && (
-              <div className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-full ${dedupeResult.deleted > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                {dedupeResult.deleted > 0 ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                {dedupeResult.message}
-              </div>
+              <option value="ALL">All Accounts</option>
+              {exportableRows.map((r) => (
+                <option key={r.accountId} value={r.accountId}>
+                  {r.provider} — {r.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="relative">
+              <Button
+                variant="primary"
+                size="sm"
+                leftIcon={compiling ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+                onClick={() => setExportMenuOpen((v) => !v)}
+                disabled={compiling !== null}
+              >
+                {compiling === 'html' ? 'Opening…' : compiling === 'pdf' ? 'Compiling…' : 'Export'}
+              </Button>
+              {exportMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setExportMenuOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
+                    <button
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 text-left"
+                      onClick={() => { setExportMenuOpen(false); handleCompile('html'); }}
+                    >
+                      <Eye size={14} /> View HTML
+                    </button>
+                    <button
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 text-left"
+                      onClick={() => { setExportMenuOpen(false); handleCompile('pdf'); }}
+                    >
+                      <FileDown size={14} /> Compile PDF Report
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {(provFilter === 'ALL' || provFilter === 'AWS') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                leftIcon={<Trash2 size={14} />}
+                onClick={() => { setDedupeResult(null); dedupeMutation.mutate(); }}
+                disabled={dedupeMutation.isPending}
+              >
+                {dedupeMutation.isPending ? 'Cleaning...' : 'Clean Duplicates'}
+              </Button>
             )}
           </div>
-        ) : null}
+          {compileError && (
+            <div className="flex items-center gap-1.5 text-xs px-3 py-1 rounded-full bg-red-50 text-red-700">
+              <AlertCircle size={12} />
+              {compileError}
+            </div>
+          )}
+          {dedupeResult && (
+            <div className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-full ${dedupeResult.deleted > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+              {dedupeResult.deleted > 0 ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+              {dedupeResult.message}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Summary cards */}
       {allRows.length > 0 && (
         <div className="grid grid-cols-4 gap-4">
           {[
@@ -224,7 +327,6 @@ export function Reports() {
       {/* Framework score overview chart — same data/component as Compliance tab */}
       <FrameworkScoreOverview awsAccounts={awsCompliance} azureSubs={azureCompliance} />
 
-      {/* Provider filter tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200">
         {(['ALL', 'AWS', 'AZURE', 'GCP'] as const).map(p => (
           <button
@@ -246,7 +348,6 @@ export function Reports() {
         ))}
       </div>
 
-      {/* Table */}
       <Card padding={false}>
         {isLoading ? (
           <div className="flex items-center justify-center h-40">
@@ -310,9 +411,8 @@ export function Reports() {
                           variant="ghost"
                           size="sm"
                           leftIcon={<FileBarChart size={13} />}
-                          onClick={() => setVaptModalRow(row)}
+                          onClick={() => setVaptTarget({ provider: row.provider, id: row.id, name: row.name })}
                           disabled={!row.scanStatus}
-                          title="Generate a professional VAPT-style security report (view HTML, print to PDF)"
                         >
                           VAPT Report
                         </Button>
@@ -326,13 +426,13 @@ export function Reports() {
         )}
       </Card>
 
-      {vaptModalRow && (
+      {vaptTarget && (
         <VaptReportModal
-          open={!!vaptModalRow}
-          onClose={() => setVaptModalRow(null)}
-          provider={vaptModalRow.provider}
-          targetId={vaptModalRow.id}
-          targetName={vaptModalRow.name}
+          open={!!vaptTarget}
+          onClose={() => setVaptTarget(null)}
+          provider={vaptTarget.provider}
+          targetId={vaptTarget.id}
+          targetName={vaptTarget.name}
         />
       )}
     </div>

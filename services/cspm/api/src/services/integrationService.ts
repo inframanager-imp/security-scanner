@@ -207,17 +207,13 @@ export async function dispatchIntegrations(change: ConfigChange): Promise<void> 
   await Promise.allSettled(
     configs.map(async (cfg) => {
       try {
-        // Severity filter
         if (!meetsMinSeverity(change.severity, cfg.minSeverity)) return;
 
-        // Provider scope
         if (cfg.providers.length > 0 && !cfg.providers.includes(change.provider)) return;
 
-        // Target scope
         const changeTargetId = change.awsAccountId ?? change.azureSubId ?? change.gcpProjectId;
         if (cfg.targetIds.length > 0 && !cfg.targetIds.includes(changeTargetId ?? '')) return;
 
-        // Freeze-only filter
         if (cfg.onFreezeOnly && !change.freezeViolation) return;
 
         const secret = decryptIntegrationConfig(cfg.encryptedConfig);

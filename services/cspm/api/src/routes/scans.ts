@@ -67,16 +67,16 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    const inFlight = await prisma.scan.findFirst({
+      where: { accountId: body.accountId, status: { in: ['QUEUED', 'RUNNING'] } },
+    });
+    if (inFlight) {
+      res.status(409).json({ error: 'A scan is already in progress for this account.', scanId: inFlight.id });
+      return;
+    }
+
     const services = body.services || new ScanEngine().getAvailableServices();
-    // Scan every standard AWS region by default (the account-level region
-    // pre-check in ScanEngine skips any that turn out to have no resources,
-    // so this doesn't cost much for accounts that only use a handful).
-    // additionalRegions lets an account narrow scope explicitly if it was
-    // configured — that opt-in choice is still respected.
-    const regions = body.regions
-      || (cred.additionalRegions.length > 0
-            ? [cred.defaultRegion, ...cred.additionalRegions]
-            : new ScanEngine().getAvailableRegions());
+    const regions = body.regions || [cred.defaultRegion, ...cred.additionalRegions];
 
     const scan = await prisma.scan.create({
       data: {

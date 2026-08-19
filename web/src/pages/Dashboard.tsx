@@ -166,7 +166,6 @@ export function Dashboard() {
     (summary?.findingsBySeverity?.low      ?? 0) +
     (summary?.findingsBySeverity?.info     ?? 0);
 
-  // Per-cloud pill counts
   const awsCount   = allRows.filter(r => r.provider === 'AWS').length;
   const azureCount = allRows.filter(r => r.provider === 'AZURE').length;
   const gcpCount   = allRows.filter(r => r.provider === 'GCP').length;
@@ -177,7 +176,6 @@ export function Dashboard() {
       {/* ── Domain summary: Cloud Security + Application Security ──────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-        {/* Cloud Security (CSPM) */}
         <Card
           title="Cloud Security"
           action={
@@ -219,7 +217,6 @@ export function Dashboard() {
           )}
         </Card>
 
-        {/* Application Security (ASPM / VA-PT) */}
         <Card
           title="Application Security"
           action={

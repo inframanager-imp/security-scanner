@@ -124,7 +124,6 @@ function ScoreCard({ entry }: { entry: PostureScoreType }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="p-5">
-        {/* Header */}
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <div className="flex items-center gap-2">
@@ -146,12 +145,10 @@ function ScoreCard({ entry }: { entry: PostureScoreType }) {
           </button>
         </div>
 
-        {/* Gauge */}
         <div className="flex justify-center mb-5">
           <ScoreGauge score={entry.score} grade={entry.grade} />
         </div>
 
-        {/* Penalty breakdown */}
         <div className="space-y-2">
           <PenaltyBar label="Critical open" count={entry.criticalOpen}    penalty={critPenalty}   maxPenalty={maxPenalty} color="bg-red-500" />
           <PenaltyBar label="High open"     count={entry.highOpen}        penalty={highPenalty}   maxPenalty={maxPenalty} color="bg-orange-400" />
@@ -162,7 +159,6 @@ function ScoreCard({ entry }: { entry: PostureScoreType }) {
           )}
         </div>
 
-        {/* History toggle */}
         <button
           onClick={() => setShowHistory((v) => !v)}
           className="mt-4 w-full text-xs text-indigo-600 hover:text-indigo-800 flex items-center justify-center gap-1 transition-colors"
@@ -236,7 +232,7 @@ export default function PostureScore() {
   const { data: summary, isLoading, refetch } = useQuery({
     queryKey:      ['posture-summary'],
     queryFn:       postureApi.summary,
-    refetchInterval: 5 * 60 * 1000, // auto-refresh every 5 min
+    refetchInterval: 5 * 60 * 1000,
   });
 
   const filtered = (summary?.scores ?? []).filter((s) => {
@@ -263,7 +259,6 @@ export default function PostureScore() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-violet-50 rounded-xl">
@@ -284,7 +279,6 @@ export default function PostureScore() {
         </button>
       </div>
 
-      {/* Scoring legend */}
       <div className="bg-violet-50 border border-violet-100 rounded-lg p-4 mb-6">
         <h2 className="text-xs font-semibold text-violet-800 uppercase tracking-wider mb-2">Scoring Formula</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-1 text-xs text-violet-900">
@@ -316,7 +310,6 @@ export default function PostureScore() {
         </div>
       ) : (
         <>
-          {/* Summary */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
               <p className="text-3xl font-bold text-violet-700">{summary.avgScore ?? '–'}</p>
@@ -342,7 +335,6 @@ export default function PostureScore() {
 
           <GradeDistribution gradeCount={summary.gradeCount} />
 
-          {/* Filters */}
           <div className="flex gap-3 mt-6 mb-4">
             <div className="flex gap-1">
               {[null, 'A', 'B', 'C', 'D', 'F'].map((g) => (
@@ -376,7 +368,6 @@ export default function PostureScore() {
             </div>
           </div>
 
-          {/* Score cards */}
           {detailedScores.length === 0 ? (
             <div className="text-center py-8 text-gray-500 text-sm">
               <AlertTriangle className="w-8 h-8 mx-auto text-gray-300 mb-2" />

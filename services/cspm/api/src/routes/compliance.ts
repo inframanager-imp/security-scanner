@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { authenticate } from '../middleware/authenticate';
 import { scoreFrameworks, FRAMEWORKS } from '../services/complianceService';
@@ -27,8 +26,6 @@ async function getActiveFindingData(accountId?: string): Promise<{
   checkIds: Set<string>;
   checkIdCounts: Map<string, number>;
 }> {
-  // groupBy does not reliably support nested relation filters in Prisma,
-  // so resolve scan IDs first when filtering by account.
   const scanIdFilter: Record<string, unknown> = {};
   if (accountId) {
     const scans = await prisma.scan.findMany({
@@ -188,7 +185,7 @@ router.post('/evidence', async (req: Request, res: Response) => {
     }
     const expiresAt = new Date(Date.now() + 90 * 86_400_000);
     const record = await prisma.complianceEvidence.create({
-      data: { frameworkId, controlId, provider, accountId, evidenceType: 'MANUAL', status, summary, detail: (detail ?? {}) as Prisma.InputJsonValue, expiresAt },
+      data: { frameworkId, controlId, provider, accountId, evidenceType: 'MANUAL', status, summary, detail: detail ?? {}, expiresAt },
     });
     res.json({ data: record });
   } catch (err) {

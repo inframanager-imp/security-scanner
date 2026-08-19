@@ -1,18 +1,11 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   ListFunctionsCommand,
   GetFunctionCommand,
   GetPolicyCommand,
   ListAliasesCommand,
   GetFunctionConcurrencyCommand,
-  GetFunctionUrlConfigCommand,
   FunctionConfiguration,
 } from '@aws-sdk/client-lambda';
-import { DescribeSubnetsCommand } from '@aws-sdk/client-ec2';
-import {
-  DescribeTrailsCommand,
-  GetEventSelectorsCommand,
-} from '@aws-sdk/client-cloudtrail';
 import AdmZip from 'adm-zip';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
@@ -60,57 +53,6 @@ const SENSITIVE_FUNCTION_NAME_PATTERN =
 
 const MAX_PACKAGES_TO_CHECK = 50;
 const MAX_ZIP_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
-
-// awslambda_function_vpc_multi_az (Prowler default: lambda_min_azs = 2)
-const LAMBDA_MIN_AZS = 2;
-
-// Bounds for the in-code secrets scan (awslambda_function_no_secrets_in_code).
-// Prowler extracts the whole package and runs its detect-secrets scanner over
-// every file; this port scans a bounded number of text files per function.
-const MAX_CODE_FILES_SCANNED = 200;
-const MAX_CODE_FILE_BYTES = 512 * 1024; // per file
-const MAX_CODE_TOTAL_BYTES = 10 * 1024 * 1024; // per function
-const MAX_CODE_SECRET_MATCHES = 25; // evidence cap per function
-
-// File extensions that cannot meaningfully contain scannable text secrets
-const BINARY_FILE_EXTENSIONS = new Set([
-  '.jar', '.class', '.so', '.dll', '.dylib', '.exe', '.bin', '.pyc', '.pyo',
-  '.zip', '.gz', '.tar', '.tgz', '.bz2', '.xz', '.7z',
-  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg', '.webp',
-  '.woff', '.woff2', '.ttf', '.eot', '.otf',
-  '.pdf', '.wasm', '.node', '.o', '.a', '.lib', '.obj',
-  '.mp3', '.mp4', '.avi', '.mov', '.wav',
-]);
-
-/**
- * Lightweight secret detection for function code. Prowler runs its
- * detect-secrets scanner over the extracted package; this is a conservative
- * regex port of the most common credential patterns (same approach as the
- * SageMaker scanner).
- */
-const SECRET_PATTERNS: { type: string; regex: RegExp }[] = [
-  { type: 'AWS Access Key ID', regex: /\b(A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b/ },
-  { type: 'AWS Secret Access Key', regex: /aws_?secret_?access_?key\s*[=:]\s*['"]?[A-Za-z0-9/+=]{40}\b/i },
-  { type: 'Private Key', regex: /-----BEGIN (RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY/ },
-  { type: 'Hardcoded Password', regex: /\b(password|passwd|pwd)\b\s*[=:]\s*['"][^'"]{4,}['"]/i },
-  { type: 'Hardcoded Secret or Token', regex: /\b(secret|token|api[_-]?key|auth[_-]?key|access[_-]?token)\b\s*[=:]\s*['"][^'"]{8,}['"]/i },
-  { type: 'Credentials in URL', regex: /[a-z][a-z0-9+.-]*:\/\/[^/\s:@'"]+:[^/\s:@'"]+@[^\s'"]+/i },
-];
-
-/** Result of downloading a function's deployment package, shared across checks. */
-type FunctionCodeZip =
-  | { status: 'ok'; buffer: Buffer }
-  | { status: 'too-large'; sizeBytes: number }
-  | { status: 'unavailable' };
-
-/** Account-wide CloudTrail coverage of Lambda Invoke data events. */
-interface LambdaTrailCoverage {
-  /** false when trails could not be listed — the check is skipped, not failed */
-  available: boolean;
-  allFunctionsCovered: boolean;
-  coveredArns: Set<string>;
-  coveringTrail: string | null;
-}
 
 async function queryOSV(
   packageName: string,
@@ -191,20 +133,6 @@ export class LambdaScanner extends BaseScanner {
       const functions = await this.listAllFunctions();
       logger.info(`Found ${functions.length} Lambda functions to scan`);
 
-      // Shared state fetched once for the per-function checks below
-      const trailCoverage = await this.getLambdaTrailCoverage();
-      const subnetAzMap = functions.some((f) => f.VpcConfig?.VpcId)
-        ? await this.getSubnetAzMap()
-        : new Map<string, string>();
-      let accountId: string | null = null;
-      try {
-        accountId = await this.client.getAccountId();
-      } catch (err) {
-        logger.debug('Could not resolve account ID; skipping cross-account layer check', {
-          error: (err as Error).message,
-        });
-      }
-
       for (const fn of functions) {
         const fnName = fn.FunctionName ?? 'Unknown';
         logger.debug(`Scanning Lambda function: ${fnName}`);
@@ -212,12 +140,6 @@ export class LambdaScanner extends BaseScanner {
         findings.push(...this.checkRuntime(fn));
         findings.push(...this.checkEnvironmentVariables(fn));
         findings.push(...this.checkFunctionConfig(fn));
-        findings.push(...this.checkEnvVarsCmkEncryption(fn));
-        findings.push(...this.checkVpcMultiAz(fn, subnetAzMap));
-        findings.push(...this.checkCloudTrailInvokeLogging(fn, trailCoverage));
-        if (accountId) {
-          findings.push(...this.checkCrossAccountLayers(fn, accountId));
-        }
 
         try {
           findings.push(...(await this.checkFunctionPolicy(fn)));
@@ -228,36 +150,9 @@ export class LambdaScanner extends BaseScanner {
         }
 
         try {
-          findings.push(...(await this.checkFunctionUrl(fn)));
-        } catch (err) {
-          logger.debug(`Function URL check failed for ${fnName}`, {
-            error: (err as Error).message,
-          });
-        }
-
-        // The deployment package is downloaded once and shared by the
-        // dependency vulnerability check and the in-code secrets check.
-        let codeZip: FunctionCodeZip = { status: 'unavailable' };
-        try {
-          codeZip = await this.downloadFunctionCode(fn);
-        } catch (err) {
-          logger.debug(`Code download failed for ${fnName}`, {
-            error: (err as Error).message,
-          });
-        }
-
-        try {
-          findings.push(...(await this.checkDependencyVulnerabilities(fn, codeZip)));
+          findings.push(...(await this.checkDependencyVulnerabilities(fn)));
         } catch (err) {
           logger.debug(`Dependency check failed for ${fnName}`, {
-            error: (err as Error).message,
-          });
-        }
-
-        try {
-          findings.push(...this.checkCodeSecrets(fn, codeZip));
-        } catch (err) {
-          logger.debug(`Code secrets check failed for ${fnName}`, {
             error: (err as Error).message,
           });
         }
@@ -515,8 +410,7 @@ export class LambdaScanner extends BaseScanner {
   }
 
   private async checkDependencyVulnerabilities(
-    fn: FunctionConfiguration,
-    codeZip: FunctionCodeZip
+    fn: FunctionConfiguration
   ): Promise<ScanningResult[]> {
     const findings: ScanningResult[] = [];
     const fnName = fn.FunctionName ?? 'Unknown';
@@ -529,14 +423,51 @@ export class LambdaScanner extends BaseScanner {
       return findings;
     }
 
-    if (codeZip.status === 'too-large') {
+    // a) Download deployment package URL
+    let fnDetail: any;
+    try {
+      fnDetail = await retry(async () => {
+        return await this.client.lambda.send(
+          new GetFunctionCommand({ FunctionName: fn.FunctionArn! })
+        );
+      });
+    } catch (err) {
+      logger.debug(`Could not get function detail for ${fnName}`, {
+        error: (err as Error).message,
+      });
+      return findings;
+    }
+
+    const downloadUrl = fnDetail.Code?.Location;
+    if (!downloadUrl) return [];
+
+    // b) Download the zip
+    let buffer: Buffer;
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        logger.debug(
+          `Failed to download zip for ${fnName}: HTTP ${response.status}`
+        );
+        return findings;
+      }
+      buffer = Buffer.from(await response.arrayBuffer());
+    } catch (err) {
+      logger.debug(`Zip download failed for ${fnName}`, {
+        error: (err as Error).message,
+      });
+      return findings;
+    }
+
+    // Check zip size limit
+    if (buffer.byteLength > MAX_ZIP_SIZE_BYTES) {
       findings.push(
         this.emit(
           'lambda_function_package_too_large',
           {
             functionName: fnName,
             arn: fn.FunctionArn,
-            sizeBytes: codeZip.sizeBytes,
+            sizeBytes: buffer.byteLength,
           },
           {
             message: `Function "${fnName}" deployment package exceeds 50 MB and was skipped for dependency vulnerability analysis.`,
@@ -545,10 +476,6 @@ export class LambdaScanner extends BaseScanner {
       );
       return findings;
     }
-    if (codeZip.status !== 'ok') {
-      return findings;
-    }
-    const buffer = codeZip.buffer;
 
     // c) Parse dependencies based on runtime
     let packages: Array<{ name: string; version: string }> = [];
@@ -773,481 +700,6 @@ export class LambdaScanner extends BaseScanner {
         )
       );
     }
-    return findings;
-  }
-
-  /**
-   * Download the function's deployment package once so the dependency and
-   * in-code secrets checks can share it. Image-based functions (no
-   * Code.Location) resolve to 'unavailable'.
-   */
-  private async downloadFunctionCode(
-    fn: FunctionConfiguration
-  ): Promise<FunctionCodeZip> {
-    const fnName = fn.FunctionName ?? 'Unknown';
-
-    let fnDetail: any;
-    try {
-      fnDetail = await retry(async () => {
-        return await this.client.lambda.send(
-          new GetFunctionCommand({ FunctionName: fn.FunctionArn! })
-        );
-      });
-    } catch (err) {
-      logger.debug(`Could not get function detail for ${fnName}`, {
-        error: (err as Error).message,
-      });
-      return { status: 'unavailable' };
-    }
-
-    const downloadUrl = fnDetail.Code?.Location;
-    if (!downloadUrl) return { status: 'unavailable' };
-
-    try {
-      const response = await fetch(downloadUrl);
-      if (!response.ok) {
-        logger.debug(
-          `Failed to download zip for ${fnName}: HTTP ${response.status}`
-        );
-        return { status: 'unavailable' };
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > MAX_ZIP_SIZE_BYTES) {
-        return { status: 'too-large', sizeBytes: buffer.byteLength };
-      }
-      return { status: 'ok', buffer };
-    } catch (err) {
-      logger.debug(`Zip download failed for ${fnName}`, {
-        error: (err as Error).message,
-      });
-      return { status: 'unavailable' };
-    }
-  }
-
-  // awslambda_function_no_secrets_in_code: scan the deployment package's text
-  // files for credential patterns. Bounded port of Prowler's detect-secrets
-  // scan over the extracted package; only file names, secret types and line
-  // numbers are reported — never the matched values.
-  private checkCodeSecrets(
-    fn: FunctionConfiguration,
-    codeZip: FunctionCodeZip
-  ): ScanningResult[] {
-    const findings: ScanningResult[] = [];
-    const fnName = fn.FunctionName ?? 'Unknown';
-
-    if (codeZip.status !== 'ok') {
-      if (codeZip.status === 'too-large') {
-        logger.debug(
-          `Skipping code secrets scan for ${fnName}: package exceeds ${MAX_ZIP_SIZE_BYTES} bytes`
-        );
-      }
-      return findings;
-    }
-
-    const hits: { file: string; type: string; line: number }[] = [];
-    let filesScanned = 0;
-    let bytesScanned = 0;
-    try {
-      const zip = new AdmZip(codeZip.buffer);
-      for (const entry of zip.getEntries()) {
-        if (hits.length >= MAX_CODE_SECRET_MATCHES) break;
-        if (filesScanned >= MAX_CODE_FILES_SCANNED) break;
-        if (bytesScanned >= MAX_CODE_TOTAL_BYTES) break;
-        if (entry.isDirectory) continue;
-
-        const entryName = entry.entryName;
-        const dotIndex = entryName.lastIndexOf('.');
-        const ext = dotIndex >= 0 ? entryName.slice(dotIndex).toLowerCase() : '';
-        if (BINARY_FILE_EXTENSIONS.has(ext)) continue;
-        if (entry.header.size > MAX_CODE_FILE_BYTES) continue;
-
-        let content: string;
-        try {
-          content = entry.getData().toString('latin1');
-        } catch {
-          continue;
-        }
-        filesScanned++;
-        bytesScanned += content.length;
-
-        const lines = content.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          for (const pattern of SECRET_PATTERNS) {
-            if (pattern.regex.test(lines[i])) {
-              hits.push({ file: entryName, type: pattern.type, line: i + 1 });
-            }
-          }
-          if (hits.length >= MAX_CODE_SECRET_MATCHES) break;
-        }
-      }
-    } catch (err) {
-      logger.debug(`Failed to scan code for secrets in ${fnName}`, {
-        error: (err as Error).message,
-      });
-      return findings;
-    }
-
-    if (hits.length > 0) {
-      const detail = hits
-        .slice(0, 10)
-        .map((h) => `${h.file}: ${h.type} on line ${h.line}`)
-        .join('; ');
-      findings.push(
-        this.emit(
-          'awslambda_function_no_secrets_in_code',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            filesScanned,
-            secretTypes: [...new Set(hits.map((h) => h.type))],
-            matches: hits,
-          },
-          {
-            message: `Function "${fnName}" deployment package contains potential hardcoded secrets: ${detail}.`,
-            remediation: `Remove the hardcoded values from the "${fnName}" code, rotate the exposed credentials, and load secrets at runtime from AWS Secrets Manager or SSM Parameter Store.`,
-          }
-        )
-      );
-    }
-
-    return findings;
-  }
-
-  // awslambda_function_env_vars_not_encrypted_with_cmk: functions with
-  // environment variables must encrypt them with a customer-managed KMS key.
-  private checkEnvVarsCmkEncryption(fn: FunctionConfiguration): ScanningResult[] {
-    const findings: ScanningResult[] = [];
-    const fnName = fn.FunctionName ?? 'Unknown';
-
-    const variableCount = Object.keys(fn.Environment?.Variables ?? {}).length;
-    if (variableCount === 0) return findings;
-
-    if (!fn.KMSKeyArn) {
-      findings.push(
-        this.emit(
-          'awslambda_function_env_vars_not_encrypted_with_cmk',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            environmentVariableCount: variableCount,
-            kmsKeyArn: null,
-          },
-          {
-            message: `Function "${fnName}" has ${variableCount} environment variable(s) encrypted with the default AWS-managed key instead of a customer-managed KMS key.`,
-            remediation: `Associate a customer-managed KMS key with "${fnName}": aws lambda update-function-configuration --function-name ${fnName} --kms-key-arn <cmk-arn>.`,
-          }
-        )
-      );
-    }
-
-    return findings;
-  }
-
-  // awslambda_function_using_cross_account_layers: every attached layer must be
-  // published by the audited account (supply-chain risk otherwise).
-  private checkCrossAccountLayers(
-    fn: FunctionConfiguration,
-    accountId: string
-  ): ScanningResult[] {
-    const findings: ScanningResult[] = [];
-    const fnName = fn.FunctionName ?? 'Unknown';
-
-    const crossAccountLayers: string[] = [];
-    for (const layer of fn.Layers ?? []) {
-      const layerArn: string = (layer as any).Arn ?? '';
-      // Layer ARN: arn:aws:lambda:region:account-id:layer:name:version
-      const parts = layerArn.split(':');
-      const layerAccount = parts.length >= 5 ? parts[4] : '';
-      if (layerAccount && layerAccount !== accountId) {
-        crossAccountLayers.push(layerArn);
-      }
-    }
-
-    if (crossAccountLayers.length > 0) {
-      findings.push(
-        this.emit(
-          'awslambda_function_using_cross_account_layers',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            crossAccountLayers,
-          },
-          {
-            message: `Function "${fnName}" uses ${crossAccountLayers.length} layer(s) published by another AWS account: ${crossAccountLayers.join(', ')}. A compromised external layer executes attacker code with this function's IAM role.`,
-            remediation: `Republish the layer content in account ${accountId} and update "${fnName}" to reference the account-owned layer ARN via update-function-configuration --layers.`,
-          }
-        )
-      );
-    }
-
-    return findings;
-  }
-
-  // awslambda_function_url_public / awslambda_function_url_cors_policy:
-  // functions with a function URL must require IAM auth and must not allow
-  // wildcard CORS origins.
-  private async checkFunctionUrl(
-    fn: FunctionConfiguration
-  ): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-    const fnName = fn.FunctionName ?? 'Unknown';
-
-    let urlConfig: any;
-    try {
-      urlConfig = await retry(async () => {
-        try {
-          return await this.client.lambda.send(
-            new GetFunctionUrlConfigCommand({ FunctionName: fn.FunctionArn! })
-          );
-        } catch (err) {
-          // No function URL configured — nothing to check
-          if ((err as any)?.name === 'ResourceNotFoundException') return null;
-          throw err;
-        }
-      });
-    } catch (err) {
-      logger.debug(`GetFunctionUrlConfig failed for ${fnName}`, {
-        error: (err as Error).message,
-      });
-      return findings;
-    }
-    if (!urlConfig) return findings;
-
-    if (urlConfig.AuthType !== 'AWS_IAM') {
-      findings.push(
-        this.emit(
-          'awslambda_function_url_public',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            functionUrl: urlConfig.FunctionUrl,
-            authType: urlConfig.AuthType ?? 'NONE',
-          },
-          {
-            message: `Function "${fnName}" has a function URL with auth type "${urlConfig.AuthType ?? 'NONE'}" that allows unauthenticated public invocation.`,
-            remediation: `Require IAM authentication on the function URL: aws lambda update-function-url-config --function-name ${fnName} --auth-type AWS_IAM.`,
-          }
-        )
-      );
-    }
-
-    const allowOrigins: string[] = urlConfig.Cors?.AllowOrigins ?? [];
-    if (allowOrigins.includes('*')) {
-      findings.push(
-        this.emit(
-          'awslambda_function_url_cors_policy',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            functionUrl: urlConfig.FunctionUrl,
-            allowOrigins,
-          },
-          {
-            message: `Function "${fnName}" function URL CORS policy allows any origin ("*"), letting any website invoke it from a browser and read responses.`,
-            remediation: `Restrict the URL's allowed origins to trusted domains: aws lambda update-function-url-config --function-name ${fnName} --cors AllowOrigins=https://<trusted-domain>.`,
-          }
-        )
-      );
-    }
-
-    return findings;
-  }
-
-  // awslambda_function_vpc_multi_az: VPC-attached functions must have subnets
-  // spanning at least LAMBDA_MIN_AZS Availability Zones. Functions not in a VPC
-  // fail here too (as in Prowler) unless awslambda_function_inside_vpc already
-  // flagged them (sensitive name pattern), to avoid duplicate reports.
-  private checkVpcMultiAz(
-    fn: FunctionConfiguration,
-    subnetAzMap: Map<string, string> | null
-  ): ScanningResult[] {
-    const findings: ScanningResult[] = [];
-    const fnName = fn.FunctionName ?? 'Unknown';
-
-    const vpcId = fn.VpcConfig?.VpcId;
-    if (!vpcId) {
-      if (SENSITIVE_FUNCTION_NAME_PATTERN.test(fnName)) return findings;
-      findings.push(
-        this.emit(
-          'awslambda_function_vpc_multi_az',
-          { functionName: fnName, arn: fn.FunctionArn, vpcId: null, availabilityZones: [] },
-          {
-            message: `Function "${fnName}" is not attached to a VPC, so it cannot span multiple Availability Zones.`,
-            remediation: `Attach "${fnName}" to a VPC with subnets in at least ${LAMBDA_MIN_AZS} different Availability Zones via update-function-configuration --vpc-config.`,
-          }
-        )
-      );
-      return findings;
-    }
-
-    // Subnet->AZ lookup unavailable: skip rather than emit false positives
-    if (!subnetAzMap) return findings;
-
-    const azs = new Set<string>();
-    for (const subnetId of fn.VpcConfig?.SubnetIds ?? []) {
-      const az = subnetAzMap.get(subnetId);
-      if (az) azs.add(az);
-    }
-
-    if (azs.size < LAMBDA_MIN_AZS) {
-      findings.push(
-        this.emit(
-          'awslambda_function_vpc_multi_az',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            vpcId,
-            availabilityZones: [...azs],
-          },
-          {
-            message: `Function "${fnName}" is attached to VPC ${vpcId} with subnets in only ${azs.size} Availability Zone(s) (${[...azs].join(', ') || 'none resolved'}); at least ${LAMBDA_MIN_AZS} are required for fault tolerance.`,
-            remediation: `Add subnets from at least ${LAMBDA_MIN_AZS} different Availability Zones to "${fnName}": aws lambda update-function-configuration --function-name ${fnName} --vpc-config SubnetIds=<subnet-az1>,<subnet-az2>,SecurityGroupIds=<sg>.`,
-          }
-        )
-      );
-    }
-
-    return findings;
-  }
-
-  /** Map every subnet in the region to its Availability Zone (null on failure). */
-  private async getSubnetAzMap(): Promise<Map<string, string> | null> {
-    try {
-      const map = new Map<string, string>();
-      let nextToken: string | undefined;
-      do {
-        const result: any = await retry(async () => {
-          return await this.client.ec2.send(
-            new DescribeSubnetsCommand({ NextToken: nextToken })
-          );
-        });
-        for (const subnet of result.Subnets ?? []) {
-          if (subnet.SubnetId && subnet.AvailabilityZone) {
-            map.set(subnet.SubnetId, subnet.AvailabilityZone);
-          }
-        }
-        nextToken = result.NextToken;
-      } while (nextToken);
-      return map;
-    } catch (err) {
-      logger.debug('Failed to describe subnets for Lambda multi-AZ check', {
-        error: (err as Error).message,
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Determine which Lambda functions have their Invoke calls recorded as
-   * CloudTrail data events, from classic event selectors (DataResources of
-   * type AWS::Lambda::Function) and advanced event selectors (resources.type).
-   */
-  private async getLambdaTrailCoverage(): Promise<LambdaTrailCoverage> {
-    const coverage: LambdaTrailCoverage = {
-      available: false,
-      allFunctionsCovered: false,
-      coveredArns: new Set<string>(),
-      coveringTrail: null,
-    };
-
-    let trails: any[] = [];
-    try {
-      const result: any = await retry(async () => {
-        return await this.client.cloudtrail.send(
-          new DescribeTrailsCommand({ includeShadowTrails: true })
-        );
-      });
-      trails = result.trailList ?? [];
-    } catch (err) {
-      logger.debug('Failed to describe CloudTrail trails for Lambda Invoke logging check', {
-        error: (err as Error).message,
-      });
-      return coverage;
-    }
-    coverage.available = true;
-
-    for (const trail of trails) {
-      const trailName: string = trail.Name ?? trail.TrailARN ?? 'Unknown';
-      let selectors: any;
-      try {
-        selectors = await retry(async () => {
-          return await this.client.cloudtrail.send(
-            new GetEventSelectorsCommand({ TrailName: trail.TrailARN ?? trail.Name })
-          );
-        });
-      } catch (err) {
-        logger.debug(`Failed to get event selectors for trail ${trailName}`, {
-          error: (err as Error).message,
-        });
-        continue;
-      }
-
-      // Classic event selectors
-      for (const selector of selectors.EventSelectors ?? []) {
-        for (const dataResource of selector.DataResources ?? []) {
-          if (dataResource.Type !== 'AWS::Lambda::Function') continue;
-          for (const value of dataResource.Values ?? []) {
-            // "arn:<partition>:lambda" is CloudTrail's log-all-functions value
-            if (/^arn:[^:]+:lambda$/.test(value)) {
-              coverage.allFunctionsCovered = true;
-              coverage.coveringTrail = coverage.coveringTrail ?? trailName;
-            } else {
-              coverage.coveredArns.add(value);
-            }
-          }
-        }
-      }
-
-      // Advanced event selectors
-      for (const advanced of selectors.AdvancedEventSelectors ?? []) {
-        for (const fieldSelector of advanced.FieldSelectors ?? []) {
-          if (
-            fieldSelector.Field === 'resources.type' &&
-            (fieldSelector.Equals ?? []).includes('AWS::Lambda::Function')
-          ) {
-            coverage.allFunctionsCovered = true;
-            coverage.coveringTrail = coverage.coveringTrail ?? trailName;
-          }
-        }
-      }
-
-      if (coverage.allFunctionsCovered) break;
-    }
-
-    return coverage;
-  }
-
-  // awslambda_function_invoke_api_operations_cloudtrail_logging_enabled
-  private checkCloudTrailInvokeLogging(
-    fn: FunctionConfiguration,
-    coverage: LambdaTrailCoverage
-  ): ScanningResult[] {
-    const findings: ScanningResult[] = [];
-    // Trails could not be enumerated: skip instead of emitting false positives
-    if (!coverage.available) return findings;
-
-    const fnName = fn.FunctionName ?? 'Unknown';
-    const recorded =
-      coverage.allFunctionsCovered ||
-      coverage.coveredArns.has(fn.FunctionArn ?? '');
-
-    if (!recorded) {
-      findings.push(
-        this.emit(
-          'awslambda_function_invoke_api_operations_cloudtrail_logging_enabled',
-          {
-            functionName: fnName,
-            arn: fn.FunctionArn,
-            lambdaDataEventsTrail: coverage.coveringTrail,
-          },
-          {
-            message: `Function "${fnName}" Invoke API calls are not recorded by any CloudTrail trail, so there is no per-invocation audit trail.`,
-            remediation: `Add a Lambda data event selector covering "${fnName}" (or all functions) to a trail: aws cloudtrail put-event-selectors --trail-name <trail> --advanced-event-selectors '[{"FieldSelectors":[{"Field":"eventCategory","Equals":["Data"]},{"Field":"resources.type","Equals":["AWS::Lambda::Function"]}]}]'.`,
-          }
-        )
-      );
-    }
-
     return findings;
   }
 }

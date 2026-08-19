@@ -1,25 +1,4 @@
-import { GoogleAuth } from 'google-auth-library';
-import { cloudresourcemanager as cloudresourcemanagerApi } from '@googleapis/cloudresourcemanager';
-import { iam as iamApi } from '@googleapis/iam';
-import { storage as storageApi } from '@googleapis/storage';
-import { compute as computeApi } from '@googleapis/compute';
-import { sqladmin as sqladminApi } from '@googleapis/sqladmin';
-import { container as containerApi } from '@googleapis/container';
-import { run as runApi } from '@googleapis/run';
-import { bigquery as bigqueryApi } from '@googleapis/bigquery';
-import { cloudkms as cloudkmsApi } from '@googleapis/cloudkms';
-import { secretmanager as secretmanagerApi } from '@googleapis/secretmanager';
-import { cloudfunctions as cloudfunctionsApi } from '@googleapis/cloudfunctions';
-import { pubsub as pubsubApi } from '@googleapis/pubsub';
-import { artifactregistry as artifactregistryApi } from '@googleapis/artifactregistry';
-import { logging as loggingApi } from '@googleapis/logging';
-import { monitoring as monitoringApi } from '@googleapis/monitoring';
-import { apikeys as apikeysApi } from '@googleapis/apikeys';
-import { dns as dnsApi } from '@googleapis/dns';
-import { dataproc as dataprocApi } from '@googleapis/dataproc';
-import { serviceusage as serviceusageApi } from '@googleapis/serviceusage';
-import { accessapproval as accessapprovalApi } from '@googleapis/accessapproval';
-import { essentialcontacts as essentialcontactsApi } from '@googleapis/essentialcontacts';
+import { google, Auth } from 'googleapis';
 
 export interface GcpClientOptions {
   projectId:           string;
@@ -30,11 +9,11 @@ export interface GcpClientOptions {
 
 export default class GcpClient {
   readonly projectId:   string;
-  readonly auth:        GoogleAuth;
+  readonly auth:        Auth.GoogleAuth;
 
   constructor(options: GcpClientOptions) {
     this.projectId = options.projectId;
-    this.auth = new GoogleAuth({
+    this.auth = new google.auth.GoogleAuth({
       ...(options.credentials ? { credentials: options.credentials as any } : {}),
       scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
@@ -50,26 +29,24 @@ export default class GcpClient {
     }
   }
 
-  cloudresourcemanager() { return cloudresourcemanagerApi({ version: 'v3', auth: this.auth }); }
-  iam()                  { return iamApi({ version: 'v1', auth: this.auth }); }
-  storage()              { return storageApi({ version: 'v1', auth: this.auth }); }
-  compute()              { return computeApi({ version: 'v1', auth: this.auth }); }
-  sqladmin()             { return sqladminApi({ version: 'v1', auth: this.auth }); }
-  container()            { return containerApi({ version: 'v1', auth: this.auth }); }
-  run()                  { return runApi({ version: 'v2', auth: this.auth }); }
-  bigquery()             { return bigqueryApi({ version: 'v2', auth: this.auth }); }
-  cloudkms()             { return cloudkmsApi({ version: 'v1', auth: this.auth }); }
-  secretmanager()        { return secretmanagerApi({ version: 'v1', auth: this.auth }); }
-  cloudfunctions()       { return cloudfunctionsApi({ version: 'v2', auth: this.auth }); }
-  pubsub()               { return pubsubApi({ version: 'v1', auth: this.auth }); }
-  artifactregistry()     { return artifactregistryApi({ version: 'v1', auth: this.auth }); }
-  logging()              { return loggingApi({ version: 'v2', auth: this.auth }); }
-  monitoring()           { return monitoringApi({ version: 'v3', auth: this.auth }); }
-  cloudresourcemanagerV1() { return cloudresourcemanagerApi({ version: 'v1', auth: this.auth }); }
-  apikeys()               { return apikeysApi({ version: 'v2', auth: this.auth }); }
-  dns()                   { return dnsApi({ version: 'v1', auth: this.auth }); }
-  dataproc()               { return dataprocApi({ version: 'v1', auth: this.auth }); }
-  serviceusage()           { return serviceusageApi({ version: 'v1', auth: this.auth }); }
-  accessapproval()         { return accessapprovalApi({ version: 'v1', auth: this.auth }); }
-  essentialcontacts()      { return essentialcontactsApi({ version: 'v1', auth: this.auth }); }
+  cloudresourcemanager() { return google.cloudresourcemanager({ version: 'v3', auth: this.auth }); }
+  iam()                  { return google.iam({ version: 'v1', auth: this.auth }); }
+  storage()              { return google.storage({ version: 'v1', auth: this.auth }); }
+  compute()              { return google.compute({ version: 'v1', auth: this.auth }); }
+  sqladmin()             { return google.sqladmin({ version: 'v1', auth: this.auth }); }
+  container()            { return google.container({ version: 'v1', auth: this.auth }); }
+  run()                  { return google.run({ version: 'v2', auth: this.auth }); }
+  bigquery()             { return google.bigquery({ version: 'v2', auth: this.auth }); }
+  cloudkms()             { return google.cloudkms({ version: 'v1', auth: this.auth }); }
+  secretmanager()        { return google.secretmanager({ version: 'v1', auth: this.auth }); }
+  cloudfunctions()       { return google.cloudfunctions({ version: 'v2', auth: this.auth }); }
+  pubsub()               { return google.pubsub({ version: 'v1', auth: this.auth }); }
+  artifactregistry()     { return google.artifactregistry({ version: 'v1', auth: this.auth }); }
+  logging()              { return google.logging({ version: 'v2', auth: this.auth }); }
+  monitoring()           { return google.monitoring({ version: 'v3', auth: this.auth }); }
+  cloudresourcemanagerV1() { return google.cloudresourcemanager({ version: 'v1', auth: this.auth }); }
+  apikeys()               { return google.apikeys({ version: 'v2', auth: this.auth }); }
+  dns()                   { return google.dns({ version: 'v1', auth: this.auth }); }
+  dataproc()              { return google.dataproc({ version: 'v1', auth: this.auth }); }
+  serviceusage()          { return google.serviceusage({ version: 'v1', auth: this.auth }); }
 }

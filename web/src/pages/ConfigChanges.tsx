@@ -92,7 +92,6 @@ export function ConfigChanges() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <div className="flex items-center gap-2 mb-0.5">
           <GitCommit size={20} className="text-gray-600" />
@@ -101,7 +100,6 @@ export function ConfigChanges() {
         <p className="text-sm text-gray-500">Track and review resource configuration changes across all cloud accounts</p>
       </div>
 
-      {/* Category legend */}
       <div className="flex flex-wrap gap-2">
         {(Object.entries(CATEGORY_ICONS) as [ChangeCategory, typeof Shield][]).map(([cat, Icon]) => (
           <span key={cat} className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-200 rounded-full text-xs font-medium text-gray-600">
@@ -111,7 +109,6 @@ export function ConfigChanges() {
         ))}
       </div>
 
-      {/* Provider filter tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200">
         {(['ALL', 'AWS', 'AZURE', 'GCP'] as const).map((p) => (
           <button
@@ -131,7 +128,6 @@ export function ConfigChanges() {
         ))}
       </div>
 
-      {/* Subscriptions table */}
       <Card padding={false}>
         {isLoading ? (
           <div className="flex items-center justify-center h-40">
@@ -159,7 +155,6 @@ export function ConfigChanges() {
         )}
       </Card>
 
-      {/* Info panel */}
       <div className="grid grid-cols-3 gap-4">
         {[
           { icon: GitCommit, title: 'Real-time Tracking', desc: 'Changes are pulled from CloudTrail (AWS), Activity Logs (Azure), and Cloud Audit Logs (GCP). Click "Sync Now" on any account report to pull the latest.' },

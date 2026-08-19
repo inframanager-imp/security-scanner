@@ -35,7 +35,7 @@ import type { Finding, FindingStatus } from '../types';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const CHECK_INTERVAL_S = 120; // 2 minutes
+const CHECK_INTERVAL_S = 120;
 
 const CATEGORY_LABELS: Record<string, string> = {
   DefenseEvasion:     'Defense Evasion',
@@ -431,7 +431,6 @@ export function ThreatDetection() {
   const toastCounter = useRef(0);
   const activityCounter = useRef(0);
 
-  // 1-second ticker for next-check countdown
   useEffect(() => {
     const t = setInterval(() => setTick(n => n + 1), 1000);
     return () => clearInterval(t);
@@ -458,10 +457,8 @@ export function ThreatDetection() {
   const { connected } = useThreatMonitor({
     all: true,
     onHeartbeat: (payload) => {
-      // Update live heartbeat map
       setLiveHeartbeats(prev => ({ ...prev, [payload.accountId]: payload }));
 
-      // Add to activity log
       const entry: ActivityEntry = {
         id:        String(++activityCounter.current),
         type:      'heartbeat',
@@ -478,7 +475,6 @@ export function ThreatDetection() {
     onThreatDetected: (payload) => {
       if (!payload.finding) return;
 
-      // Add to activity log
       const entry: ActivityEntry = {
         id:           String(++activityCounter.current),
         type:         'threat',
@@ -489,7 +485,6 @@ export function ThreatDetection() {
       };
       setActivityLog(prev => [entry, ...prev].slice(0, 50));
 
-      // Show toast
       const id = String(++toastCounter.current);
       const toast: ToastItem = {
         id,
@@ -504,7 +499,6 @@ export function ThreatDetection() {
     },
   });
 
-  // Toggle monitoring for an account
   const handleToggle = async (aid: string, currentlyActive: boolean) => {
     setToggling(aid);
     try {
@@ -612,7 +606,7 @@ export function ThreatDetection() {
                 : 'text-gray-600 hover:text-gray-800'
             }`}
           >
-            <span>🧠</span> ML Anomaly
+            ML Anomaly
           </button>
         </div>
 

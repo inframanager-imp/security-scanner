@@ -219,7 +219,6 @@ export default function IamEscalation() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-red-50 rounded-xl">
@@ -240,15 +239,11 @@ export default function IamEscalation() {
         </button>
       </div>
 
-      {/* Stats */}
       {stats && <StatsBar stats={stats} />}
 
-      {/* Type breakdown */}
       {stats && stats.byType.length > 0 && <TypeBreakdown stats={stats} />}
 
-      {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 flex flex-wrap gap-3">
-        {/* Status */}
         <div className="flex gap-1">
           {['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'ALL'].map((s) => (
             <button
@@ -265,7 +260,6 @@ export default function IamEscalation() {
           ))}
         </div>
 
-        {/* Severity */}
         <select
           className="border rounded px-2 py-1 text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={filters.severity}
@@ -275,7 +269,6 @@ export default function IamEscalation() {
           {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((s) => <option key={s}>{s}</option>)}
         </select>
 
-        {/* Provider */}
         <select
           className="border rounded px-2 py-1 text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={filters.provider}
@@ -285,7 +278,6 @@ export default function IamEscalation() {
           {['AWS', 'AZURE', 'GCP'].map((p) => <option key={p}>{p}</option>)}
         </select>
 
-        {/* Escalation type */}
         <select
           className="border rounded px-2 py-1 text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={filters.escalationType}
@@ -297,7 +289,6 @@ export default function IamEscalation() {
           ))}
         </select>
 
-        {/* Days */}
         <select
           className="border rounded px-2 py-1 text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={filters.days}
@@ -311,7 +302,6 @@ export default function IamEscalation() {
         )}
       </div>
 
-      {/* Event list */}
       {isLoading ? (
         <div className="text-center py-12 text-gray-500">Loading events…</div>
       ) : !data || data.events.length === 0 ? (
@@ -333,7 +323,6 @@ export default function IamEscalation() {
             ))}
           </div>
 
-          {/* Pagination */}
           {data.total > 20 && (
             <div className="flex gap-2 pt-4 justify-center">
               <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="text-sm text-red-600 disabled:text-gray-400">← Prev</button>

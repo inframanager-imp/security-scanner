@@ -22,7 +22,6 @@
  *  DATA_EXFIL       — High-volume GetObject / read ops on sensitive resources
  */
 
-import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
@@ -98,10 +97,6 @@ const rk = {
 
 // ─── Geo helpers ──────────────────────────────────────────────────────────────
 
-/** Very lightweight IP-to-country mapping for well-known cloud/VPN ranges.
- *  In production this would call a local MaxMind GeoIP DB or an internal lookup.
- *  We derive a "region hint" from IP prefix instead of a full lookup.
- */
 function ipToCountryHint(ip: string): string | undefined {
   if (!ip || ip === 'AWS Internal' || ip.startsWith('10.') || ip.startsWith('172.16.') || ip.startsWith('192.168.')) return undefined;
   // For now return the /16 prefix as a pseudo-region identifier so we can detect new IP blocks
@@ -207,7 +202,7 @@ async function saveAnomaly(
         severity:       detection.severity,
         score:          detection.score,
         description:    detection.description,
-        detail:         detection.detail as Prisma.InputJsonValue,
+        detail:         detection.detail,
         sourceIp:       detection.sourceIp ?? event.sourceIp,
         country:        detection.country,
         eventName:      detection.eventName ?? event.eventName,
@@ -459,7 +454,6 @@ async function detectImpossibleTravel(event: NormalizedEvent): Promise<AnomalyDe
     redis.get(lastIpKey),
   ]);
 
-  // Store current
   await Promise.all([
     redis.setex(lastCountryKey, 7200, hint),   // 2h TTL
     redis.setex(lastIpKey,      7200, event.sourceIp),

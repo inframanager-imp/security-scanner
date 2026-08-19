@@ -9,9 +9,11 @@
  * POST  /api/baselines/:id/refresh            — request approval to refresh baseline in-place
  * GET   /api/baselines/:id/drift              — list drift results
  * GET   /api/baselines/:id/drift/:driftId     — get drift detail (with before/after config)
+ * GET   /api/baselines/:id/drift/:driftId/related-controls — compliance controls related to this drift (BCDD-F13)
  * PATCH /api/baselines/:id/drift/:driftId     — update drift status
  * POST  /api/baselines/:id/drift/:driftId/revert-plan  — generate revert plan
  * POST  /api/baselines/:id/drift/:driftId/revert       — request approval to revert
+ * GET   /api/baselines/:id/remediation-log    — immutable remediation audit trail (BCDD-F25)
  * GET   /api/baselines/:id/versions           — list version history
  * GET   /api/baselines/:id/versions/:vId      — get version detail with snapshots
  * GET   /api/baselines/:id/versions/:vId/compare/:vId2 — compare two versions
@@ -25,6 +27,7 @@ import {
 } from '../services/baselineService';
 import { generateRevertPlan }   from '../services/revertService';
 import { requestApproval }      from '../services/approvalService';
+import { getRelatedControls }   from '../services/complianceService';
 import { logger }               from '../config/logger';
 
 const router = Router();
@@ -94,11 +97,11 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const {
-      provider, targetId, name, description, resourceTypes, nameSearch,
+      provider, targetId, name, description, resourceTypes, nameSearch, region,
       requestedBy, requestedByName, notes, immediate,
     } = req.body as {
       provider: string; targetId: string; name: string; description?: string;
-      resourceTypes?: string[]; nameSearch?: string;
+      resourceTypes?: string[]; nameSearch?: string; region?: string;
       requestedBy?: string; requestedByName?: string; notes?: string;
       immediate?: boolean;
     };
@@ -109,7 +112,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // immediate=true bypasses approval (e.g., dev/test mode or single-user environments)
     if (immediate || !requestedBy) {
-      const id = await captureBaseline(provider, targetId, name, description, resourceTypes, nameSearch, requestedBy);
+      const id = await captureBaseline(provider, targetId, name, description, resourceTypes, nameSearch, requestedBy, region);
       const baseline = await prisma.configBaseline.findUnique({ where: { id } });
       return res.status(201).json(baseline);
     }
@@ -120,7 +123,7 @@ router.post('/', async (req: Request, res: Response) => {
       requestedBy,
       requestedByName,
       notes,
-      metadata: { provider, targetId, name, description, resourceTypes, nameSearch },
+      metadata: { provider, targetId, name, description, resourceTypes, nameSearch, region },
     });
 
     res.status(202).json({
@@ -223,12 +226,14 @@ router.get('/:id/drift', async (req: Request, res: Response) => {
   try {
     const page      = Math.max(1, parseInt(req.query.page     as string) || 1);
     const pageSize  = Math.min(100, parseInt(req.query.pageSize as string) || 25);
-    const status    = (req.query.status as string) || 'OPEN';
-    const driftType = req.query.driftType as string | undefined;
+    const status        = (req.query.status as string) || 'OPEN';
+    const driftType     = req.query.driftType as string | undefined;
+    const controlDomain = req.query.controlDomain as string | undefined;
 
     const where: Record<string, unknown> = { baselineId: req.params.id };
     if (status !== 'ALL') where.status = status;
     if (driftType) where.driftType = driftType;
+    if (controlDomain) where.controlDomain = controlDomain;
 
     const [total, results] = await Promise.all([
       prisma.driftResult.count({ where }),
@@ -239,7 +244,7 @@ router.get('/:id/drift', async (req: Request, res: Response) => {
         take:    pageSize,
         select: {
           id: true, driftType: true, severity: true, nativeId: true,
-          resourceType: true, resourceName: true, region: true,
+          resourceType: true, resourceName: true, region: true, controlDomain: true,
           driftedFields: true, status: true, detectedAt: true,
           acknowledgedAt: true, resolvedAt: true,
         },
@@ -284,8 +289,6 @@ router.get('/:id/drift/:driftId', async (req: Request, res: Response) => {
     ]);
     if (!result) return res.status(404).json({ error: 'Not found' });
 
-    // For DELETED resources: lastSeenAt is stored on the drift record itself.
-    // For ADDED/MODIFIED: fetch from live inventory.
     const [inventoryRecord, pendingRevert] = await Promise.all([
       result.driftType !== 'DELETED'
         ? prisma.resourceInventory.findFirst({
@@ -299,9 +302,6 @@ router.get('/:id/drift/:driftId', async (req: Request, res: Response) => {
       }),
     ]);
 
-    // currentLastSeenAt:
-    //   DELETED  → lastSeenAt stored on drift row (last time scanner saw it before it vanished)
-    //   ADDED/MODIFIED → lastSeenAt from live ResourceInventory
     const currentLastSeenAt =
       result.driftType === 'DELETED'
         ? (result as Record<string, unknown>).lastSeenAt ?? null
@@ -316,17 +316,59 @@ router.get('/:id/drift/:driftId', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error('[baselines] drift get failed', err);
     res.status(500).json({ error: 'Failed to get drift result' });
+    return;
+  }
+});
+
+// ─── Related compliance controls (BCDD-F13) ────────────────────────────────────
+
+router.get('/:id/drift/:driftId/related-controls', async (req: Request, res: Response) => {
+  try {
+    const drift = await prisma.driftResult.findFirst({
+      where:  { id: req.params.driftId, baselineId: req.params.id },
+      select: { controlDomain: true, resourceType: true },
+    });
+    if (!drift) return res.status(404).json({ error: 'Not found' });
+
+    const related = getRelatedControls(drift.controlDomain, drift.resourceType);
+    res.json({ controlDomain: drift.controlDomain, resourceType: drift.resourceType, related });
+  } catch (err) {
+    logger.error('[baselines] related-controls failed', err);
+    res.status(500).json({ error: 'Failed to fetch related controls' });
   }
 });
 
 // ─── Update drift status ──────────────────────────────────────────────────────
 
+const DRIFT_STATUSES = ['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'REVERTED', 'SUPPRESSED', 'CLOSED'] as const;
+
 router.patch('/:id/drift/:driftId', async (req: Request, res: Response) => {
   try {
-    const { status } = req.body as { status: 'ACKNOWLEDGED' | 'RESOLVED' | 'OPEN' | 'REVERTED' };
-    if (!['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'REVERTED'].includes(status)) {
-      return res.status(400).json({ error: 'status must be OPEN | ACKNOWLEDGED | RESOLVED | REVERTED' });
+    const { status, suppressionReason, suppressionExpiresAt } = req.body as {
+      status: typeof DRIFT_STATUSES[number];
+      suppressionReason?: string;
+      suppressionExpiresAt?: string;
+    };
+    if (!DRIFT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of ${DRIFT_STATUSES.join(' | ')}` });
     }
+
+    if (status === 'SUPPRESSED') {
+      if (!suppressionReason?.trim()) {
+        return res.status(400).json({ error: 'suppressionReason is required to suppress a finding' });
+      }
+      if (!suppressionExpiresAt || Number.isNaN(Date.parse(suppressionExpiresAt))) {
+        return res.status(400).json({ error: 'suppressionExpiresAt (ISO date) is required to suppress a finding' });
+      }
+      if (new Date(suppressionExpiresAt) <= new Date()) {
+        return res.status(400).json({ error: 'suppressionExpiresAt must be in the future' });
+      }
+    }
+
+    const before = await prisma.driftResult.findUnique({
+      where: { id: req.params.driftId },
+      select: { baselineId: true, currentConfig: true, baselineConfig: true },
+    });
 
     const updated = await prisma.driftResult.update({
       where: { id: req.params.driftId },
@@ -334,9 +376,34 @@ router.patch('/:id/drift/:driftId', async (req: Request, res: Response) => {
         status,
         ...(status === 'ACKNOWLEDGED' && { acknowledgedAt: new Date() }),
         ...(status === 'RESOLVED'     && { resolvedAt:     new Date() }),
+        ...(status === 'CLOSED'       && { closedAt:       new Date() }),
+        ...(status === 'SUPPRESSED'   && {
+          suppressedAt: new Date(),
+          suppressedBy: req.user?.id ?? null,
+          suppressionReason,
+          suppressionExpiresAt: new Date(suppressionExpiresAt!),
+        }),
       },
-      select: { id: true, status: true, acknowledgedAt: true, resolvedAt: true },
+      select: {
+        id: true, status: true, acknowledgedAt: true, resolvedAt: true, closedAt: true,
+        suppressedAt: true, suppressedBy: true, suppressionReason: true, suppressionExpiresAt: true,
+      },
     });
+
+    if (status === 'RESOLVED' && before) {
+      await prisma.remediationLog.create({
+        data: {
+          driftResultId: req.params.driftId,
+          baselineId:    before.baselineId,
+          action:        'MANUAL_RESOLVE',
+          actor:         req.user?.id ?? 'unknown',
+          outcome:       'SUCCESS',
+          message:       'Operator marked finding resolved outside the auto-revert path.',
+          beforeState:   before.currentConfig ?? undefined,
+          afterState:    before.baselineConfig ?? undefined,
+        },
+      }).catch((err) => logger.error(`[baselines] Failed to write remediation audit log: ${(err as Error).message}`));
+    }
 
     res.json(updated);
   } catch (err) {
@@ -350,10 +417,46 @@ router.patch('/:id/drift/:driftId', async (req: Request, res: Response) => {
 router.post('/:id/drift/:driftId/revert-plan', async (req: Request, res: Response) => {
   try {
     const plan = await generateRevertPlan(req.params.id, req.params.driftId);
+
+    await prisma.remediationLog.create({
+      data: {
+        driftResultId: req.params.driftId,
+        baselineId:    req.params.id,
+        action:        'GUIDED_PLAN_GENERATED',
+        actor:         req.user?.id ?? 'unknown',
+        outcome:       'SUCCESS',
+        message:       plan.canAutoRevert ? 'Auto-revert plan generated.' : 'Manual remediation script generated.',
+      },
+    }).catch((err) => logger.error(`[baselines] Failed to write remediation audit log: ${(err as Error).message}`));
+
     res.json(plan);
   } catch (err) {
     logger.error('[baselines] revert-plan failed', err);
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ─── Remediation audit trail (BCDD-F25 / N05) ──────────────────────────────────
+
+router.get('/:id/remediation-log', async (req: Request, res: Response) => {
+  try {
+    const page     = Math.max(1, parseInt(String(req.query.page ?? '1'), 10));
+    const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? '25'), 10)));
+
+    const [total, results] = await Promise.all([
+      prisma.remediationLog.count({ where: { baselineId: req.params.id } }),
+      prisma.remediationLog.findMany({
+        where:   { baselineId: req.params.id },
+        orderBy: { createdAt: 'desc' },
+        skip:    (page - 1) * pageSize,
+        take:    pageSize,
+      }),
+    ]);
+
+    res.json({ total, page, pageSize, results });
+  } catch (err) {
+    logger.error('[baselines] remediation-log fetch failed', err);
+    res.status(500).json({ error: 'Failed to fetch remediation log' });
   }
 });
 

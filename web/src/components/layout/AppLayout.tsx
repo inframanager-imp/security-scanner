@@ -25,6 +25,7 @@ import {
   Database,
   Bug,
   Hexagon,
+  Waypoints,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../../hooks/useAuth';
@@ -55,6 +56,7 @@ const navSections: NavSection[] = [
     items: [
       { to: '/cloud',          icon: <Layers size={16} />,          label: 'Cloud Subscriptions' },
       { to: '/compliance',     icon: <ShieldCheck size={16} />,     label: 'Compliance'          },
+      { to: '/threats',        icon: <ShieldAlert size={16} />,     label: 'Threat Detection'    },
       { to: '/config-changes', icon: <GitCommit size={16} />,       label: 'Config Changes'      },
       { to: '/baselines',      icon: <GitCompareArrows size={16} />,label: 'Baseline & Drift'    },
       { to: '/posture-score',  icon: <Shield size={16} />,          label: 'Posture Score'       },
@@ -72,6 +74,10 @@ const navSections: NavSection[] = [
       { to: '/appsec/web',      icon: <Server size={16} />,          label: 'Web Scan (DAST)'     },
       { to: '/appsec/api',      icon: <Network size={16} />,         label: 'API Security'        },
       { to: '/appsec/code',     icon: <FileText size={16} />,        label: 'Code Scan (SAST/SCA)'},
+      { to: '/appsec/vulnerabilities', icon: <ShieldAlert size={16} />, label: 'Vulnerabilities' },
+      { to: '/appsec/pipeline', icon: <GitCompareArrows size={16} />, label: 'Vuln Pipeline' },
+      { to: '/appsec/rag-index', icon: <Database size={16} />,       label: 'RAG Index'           },
+      { to: '/appsec/taint-report', icon: <Waypoints size={16} />,   label: 'Taint Analysis'      },
       { to: '/appsec/pentest',  icon: <Flame size={16} />,           label: 'Pentest (AI)'        },
       { to: '/appsec/ai-red',   icon: <Bug size={16} />,             label: 'AI Red Team'         },
     ],
@@ -82,7 +88,6 @@ const navSections: NavSection[] = [
     items: [
       { to: '/asset-graph',       icon: <Network size={16} />,      label: 'Asset Graph'             },
       { to: '/identity-graph',    icon: <Users size={16} />,        label: 'Identity & Attack Paths' },
-      { to: '/threats',           icon: <ShieldAlert size={16} />,  label: 'Threat Detection'        },
       { to: '/prioritized-risks', icon: <Flame size={16} />,        label: 'Prioritized Risks'       },
       { to: '/workload-vulns',    icon: <Server size={16} />,       label: 'Workload Vulns'          },
       { to: '/data-security',     icon: <Database size={16} />,     label: 'Data Security'           },

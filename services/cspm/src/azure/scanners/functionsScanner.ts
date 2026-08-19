@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { AzureBaseScanner } from './baseScanner';
 import { ScanningResult } from '../../utils/types';
 
@@ -51,10 +50,10 @@ export class AzureFunctionsScanner extends AzureBaseScanner {
           ));
         }
 
-        // 3. Anonymous auth — function with no auth level; also gathers per-function
-        //    data reused below for the function-keys check.
-        let funcs: any[] = [];
+        // 3. Anonymous auth — function with no auth level
         try {
+          // Check if any function uses anonymous auth
+          const funcs: any[] = [];
           for await (const fn of webClient.webApps.listFunctions(rg, name)) funcs.push(fn);
           const anonymousFuncs = funcs.filter(f =>
             f.config?.bindings?.some((b: any) =>
@@ -69,34 +68,6 @@ export class AzureFunctionsScanner extends AzureBaseScanner {
             ));
           }
         } catch { /* listing functions may require additional permissions */ }
-
-        // app_function_access_keys_configured — HTTP-triggered functions should
-        // have at least one function-level access key configured.
-        try {
-          const httpTriggerFuncs = funcs.filter(f =>
-            f.config?.bindings?.some((b: any) => b.type === 'httpTrigger'),
-          );
-          const funcsWithoutKeys: string[] = [];
-          for (const fn of httpTriggerFuncs) {
-            const fnName = (fn.name ?? '').split('/').pop() ?? fn.name;
-            try {
-              const keysResult = await webClient.webApps.listFunctionKeys(rg, name, fnName);
-              const keys = keysResult.properties ?? {};
-              if (Object.keys(keys).length === 0) {
-                funcsWithoutKeys.push(fnName);
-              }
-            } catch {
-              funcsWithoutKeys.push(fnName);
-            }
-          }
-          if (httpTriggerFuncs.length > 0 && funcsWithoutKeys.length > 0) {
-            findings.push(this.emit(
-              'app_function_access_keys_configured',
-              { functionApp: name, resourceGroup: rg, functionsWithoutKeys: funcsWithoutKeys.slice(0, 10) },
-              { message: `Function App "${name}" has ${funcsWithoutKeys.length} HTTP-triggered function(s) with no function-level access key configured: ${funcsWithoutKeys.slice(0, 5).join(', ')}.` },
-            ));
-          }
-        } catch { /* function key listing optional */ }
 
         // 4. Managed identity not assigned
         const hasManagedIdentity = app.identity?.type &&
@@ -129,16 +100,6 @@ export class AzureFunctionsScanner extends AzureBaseScanner {
           ));
         }
 
-        // app_function_not_publicly_accessible — publicNetworkAccess should be
-        // disabled, or access restrictions/private endpoints should scope inbound traffic.
-        if (app.publicNetworkAccess !== 'Disabled') {
-          findings.push(this.emit(
-            'app_function_not_publicly_accessible',
-            { functionApp: name, resourceGroup: rg, publicNetworkAccess: app.publicNetworkAccess ?? 'Enabled' },
-            { message: `Function App "${name}" is publicly accessible (publicNetworkAccess is "${app.publicNetworkAccess ?? 'Enabled'}"). Restrict access via IP-based access restrictions or a Private Endpoint.` },
-          ));
-        }
-
         // 7. Runtime version / EOL
         const linuxFxVersion = config.linuxFxVersion ?? '';
         if (linuxFxVersion.includes('PYTHON|3.7') || linuxFxVersion.includes('PYTHON|3.8') ||
@@ -160,16 +121,6 @@ export class AzureFunctionsScanner extends AzureBaseScanner {
           ));
         }
 
-        // app_function_ftps_deployment_disabled
-        const ftpsState = config.ftpsState ?? 'AllAllowed';
-        if (ftpsState !== 'Disabled') {
-          findings.push(this.emit(
-            'app_function_ftps_deployment_disabled',
-            { functionApp: name, resourceGroup: rg, ftpsState },
-            { message: `Function App "${name}" has ${ftpsState === 'AllAllowed' ? 'FTP' : ftpsState === 'FtpsOnly' ? 'FTPS' : 'FTP or FTPS'} deployment enabled. Deployment credentials and code are exposed to an additional protocol surface.` },
-          ));
-        }
-
         // 9. Diagnostic logs
         try {
           const monitorClient = this.client.monitor();
@@ -183,22 +134,6 @@ export class AzureFunctionsScanner extends AzureBaseScanner {
             ));
           }
         } catch { /* optional */ }
-
-        // app_function_application_insights_enabled
-        try {
-          const appSettingsResult = await webClient.webApps.listApplicationSettings(rg, name);
-          const envVars: Record<string, string> = appSettingsResult.properties ?? {};
-          const hasAppInsights = Boolean(
-            envVars['APPINSIGHTS_INSTRUMENTATIONKEY'] || envVars['APPLICATIONINSIGHTS_CONNECTION_STRING'],
-          );
-          if (!hasAppInsights) {
-            findings.push(this.emit(
-              'app_function_application_insights_enabled',
-              { functionApp: name, resourceGroup: rg },
-              { message: `Function App "${name}" is not sending telemetry to Application Insights. Execution failures and performance data are not being captured.` },
-            ));
-          }
-        } catch { /* application settings listing optional */ }
       }
     } catch (err) {
       findings.push(this.finding(

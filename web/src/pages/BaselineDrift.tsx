@@ -5,7 +5,7 @@ import {
   CheckCircle, Search, X, RotateCcw, Clock, ShieldAlert, History,
   CheckSquare, XCircle, GitMerge, AlertTriangle, Terminal, ArrowLeftRight,
   Bell, User, Layers, Eye, ArrowRight, Zap,
-  BookOpen, Shield, Activity, Database, Lock,
+  BookOpen, Shield, Activity, Database, Lock, Pause,
 } from 'lucide-react';
 import {
   baselinesApi, approvalsApi,
@@ -51,6 +51,16 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: string
   ACKNOWLEDGED: { label: 'Acknowledged', color: 'text-amber-700 bg-amber-50 border-amber-200',   icon: '◐' },
   RESOLVED:     { label: 'Resolved',     color: 'text-green-700 bg-green-50 border-green-200',   icon: '✓' },
   REVERTED:     { label: 'Reverted',     color: 'text-purple-700 bg-purple-50 border-purple-200', icon: '↩' },
+  SUPPRESSED:   { label: 'Suppressed',   color: 'text-slate-700 bg-slate-100 border-slate-200',   icon: '⏸' },
+  CLOSED:       { label: 'Closed',       color: 'text-gray-600 bg-gray-100 border-gray-200',      icon: '⊘' },
+};
+const DOMAIN_LABEL: Record<string, string> = {
+  IAM:                 'IAM',
+  NETWORK:             'Network',
+  DATA_PROTECTION:     'Data Protection',
+  LOGGING_MONITORING:  'Logging & Monitoring',
+  WORKLOAD_HARDENING:  'Workload Hardening',
+  OTHER:               'Other',
 };
 const PROVIDER_CONFIG: Record<string, { bg: string; text: string; icon: string }> = {
   AWS:   { bg: 'bg-orange-100', text: 'text-orange-700', icon: '☁' },
@@ -83,7 +93,6 @@ function DriftDiffView({ baselineId, driftId, driftType, driftedFields }: {
 
   return (
     <div className="p-4 bg-gray-50 border-t border-gray-200">
-      {/* Metadata bar */}
       <div className="flex items-center gap-4 mb-4 text-xs text-gray-500">
         <span className="font-mono bg-white border border-gray-200 px-2 py-1 rounded truncate max-w-xs" title={data.nativeId}>{data.nativeId}</span>
         {data.firstDetectedAt    && <span>First detected: <strong className="text-gray-700">{new Date(data.firstDetectedAt).toLocaleString()}</strong></span>}
@@ -182,6 +191,42 @@ function DriftDiffView({ baselineId, driftId, driftType, driftedFields }: {
           </div>
         </div>
       )}
+
+      <RelatedControlsPanel baselineId={baselineId} driftId={driftId} />
+    </div>
+  );
+}
+
+// ─── Related compliance controls (BCDD-F13) ────────────────────────────────────
+function RelatedControlsPanel({ baselineId, driftId }: { baselineId: string; driftId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['related-controls', baselineId, driftId],
+    queryFn:  () => baselinesApi.relatedControls(baselineId, driftId),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) return null;
+  if (!data || data.related.length === 0) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-200">
+      <p className="text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1.5">
+        <Shield className="w-3.5 h-3.5 text-indigo-500" /> Related Compliance Controls
+      </p>
+      <p className="text-[10px] text-gray-400 mb-2">
+        Controls in the same domain ({DOMAIN_LABEL[data.controlDomain] ?? data.controlDomain}) worth reviewing for
+        this resource — a relevance ranking, not a certified violation mapping.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {data.related.map((c) => (
+          <span key={`${c.frameworkId}:${c.controlId}`}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-[11px]"
+            title={c.controlDescription}>
+            <span className="font-bold text-indigo-700">{c.frameworkShortName}</span>
+            <span className="text-indigo-600">{c.controlName}</span>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -335,18 +380,22 @@ function DriftTable({ baselineId }: { baselineId: string }) {
   const [status, setStatus]         = useState('OPEN');
   const [sevFilter, setSevFilter]   = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [domainFilter, setDomainFilter] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [revertDrift, setRevertDrift] = useState<DriftResult | null>(null);
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey:        ['drift', baselineId, page, status],
-    queryFn:         () => baselinesApi.drift(baselineId, page, 20, status),
+    queryKey:        ['drift', baselineId, page, status, domainFilter],
+    queryFn:         () => baselinesApi.drift(baselineId, page, 20, status, domainFilter || undefined),
     refetchInterval: 30_000,
   });
 
+  const [suppressTarget, setSuppressTarget] = useState<DriftResult | null>(null);
+
   const patchMut = useMutation({
-    mutationFn: ({ driftId, s }: { driftId: string; s: string }) => baselinesApi.updateDrift(baselineId, driftId, s),
+    mutationFn: ({ driftId, s, opts }: { driftId: string; s: string; opts?: { suppressionReason?: string; suppressionExpiresAt?: string } }) =>
+      baselinesApi.updateDrift(baselineId, driftId, s, opts),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['drift', baselineId] }),
   });
 
@@ -372,9 +421,8 @@ function DriftTable({ baselineId }: { baselineId: string }) {
 
   return (
     <div>
-      {/* Status tabs */}
       <div className="flex items-center gap-1 mb-4 bg-gray-100 rounded-xl p-1">
-        {['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'REVERTED', 'ALL'].map((s) => (
+        {['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'REVERTED', 'SUPPRESSED', 'CLOSED', 'ALL'].map((s) => (
           <button key={s} onClick={() => { setStatus(s); setPage(1); }}
             className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${status === s ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
             {s === 'REVERTED' ? '↩ Reverted' : s === 'ALL' ? 'All' : STATUS_CONFIG[s]?.label ?? s}
@@ -383,7 +431,6 @@ function DriftTable({ baselineId }: { baselineId: string }) {
         <span className="ml-2 text-xs text-gray-400 shrink-0 px-2">{data?.total ?? 0} total</span>
       </div>
 
-      {/* Mini stats + filters */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         {counts.CRITICAL > 0 && (
           <button onClick={() => setSevFilter(sevFilter === 'CRITICAL' ? '' : 'CRITICAL')}
@@ -398,14 +445,21 @@ function DriftTable({ baselineId }: { baselineId: string }) {
           </button>
         )}
         <div className="flex items-center gap-1 ml-auto">
+          <select value={domainFilter} onChange={(e) => { setDomainFilter(e.target.value); setPage(1); }}
+            className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 bg-white text-gray-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <option value="">All Domains</option>
+            {['IAM', 'NETWORK', 'DATA_PROTECTION', 'LOGGING_MONITORING', 'WORKLOAD_HARDENING', 'OTHER'].map((d) => (
+              <option key={d} value={d}>{DOMAIN_LABEL[d] ?? d}</option>
+            ))}
+          </select>
           {['ADDED', 'MODIFIED', 'DELETED'].map((t) => (
             <button key={t} onClick={() => setTypeFilter(typeFilter === t ? '' : t)}
               className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${typeFilter === t ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>
               {t === 'ADDED' ? `+${counts.ADDED}` : t === 'MODIFIED' ? `~${counts.MODIFIED}` : `-${counts.DELETED}`} {t.charAt(0) + t.slice(1).toLowerCase()}
             </button>
           ))}
-          {(sevFilter || typeFilter) && (
-            <button onClick={() => { setSevFilter(''); setTypeFilter(''); }} className="px-2 py-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1">
+          {(sevFilter || typeFilter || domainFilter) && (
+            <button onClick={() => { setSevFilter(''); setTypeFilter(''); setDomainFilter(''); }} className="px-2 py-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1">
               <X className="w-3 h-3" /> Clear
             </button>
           )}
@@ -424,7 +478,6 @@ function DriftTable({ baselineId }: { baselineId: string }) {
         </div>
       ) : (
         <>
-          {/* Table header */}
           <div className="grid grid-cols-12 gap-3 px-4 py-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
             <div className="col-span-1">Type</div>
             <div className="col-span-4">Resource</div>
@@ -443,7 +496,6 @@ function DriftTable({ baselineId }: { baselineId: string }) {
 
               return (
                 <div key={d.id} className={`bg-white rounded-xl border border-gray-100 border-l-4 ${dt?.row ?? ''} overflow-hidden shadow-sm hover:shadow-md transition-shadow`}>
-                  {/* Main row */}
                   <div className="grid grid-cols-12 gap-3 px-4 py-3 items-center cursor-pointer"
                     onClick={() => setExpandedId(isExpanded ? null : d.id)}>
                     {/* Type badge */}
@@ -499,7 +551,6 @@ function DriftTable({ baselineId }: { baselineId: string }) {
                     </div>
                   </div>
 
-                  {/* Expanded action bar */}
                   {isExpanded && (
                     <div className="flex items-center gap-3 px-4 py-2 bg-gray-50 border-t border-gray-100">
                       <span className="text-[10px] font-mono text-gray-400 truncate flex-1" title={d.nativeId}>{d.nativeId}</span>
@@ -522,14 +573,36 @@ function DriftTable({ baselineId }: { baselineId: string }) {
                             <RotateCcw className="w-3 h-3" /> Revert
                           </button>
                         )}
+                        {['OPEN', 'ACKNOWLEDGED'].includes(d.status) && (
+                          <button onClick={() => setSuppressTarget(d)}
+                            className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-colors">
+                            <Pause className="w-3 h-3" /> Suppress
+                          </button>
+                        )}
+                        {d.status === 'SUPPRESSED' && (
+                          <button onClick={() => patchMut.mutate({ driftId: d.id, s: 'OPEN' })}
+                            className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-colors">
+                            <RotateCcw className="w-3 h-3" /> Re-open
+                          </button>
+                        )}
+                        {['RESOLVED', 'REVERTED'].includes(d.status) && (
+                          <button onClick={() => patchMut.mutate({ driftId: d.id, s: 'CLOSED' })}
+                            className="flex items-center gap-1 px-3 py-1 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-colors">
+                            <X className="w-3 h-3" /> Close
+                          </button>
+                        )}
                         {d.status === 'REVERTED' && d.resolvedAt && (
                           <span className="text-[10px] text-purple-600">↩ Auto-reverted {new Date(d.resolvedAt).toLocaleString()}</span>
+                        )}
+                        {d.status === 'SUPPRESSED' && d.suppressionExpiresAt && (
+                          <span className="text-[10px] text-slate-500" title={d.suppressionReason ?? ''}>
+                            ⏸ Suppressed until {new Date(d.suppressionExpiresAt).toLocaleDateString()}
+                          </span>
                         )}
                       </div>
                     </div>
                   )}
 
-                  {/* Diff panel */}
                   {isExpanded && (
                     <DriftDiffView baselineId={baselineId} driftId={d.id} driftType={d.driftType} driftedFields={d.driftedFields} />
                   )}
@@ -538,7 +611,6 @@ function DriftTable({ baselineId }: { baselineId: string }) {
             })}
           </div>
 
-          {/* Pagination */}
           {(data?.total ?? 0) > 20 && (
             <div className="flex items-center justify-center gap-3 mt-4">
               <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
@@ -555,8 +627,146 @@ function DriftTable({ baselineId }: { baselineId: string }) {
         </>
       )}
 
-      {/* Revert dialog */}
       {revertDrift && <RevertDialog baselineId={baselineId} drift={revertDrift} onClose={() => setRevertDrift(null)} />}
+
+      {/* Suppress dialog (BCDD-F16 — mandatory justification + expiry) */}
+      {suppressTarget && (
+        <SuppressDialog
+          drift={suppressTarget}
+          submitting={patchMut.isPending}
+          onCancel={() => setSuppressTarget(null)}
+          onSubmit={(reason, expiresAt) => {
+            patchMut.mutate(
+              { driftId: suppressTarget.id, s: 'SUPPRESSED', opts: { suppressionReason: reason, suppressionExpiresAt: expiresAt } },
+              { onSuccess: () => setSuppressTarget(null) },
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SuppressDialog({ drift, submitting, onCancel, onSubmit }: {
+  drift: DriftResult;
+  submitting: boolean;
+  onCancel: () => void;
+  onSubmit: (reason: string, expiresAtIso: string) => void;
+}) {
+  const defaultExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const [reason, setReason] = useState('');
+  const [expiry, setExpiry] = useState(defaultExpiry);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
+      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+        <h3 className="text-sm font-bold text-gray-900 mb-1">Suppress Finding</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          {drift.resourceName ?? drift.nativeId} — accepted-risk exceptions need a justification and an
+          expiry; the finding automatically re-opens once it lapses.
+        </p>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Justification (required)</label>
+        <textarea
+          className="w-full border rounded-lg px-3 py-2 text-sm mb-3 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          rows={3}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Why is this an accepted risk?"
+        />
+        <label className="block text-xs font-medium text-gray-600 mb-1">Expires on (required)</label>
+        <input
+          type="date"
+          className="w-full border rounded-lg px-3 py-2 text-sm mb-4 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          value={expiry}
+          min={new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}
+          onChange={(e) => setExpiry(e.target.value)}
+        />
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 rounded-lg">
+            Cancel
+          </button>
+          <button
+            disabled={!reason.trim() || !expiry || submitting}
+            onClick={() => onSubmit(reason.trim(), new Date(`${expiry}T23:59:59`).toISOString())}
+            className="px-3 py-1.5 bg-slate-700 text-white rounded-lg text-xs font-semibold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting ? 'Suppressing…' : 'Suppress'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Remediation Audit Trail (BCDD-F25) ────────────────────────────────────────
+const REMEDIATION_ACTION_LABEL: Record<string, string> = {
+  AUTO_REVERT:            'Automated revert',
+  MANUAL_RESOLVE:         'Manual resolve',
+  GUIDED_PLAN_GENERATED:  'Guided plan generated',
+};
+
+function RemediationLogPanel({ baselineId }: { baselineId: string }) {
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useQuery({
+    queryKey: ['remediation-log', baselineId, page],
+    queryFn:  () => baselinesApi.remediationLog(baselineId, page, 25),
+  });
+
+  if (isLoading) return <div className="py-8 text-center text-sm text-gray-400 animate-pulse">Loading remediation log…</div>;
+  const results = data?.results ?? [];
+  if (results.length === 0) return (
+    <div className="py-8 text-center">
+      <BookOpen className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+      <p className="text-sm text-gray-500">No remediation actions yet</p>
+      <p className="text-xs text-gray-400 mt-1">Every revert, manual resolve, or guided plan is logged here — actor, before/after state, and outcome</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-400">
+        Immutable audit trail — {data?.total} action(s) logged. Rows are never edited or deleted, even when the
+        underlying finding is re-created on a later scan.
+      </p>
+      {results.map((r) => (
+        <div key={r.id} className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-white">
+          <div className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${r.outcome === 'SUCCESS' ? 'bg-green-500' : 'bg-red-500'}`} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-gray-800">{REMEDIATION_ACTION_LABEL[r.action] ?? r.action}</span>
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${r.outcome === 'SUCCESS' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                {r.outcome}
+              </span>
+              <span className="text-[10px] text-gray-400">by {r.actor}</span>
+              <span className="text-[10px] text-gray-400">· {new Date(r.createdAt).toLocaleString()}</span>
+            </div>
+            {r.message && <p className="text-xs text-gray-600 mt-1">{r.message}</p>}
+            {(r.beforeState !== null && r.beforeState !== undefined) && (
+              <details className="mt-1.5">
+                <summary className="text-[10px] text-indigo-600 cursor-pointer select-none">View before / after state</summary>
+                <div className="grid grid-cols-2 gap-2 mt-1.5">
+                  <pre className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg p-2 overflow-x-auto max-h-40">{JSON.stringify(r.beforeState, null, 2)}</pre>
+                  <pre className="text-[10px] bg-gray-50 border border-gray-100 rounded-lg p-2 overflow-x-auto max-h-40">{JSON.stringify(r.afterState, null, 2)}</pre>
+                </div>
+              </details>
+            )}
+          </div>
+        </div>
+      ))}
+      {data && data.total > 25 && (
+        <div className="flex items-center justify-center gap-2 pt-2">
+          <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}
+            className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            ← Prev
+          </button>
+          <span className="text-xs text-gray-400">Page {page}</span>
+          <button disabled={page * 25 >= data.total} onClick={() => setPage((p) => p + 1)}
+            className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            Next →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -822,7 +1032,7 @@ function ApprovalQueueModal({ onClose }: { onClose: () => void }) {
 // ─── Baseline Detail Panel ────────────────────────────────────────────────────
 function BaselineDetail({ baseline, onBack }: { baseline: BaselineSummary; onBack: () => void }) {
   const qc = useQueryClient();
-  const [activeTab, setActiveTab]   = useState<'drift' | 'history'>('drift');
+  const [activeTab, setActiveTab]   = useState<'drift' | 'history' | 'remediation'>('drift');
   const [showRefresh, setShowRefresh] = useState(false);
   const [refreshEmail, setRefreshEmail] = useState('');
   const [refreshNotes, setRefreshNotes] = useState('');
@@ -865,7 +1075,6 @@ function BaselineDetail({ baseline, onBack }: { baseline: BaselineSummary; onBac
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Detail header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-start gap-4">
           <button onClick={onBack} className="mt-1 p-1.5 hover:bg-gray-100 rounded-lg transition-colors shrink-0">
@@ -901,7 +1110,6 @@ function BaselineDetail({ baseline, onBack }: { baseline: BaselineSummary; onBac
           </div>
         </div>
 
-        {/* Drift severity bar */}
         {baseline.openDrift > 0 && (
           <div className="flex items-center gap-3 mt-3 ml-10">
             <div className="flex-1 flex h-1.5 rounded-full overflow-hidden bg-gray-100 max-w-xs">
@@ -916,7 +1124,6 @@ function BaselineDetail({ baseline, onBack }: { baseline: BaselineSummary; onBac
           </div>
         )}
 
-        {/* Refresh form */}
         {showRefresh && (
           <div className="ml-10 mt-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
             <p className="text-xs font-semibold text-amber-800 mb-3 flex items-center gap-1.5">
@@ -961,12 +1168,12 @@ function BaselineDetail({ baseline, onBack }: { baseline: BaselineSummary; onBac
         )}
       </div>
 
-      {/* Tabs */}
       <div className="bg-white border-b border-gray-200 px-6">
         <div className="flex gap-0">
           {[
-            { key: 'drift',   label: 'Drift Results', icon: Activity },
-            { key: 'history', label: 'Version History', icon: History },
+            { key: 'drift',       label: 'Drift Results', icon: Activity },
+            { key: 'history',     label: 'Version History', icon: History },
+            { key: 'remediation', label: 'Remediation Log', icon: BookOpen },
           ].map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setActiveTab(key as typeof activeTab)}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -977,10 +1184,10 @@ function BaselineDetail({ baseline, onBack }: { baseline: BaselineSummary; onBac
         </div>
       </div>
 
-      {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {activeTab === 'drift'   && <DriftTable baselineId={baseline.id} />}
-        {activeTab === 'history' && <VersionHistory baselineId={baseline.id} currentVersion={baseline.currentVersion} />}
+        {activeTab === 'drift'       && <DriftTable baselineId={baseline.id} />}
+        {activeTab === 'history'     && <VersionHistory baselineId={baseline.id} currentVersion={baseline.currentVersion} />}
+        {activeTab === 'remediation' && <RemediationLogPanel baselineId={baseline.id} />}
       </div>
     </div>
   );
@@ -1055,6 +1262,7 @@ function CreateBaselineModal({ onClose }: { onClose: () => void }) {
   const [description, setDescription]     = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [nameSearch, setNameSearch]       = useState('');
+  const [region, setRegion]               = useState('');
   const [typeSearch, setTypeSearch]       = useState('');
   const [reqEmail, setReqEmail]           = useState('');
   const [reqName]                         = useState('');
@@ -1081,6 +1289,21 @@ function CreateBaselineModal({ onClose }: { onClose: () => void }) {
   const filteredTypes = useMemo(() => typeSearch ? allTypes.filter((t) => t.toLowerCase().includes(typeSearch.toLowerCase())) : allTypes, [allTypes, typeSearch]);
   const allSelected   = selectedTypes.length === allTypes.length && allTypes.length > 0;
 
+  const { data: nameResources } = useQuery({
+    queryKey: ['inv-names-baseline', provider, targetId, selectedTypes[0]],
+    queryFn:  () => resourceInventoryApi.list({
+      provider, targetId,
+      resourceType: selectedTypes.length === 1 ? selectedTypes[0] : undefined,
+      pageSize: 200,
+    }),
+    enabled:  !!targetId,
+    select:   (d) => d.data ?? [],
+  });
+  const nameSuggestions = useMemo(
+    () => Array.from(new Set((nameResources ?? []).map((r) => r.resourceName).filter(Boolean))).sort(),
+    [nameResources],
+  );
+
   function toggleType(t: string) { setSelectedTypes((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t]); }
 
   const createMut = useMutation({
@@ -1089,6 +1312,7 @@ function CreateBaselineModal({ onClose }: { onClose: () => void }) {
       description: description || undefined,
       resourceTypes: selectedTypes.length > 0 && !allSelected ? selectedTypes : undefined,
       nameSearch: nameSearch || undefined,
+      region: region || undefined,
       requestedBy: reqEmail || undefined, requestedByName: reqName || undefined,
       notes: notes || undefined, immediate,
     }),
@@ -1155,7 +1379,11 @@ function CreateBaselineModal({ onClose }: { onClose: () => void }) {
               <select className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:outline-none"
                 value={targetId} onChange={(e) => { setTargetId(e.target.value); setSelectedTypes([]); }}>
                 <option value="">— Select account —</option>
-                {subscriptions.map((s) => <option key={s.id} value={s.nativeId}>{s.label}</option>)}
+                {/* value must be the internal Account/Subscription/Project id — that's
+                    what ResourceInventory rows and ConfigBaseline.targetId are keyed by
+                    (see resourceInventory.ts buildWhere / baselineService.captureBaseline),
+                    NOT the cloud-native account number shown in the label. */}
+                {subscriptions.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </div>
 
@@ -1204,10 +1432,26 @@ function CreateBaselineModal({ onClose }: { onClose: () => void }) {
                   <div className="relative">
                     <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input className="w-full border border-gray-200 rounded-xl pl-9 pr-9 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:outline-none"
+                      list="baseline-name-suggestions"
                       value={nameSearch} onChange={(e) => setNameSearch(e.target.value)} placeholder="e.g. prod-, my-bucket" />
+                    <datalist id="baseline-name-suggestions">
+                      {nameSuggestions.map((n) => <option key={n} value={n} />)}
+                    </datalist>
                     {nameSearch && <button onClick={() => setNameSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={13} className="text-gray-400" /></button>}
                   </div>
-                  <p className="text-[10px] text-gray-400 mt-1">Only resources whose name contains this text will be included.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Only resources whose name contains this text will be included.
+                    {selectedTypes.length === 1 && nameSuggestions.length > 0 && ` ${nameSuggestions.length} real resource name(s) suggested from AWS.`}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Region <span className="text-gray-400 font-normal normal-case">(optional)</span></label>
+                  <div className="relative">
+                    <input className="w-full border border-gray-200 rounded-xl px-3 pr-9 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:outline-none"
+                      value={region} onChange={(e) => setRegion(e.target.value)} placeholder="e.g. us-east-1" />
+                    {region && <button onClick={() => setRegion('')} className="absolute right-3 top-1/2 -translate-y-1/2"><X size={13} className="text-gray-400" /></button>}
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1">Scope this baseline to a single region — reapplied on every refresh and drift scan.</p>
                 </div>
               </div>
             )}
@@ -1243,7 +1487,7 @@ function CreateBaselineModal({ onClose }: { onClose: () => void }) {
             <div className="flex gap-3 pt-1">
               <button onClick={() => createMut.mutate()} disabled={!name || !targetId || createMut.isPending}
                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-                {createMut.isPending ? 'Submitting…' : reqEmail && !immediate ? '⏳ Submit for Approval' : '⚡ Capture Baseline Now'}
+                {createMut.isPending ? 'Submitting…' : reqEmail && !immediate ? '⏳ Submit for Approval' : 'Capture Baseline Now'}
               </button>
               <button onClick={onClose} className="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-semibold transition-colors">Cancel</button>
             </div>
@@ -1291,7 +1535,6 @@ export default function BaselineDrift() {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Top bar */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1304,7 +1547,6 @@ export default function BaselineDrift() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {/* Stats */}
             <div className="hidden lg:flex items-center gap-4 mr-2">
               <div className="text-center">
                 <p className="text-xl font-bold text-gray-900">{baselines.length}</p>
@@ -1338,11 +1580,8 @@ export default function BaselineDrift() {
         </div>
       </div>
 
-      {/* Split panel layout */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left sidebar — baseline list */}
         <div className="w-80 shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col overflow-hidden">
-          {/* Filter */}
           <div className="p-3 border-b border-gray-200 bg-white">
             <div className="flex gap-1">
               {['', 'AWS', 'AZURE', 'GCP'].map((p) => (
@@ -1354,7 +1593,6 @@ export default function BaselineDrift() {
             </div>
           </div>
 
-          {/* List */}
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
               <div className="p-4 space-y-3">
@@ -1411,7 +1649,6 @@ export default function BaselineDrift() {
         )}
       </div>
 
-      {/* Modals */}
       {showCreate    && <CreateBaselineModal onClose={() => setShowCreate(false)} />}
       {showApprovals && <ApprovalQueueModal  onClose={() => setShowApprovals(false)} />}
     </div>

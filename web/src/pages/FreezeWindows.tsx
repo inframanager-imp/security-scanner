@@ -108,7 +108,6 @@ function FreezeForm({
 
   return (
     <div className="space-y-5">
-      {/* Name */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
         <input
@@ -119,7 +118,6 @@ function FreezeForm({
         />
       </div>
 
-      {/* Mode toggle */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
         <div className="flex gap-2">
@@ -142,7 +140,6 @@ function FreezeForm({
 
       {form.mode === 'recurring' ? (
         <div className="space-y-4">
-          {/* Days of week */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Days (empty = every day)
@@ -165,7 +162,6 @@ function FreezeForm({
             </div>
           </div>
 
-          {/* Time range */}
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Start Time</label>
@@ -223,7 +219,6 @@ function FreezeForm({
         </div>
       )}
 
-      {/* Scope */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Providers (empty = all)</label>
@@ -428,7 +423,6 @@ export default function FreezeWindows() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-indigo-50 rounded-xl">
@@ -447,7 +441,6 @@ export default function FreezeWindows() {
         </button>
       </div>
 
-      {/* Info bar */}
       <div className="flex items-start gap-2 bg-indigo-50 border border-indigo-100 rounded-lg p-3 mb-6 text-sm text-indigo-800">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
         <p>
@@ -456,7 +449,6 @@ export default function FreezeWindows() {
         </p>
       </div>
 
-      {/* Stats */}
       {windows.length > 0 && (
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
@@ -474,7 +466,6 @@ export default function FreezeWindows() {
         </div>
       )}
 
-      {/* Create form */}
       {showForm && !editingId && (
         <div className="bg-white rounded-xl border border-indigo-200 shadow-sm p-6 mb-6">
           <h2 className="text-sm font-semibold text-gray-800 mb-4">New Freeze Window</h2>
@@ -486,7 +477,6 @@ export default function FreezeWindows() {
         </div>
       )}
 
-      {/* Edit form */}
       {editingId && editInitial && (
         <div className="bg-white rounded-xl border border-amber-200 shadow-sm p-6 mb-6">
           <h2 className="text-sm font-semibold text-gray-800 mb-4">Edit Freeze Window</h2>
@@ -499,7 +489,6 @@ export default function FreezeWindows() {
         </div>
       )}
 
-      {/* Window list */}
       {isLoading ? (
         <div className="text-center py-12 text-gray-500">Loading freeze windows…</div>
       ) : windows.length === 0 ? (

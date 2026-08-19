@@ -1,8 +1,6 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   DescribeClustersCommand,
   DescribeLoggingStatusCommand,
-  DescribeClusterParametersCommand,
   type Cluster,
 } from '@aws-sdk/client-redshift';
 import { BaseScanner, ScannerOptions } from './baseScanner';
@@ -149,88 +147,7 @@ export class RedshiftScanner extends BaseScanner {
       ));
     }
 
-    // 8. redshift_cluster_automatic_upgrades
-    if (!cluster.AllowVersionUpgrade) {
-      findings.push(this.emit(
-        'redshift_cluster_automatic_upgrades',
-        { resourceId: `${arn}::version-upgrade`, clusterId: id, allowVersionUpgrade: false },
-        {
-          message: `Redshift cluster "${id}" has AllowVersionUpgrade disabled, so engine patches are not applied automatically.`,
-          remediation: `Enable version upgrades: aws redshift modify-cluster --cluster-identifier ${id} --allow-version-upgrade`,
-        }
-      ));
-    }
-
-    // 9. redshift_cluster_in_transit_encryption_enabled (require_ssl cluster parameter)
-    const requireSsl = await this.getRequireSsl(cluster);
-    if (requireSsl === false) {
-      findings.push(this.emit(
-        'redshift_cluster_in_transit_encryption_enabled',
-        { resourceId: `${arn}::require-ssl`, clusterId: id, requireSsl: false },
-        {
-          message: `Redshift cluster "${id}" is not encrypted in transit: the require_ssl parameter is not set to true, so clients may connect without TLS.`,
-          remediation: `Set require_ssl=true in the cluster's parameter group and reboot cluster "${id}" to apply.`,
-        }
-      ));
-    }
-
-    // 10. redshift_cluster_multi_az_enabled
-    if (cluster.MultiAZ !== 'Enabled') {
-      findings.push(this.emit(
-        'redshift_cluster_multi_az_enabled',
-        { resourceId: `${arn}::multi-az`, clusterId: id, multiAz: cluster.MultiAZ ?? null },
-        {
-          message: `Redshift cluster "${id}" does not have Multi-AZ enabled; an Availability Zone failure will take the cluster offline.`,
-          remediation: `Enable Multi-AZ: aws redshift modify-cluster --cluster-identifier ${id} --multi-az (provisioned RA3 clusters)`,
-        }
-      ));
-    }
-
-    // 11. redshift_cluster_non_default_database_name
-    if (cluster.DBName === 'dev') {
-      findings.push(this.emit(
-        'redshift_cluster_non_default_database_name',
-        { resourceId: `${arn}::db-name`, clusterId: id, databaseName: cluster.DBName },
-        {
-          message: `Redshift cluster "${id}" has the default database name: dev. Predictable names aid enumeration and mis-scoped policies.`,
-        }
-      ));
-    }
-
     return findings;
-  }
-
-  /**
-   * Resolve the require_ssl parameter of the cluster's parameter group.
-   * Returns null when the parameters cannot be read (no permission / no group)
-   * so the in-transit encryption check is skipped instead of emitting a false positive.
-   */
-  private async getRequireSsl(cluster: Cluster): Promise<boolean | null> {
-    const parameterGroupName = cluster.ClusterParameterGroups?.[0]?.ParameterGroupName;
-    if (!parameterGroupName) return null;
-    try {
-      let requireSsl = false;
-      let marker: string | undefined;
-      do {
-        const result = await retry(() =>
-          this.client.redshift.send(new DescribeClusterParametersCommand({
-            ParameterGroupName: parameterGroupName,
-            Marker: marker,
-            MaxRecords: 100,
-          }))
-        );
-        for (const parameter of result.Parameters ?? []) {
-          if ((parameter.ParameterName ?? '').toLowerCase() === 'require_ssl') {
-            requireSsl = (parameter.ParameterValue ?? '').toLowerCase() === 'true';
-          }
-        }
-        marker = result.Marker;
-      } while (marker);
-      return requireSsl;
-    } catch (error) {
-      logger.debug(`Failed to describe parameters for Redshift parameter group ${parameterGroupName}`, { error: (error as Error).message });
-      return null;
-    }
   }
 }
 

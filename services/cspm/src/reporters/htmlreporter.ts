@@ -29,14 +29,6 @@ export class HTMLReporter {
       INFO: '#6c757d'
     };
 
-    const severityEmoji: Record<string, string> = {
-      CRITICAL: '🔴',
-      HIGH: '🟠',
-      MEDIUM: '🟡',
-      LOW: '🔵',
-      INFO: '⚪'
-    };
-
     const chartData = JSON.stringify({
       labels: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'],
       datasets: [{
@@ -71,7 +63,7 @@ export class HTMLReporter {
       .map(f => `
         <tr>
           <td style="color: ${severityColors[f.severity]}; font-weight: bold;">
-            ${severityEmoji[f.severity]} ${f.severity}
+            ${f.severity}
           </td>
           <td>${f.service}</td>
           <td>${f.title}</td>
@@ -252,7 +244,7 @@ export class HTMLReporter {
 <body>
   <div class="container">
     <header>
-      <h1>🔒 AWS Security Scanner Report</h1>
+      <h1>AWS Security Scanner Report</h1>
       <p>Comprehensive security and compliance analysis</p>
       <div class="info-grid">
         <div class="info-item">
@@ -332,7 +324,7 @@ export class HTMLReporter {
       <div class="findings-container">
         <h2>Scan Results</h2>
         <p style="padding: 20px; text-align: center; color: #28a745;">
-          ✅ No findings - your AWS environment is secure!
+          No findings - your AWS environment is secure!
         </p>
       </div>
     `}

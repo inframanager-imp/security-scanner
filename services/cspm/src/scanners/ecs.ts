@@ -1,7 +1,5 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   ListClustersCommand,
-  DescribeClustersCommand,
   ListTaskDefinitionsCommand,
   DescribeTaskDefinitionCommand,
   ListServicesCommand,
@@ -24,10 +22,6 @@ const SECRET_ENV_PATTERNS = [
 function isSecretEnvVar(name: string): boolean {
   return SECRET_ENV_PATTERNS.some(p => p.test(name));
 }
-
-// Latest Fargate platform versions (mirrors Prowler's fargate_*_latest_version defaults)
-const LATEST_FARGATE_LINUX_VERSION   = '1.4.0';
-const LATEST_FARGATE_WINDOWS_VERSION = '1.0.0';
 
 export class ECSScanner extends BaseScanner {
   constructor(client: AWSClient) {
@@ -97,9 +91,6 @@ export class ECSScanner extends BaseScanner {
     const family      = taskDef.family         ?? arn.split('/').pop() ?? arn;
     const networkMode = taskDef.networkMode     ?? 'bridge';
     const containers  = taskDef.containerDefinitions ?? [];
-    const taskDefArn  = taskDef.taskDefinitionArn ?? arn;
-    const revision    = taskDef.revision != null ? String(taskDef.revision) : (arn.split(':').pop() ?? '');
-    const familyRev   = `${family}:${revision}`;
 
     // 1. Host network mode (bypasses VPC isolation)
     if (networkMode === 'host') {
@@ -109,68 +100,6 @@ export class ECSScanner extends BaseScanner {
         {
           message: `ECS task definition "${family}" uses "host" network mode. ` +
             `Containers share the host's network namespace, bypassing VPC isolation and allowing access to all host network interfaces.`,
-        }
-      ));
-    }
-
-    // 2. Host PID namespace shared with containers
-    if (taskDef.pidMode === 'host') {
-      findings.push(this.emit(
-        'ecs_task_definitions_host_namespace_not_shared',
-        { resourceId: `${taskDefArn}::pid-mode`, family, revision, pidMode: 'host' },
-        {
-          message: `ECS task definition "${familyRev}" shares the host's process namespace with its containers (pidMode: host). ` +
-            `Containers can enumerate, signal, and ptrace host processes, breaking container isolation.`,
-        }
-      ));
-    }
-
-    // 3. Host network mode with non-privileged containers running as root
-    if (networkMode === 'host') {
-      const rootContainers = containers
-        .filter(c => !c.privileged && ((c.user ?? '') === '' || c.user === 'root'))
-        .map(c => c.name ?? 'unknown');
-      if (rootContainers.length > 0) {
-        findings.push(this.emit(
-          'ecs_task_definitions_host_networking_mode_users',
-          { resourceId: `${taskDefArn}::host-mode-users`, family, revision, containers: rootContainers },
-          {
-            message: `ECS task definition "${familyRev}" uses host network mode with non-privileged container(s) running as root or with no user set: ` +
-              `${rootContainers.join(', ')}. Root containers on the host network can bind low ports, sniff traffic, and impersonate host services.`,
-          }
-        ));
-      }
-    }
-
-    // 4. Container logging: missing log driver / blocking log mode
-    const unloggedContainers: string[] = [];
-    const blockingContainers: string[] = [];
-    for (const c of containers) {
-      const logConfig: any = c.logConfiguration;
-      if (!logConfig?.logDriver) {
-        unloggedContainers.push(c.name ?? 'unknown');
-      } else if ((logConfig.options?.mode ?? '') !== 'non-blocking') {
-        blockingContainers.push(c.name ?? 'unknown');
-      }
-    }
-    if (unloggedContainers.length > 0) {
-      findings.push(this.emit(
-        'ecs_task_definitions_logging_enabled',
-        { resourceId: `${taskDefArn}::no-logging`, family, revision, containers: unloggedContainers },
-        {
-          message: `ECS task definition "${familyRev}" has container(s) with no logging configuration: ${unloggedContainers.join(', ')}. ` +
-            `Without container logs, intrusions and tampering go undetected and forensics is impossible.`,
-        }
-      ));
-    }
-    if (blockingContainers.length > 0) {
-      findings.push(this.emit(
-        'ecs_task_definitions_logging_block_mode',
-        { resourceId: `${taskDefArn}::blocking-log-mode`, family, revision, containers: blockingContainers },
-        {
-          message: `ECS task definition "${familyRev}" has container(s) logging in blocking mode: ${blockingContainers.join(', ')}. ` +
-            `If the log destination stalls, writes to stdout/stderr block and the container becomes unresponsive.`,
-          remediation: `Set "mode": "non-blocking" (with an appropriate max-buffer-size) in the logConfiguration options of containers ${blockingContainers.join(', ')} in task definition "${family}".`,
         }
       ));
     }
@@ -270,12 +199,7 @@ export class ECSScanner extends BaseScanner {
       clusterArns = result.clusterArns ?? [];
     } catch { return findings; }
 
-    const clusters = clusterArns.slice(0, 10);
-
-    // ecs_cluster_container_insights_enabled (cluster-level settings)
-    findings.push(...(await this.scanClusterSettings(clusters)));
-
-    for (const clusterArn of clusters) {
+    for (const clusterArn of clusterArns.slice(0, 10)) {
       try {
         let nextToken: string | undefined;
         const serviceArns: string[] = [];
@@ -317,106 +241,9 @@ export class ECSScanner extends BaseScanner {
                 }
               ));
             }
-
-            // ecs_service_no_assign_public_ip: tasks must not get public IPs automatically
-            const assignPublicIp = svc.networkConfiguration?.awsvpcConfiguration?.assignPublicIp ?? 'DISABLED';
-            if (assignPublicIp === 'ENABLED') {
-              findings.push(this.emit(
-                'ecs_service_no_assign_public_ip',
-                {
-                  resourceId:  `${svc.serviceArn}::public-ip`,
-                  serviceName: svcName,
-                  clusterName,
-                  serviceArn:  svc.serviceArn,
-                },
-                {
-                  message: `ECS service "${svcName}" in cluster "${clusterName}" automatically assigns public IPs to its tasks, ` +
-                    `making them directly reachable from the internet for scanning, brute force, and exploitation.`,
-                  remediation: `Disable public IP assignment: aws ecs update-service --cluster ${clusterName} --service ${svcName} --network-configuration "awsvpcConfiguration={subnets=[...],assignPublicIp=DISABLED}" and expose the service through a load balancer instead.`,
-                }
-              ));
-            }
-
-            // ecs_service_fargate_latest_platform_version
-            if (svc.launchType === 'FARGATE') {
-              // platformFamily is e.g. "LINUX" or "WINDOWS_SERVER_2019_CORE"
-              const platformFamily  = svc.platformFamily ?? 'LINUX';
-              const latestVersion   = platformFamily.toUpperCase().includes('WINDOWS')
-                ? LATEST_FARGATE_WINDOWS_VERSION
-                : LATEST_FARGATE_LINUX_VERSION;
-              const platformVersion = svc.platformVersion ?? '';
-              if (platformVersion !== 'LATEST' && platformVersion !== latestVersion) {
-                findings.push(this.emit(
-                  'ecs_service_fargate_latest_platform_version',
-                  {
-                    resourceId:  `${svc.serviceArn}::platform-version`,
-                    serviceName: svcName,
-                    clusterName,
-                    platformFamily,
-                    platformVersion,
-                  },
-                  {
-                    message: `ECS Fargate service "${svcName}" in cluster "${clusterName}" uses ${platformFamily} platform version ` +
-                      `${platformVersion || 'unknown'} instead of the latest (${latestVersion}). Outdated platform versions miss kernel and runtime security patches.`,
-                    remediation: `Update the service to the latest platform version: aws ecs update-service --cluster ${clusterName} --service ${svcName} --platform-version LATEST`,
-                  }
-                ));
-              }
-            }
-
-            // ecs_task_set_no_assign_public_ip: task sets must not get public IPs automatically
-            for (const taskSet of svc.taskSets ?? []) {
-              const tsAssignPublicIp = taskSet.networkConfiguration?.awsvpcConfiguration?.assignPublicIp ?? 'DISABLED';
-              if (tsAssignPublicIp === 'ENABLED') {
-                findings.push(this.emit(
-                  'ecs_task_set_no_assign_public_ip',
-                  {
-                    resourceId:  `${taskSet.taskSetArn}::public-ip`,
-                    taskSetId:   taskSet.id,
-                    serviceName: svcName,
-                    clusterName,
-                  },
-                  {
-                    message: `ECS task set "${taskSet.id}" of service "${svcName}" in cluster "${clusterName}" automatically assigns ` +
-                      `public IPs to its tasks, making them directly reachable from the internet.`,
-                  }
-                ));
-              }
-            }
           }
         }
       } catch { /* no permission for this cluster */ }
-    }
-
-    return findings;
-  }
-
-  /** ecs_cluster_container_insights_enabled — Container Insights must be enabled or enhanced. */
-  private async scanClusterSettings(clusterArns: string[]): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-    if (clusterArns.length === 0) return findings;
-
-    try {
-      const result = await retry(() =>
-        this.client.ecs.send(new DescribeClustersCommand({ clusters: clusterArns, include: ['SETTINGS'] }))
-      );
-      for (const cluster of result.clusters ?? []) {
-        const clusterName = cluster.clusterName ?? cluster.clusterArn ?? 'Unknown';
-        const insights = (cluster.settings ?? []).find(s => s.name === 'containerInsights')?.value ?? 'disabled';
-        if (insights !== 'enabled' && insights !== 'enhanced') {
-          findings.push(this.emit(
-            'ecs_cluster_container_insights_enabled',
-            { resourceId: `${cluster.clusterArn}::container-insights`, clusterName, containerInsights: insights },
-            {
-              message: `ECS cluster "${clusterName}" does not have Container Insights enabled. ` +
-                `Without cluster, service, and task telemetry, failures, restart loops, and abuse (e.g. cryptomining) go undetected.`,
-              remediation: `Enable Container Insights: aws ecs update-cluster-settings --cluster ${clusterName} --settings name=containerInsights,value=enabled`,
-            }
-          ));
-        }
-      }
-    } catch (err) {
-      logger.debug('ECS: failed to describe cluster settings', { error: (err as Error).message });
     }
 
     return findings;

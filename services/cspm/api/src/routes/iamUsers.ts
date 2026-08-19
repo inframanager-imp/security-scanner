@@ -77,11 +77,6 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Findings dedupe against existing OPEN/ACKNOWLEDGED ones across scans
-    // (see workers/scanWorker.ts) — an unchanged user's inventory record
-    // keeps pointing at whichever scan first created it, not necessarily
-    // the latest one. Query by account + OPEN status, not scanId, so a
-    // user whose profile hasn't changed since an earlier scan still shows up.
     const findings = await prisma.finding.findMany({
       where: {
         scan:          { accountId },

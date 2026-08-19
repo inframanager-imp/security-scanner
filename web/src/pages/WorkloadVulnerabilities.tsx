@@ -76,13 +76,35 @@ export function WorkloadVulnerabilities() {
   });
   const rows = vulnsResp?.data ?? [];
 
+  const [scanStatusMsg, setScanStatusMsg] = useState<string | null>(null);
   const scanMutation = useMutation({
     mutationFn: () => cwppApi.scan(provider, accountId),
     onSuccess: () => {
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['cwpp-vulns'] });
-        queryClient.invalidateQueries({ queryKey: ['cwpp-stats'] });
-      }, 8000);
+      setScanStatusMsg('Scan queued — waiting for results…');
+      const MAX_ATTEMPTS = 10;
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        await queryClient.invalidateQueries({ queryKey: ['cwpp-stats'] });
+        await queryClient.invalidateQueries({ queryKey: ['cwpp-vulns'] });
+        const fresh = await queryClient.fetchQuery({
+          queryKey: ['cwpp-stats', provider, accountId],
+          queryFn: () => cwppApi.stats(provider, accountId),
+        }).catch(() => null);
+        if (attempts >= MAX_ATTEMPTS) {
+          clearInterval(poll);
+          setScanStatusMsg(
+            fresh
+              ? `Scan complete — ${fresh.openTotal ?? 0} open vulnerabilit${(fresh.openTotal ?? 0) === 1 ? 'y' : 'ies'} found across ${fresh.hostsAffected ?? 0} host(s).`
+              : 'Scan may still be running — refresh to check for results.'
+          );
+          setTimeout(() => setScanStatusMsg(null), 8000);
+        }
+      }, 2000);
+    },
+    onError: (err: any) => {
+      setScanStatusMsg(`Scan failed: ${err?.message ?? 'unknown error'}`);
+      setTimeout(() => setScanStatusMsg(null), 8000);
     },
   });
 
@@ -107,10 +129,15 @@ export function WorkloadVulnerabilities() {
             Agentless CWPP: OS packages and CVEs across VMs / instances.
           </p>
         </div>
-        <Button variant="primary" onClick={() => scanMutation.mutate()} disabled={!accountId || scanMutation.isPending}>
-          <RefreshCw size={14} className={scanMutation.isPending ? 'animate-spin' : ''} />
-          {scanMutation.isPending ? 'Scanning…' : 'Run CWPP scan'}
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button variant="primary" onClick={() => scanMutation.mutate()} disabled={!accountId || scanMutation.isPending}>
+            <RefreshCw size={14} className={scanMutation.isPending ? 'animate-spin' : ''} />
+            {scanMutation.isPending ? 'Scanning…' : 'Run CWPP scan'}
+          </Button>
+          {scanStatusMsg && (
+            <div className="text-xs text-gray-500 max-w-xs text-right">{scanStatusMsg}</div>
+          )}
+        </div>
       </div>
 
       <Card>
@@ -156,6 +183,12 @@ export function WorkloadVulnerabilities() {
           </div>
         </div>
       </Card>
+
+      {stats?.infoMessage && (
+        <div className="rounded border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2">
+          {stats.infoMessage}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((sev) => {

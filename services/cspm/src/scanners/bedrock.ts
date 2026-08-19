@@ -8,7 +8,6 @@ import {
 import {
   BedrockAgentClient,
   ListAgentsCommand,
-  GetAgentCommand,
   ListPromptsCommand,
   GetPromptCommand,
 } from '@aws-sdk/client-bedrock-agent';
@@ -18,12 +17,9 @@ import {
   ListServiceSpecificCredentialsCommand,
   ListAttachedUserPoliciesCommand,
   ListUserPoliciesCommand,
-  ListAttachedRolePoliciesCommand,
-  ListRolePoliciesCommand,
   GetPolicyCommand,
   GetPolicyVersionCommand,
   GetUserPolicyCommand,
-  GetRolePolicyCommand,
   ListEntitiesForPolicyCommand,
   GetRoleCommand,
 } from '@aws-sdk/client-iam';
@@ -305,126 +301,9 @@ export class BedrockScanner extends BaseScanner {
           }
         ));
       }
-
-      try {
-        await this.checkAgentRoleLeastPrivilege(agent, findings);
-      } catch (error) {
-        logger.debug(`Failed to evaluate execution role of Bedrock agent ${agentName}`, { error: (error as Error).message });
-      }
     }
 
     return agents.length;
-  }
-
-  /**
-   * bedrock_agent_role_least_privilege: the agent execution role must have no
-   * AWS-managed *FullAccess policy, no policy granting administrative access,
-   * and a permissions boundary configured. Ported from Prowler (simplified:
-   * wildcard-based admin detection, no privilege escalation combination tables).
-   */
-  private async checkAgentRoleLeastPrivilege(agent: any, findings: ScanningResult[]): Promise<void> {
-    const agentName: string = agent?.agentName ?? agent?.agentId ?? '';
-
-    const detail: any = await retry(async () => {
-      return await this.bedrockAgent.send(new GetAgentCommand({ agentId: agent?.agentId }));
-    });
-    const roleArn: string | undefined = detail?.agent?.agentResourceRoleArn;
-    const roleName: string = roleArn ? (roleArn.split('/').pop() ?? '') : '';
-
-    let role: any = null;
-    if (roleName) {
-      try {
-        const result: any = await retry(async () => {
-          return await this.iam.send(new GetRoleCommand({ RoleName: roleName }));
-        });
-        role = result?.Role ?? null;
-      } catch (error) {
-        logger.debug(`Failed to get IAM role ${roleName} for Bedrock agent ${agentName}`, { error: (error as Error).message });
-      }
-    }
-
-    // Prowler fails agents whose execution role cannot be resolved in IAM
-    if (!role) {
-      findings.push(this.emit(
-        'bedrock_agent_role_least_privilege',
-        { agent: agentName, agentId: agent?.agentId, roleArn: roleArn ?? null, roleResolved: false },
-        {
-          message: `Bedrock agent "${agentName}" execution role could not be resolved in IAM and cannot be evaluated for least privilege`,
-        }
-      ));
-      return;
-    }
-
-    const violations: string[] = [];
-
-    // Attached managed policies
-    let marker: string | undefined;
-    do {
-      const result: any = await retry(async () => {
-        return await this.iam.send(new ListAttachedRolePoliciesCommand({ RoleName: roleName, Marker: marker }));
-      });
-      for (const attached of result?.AttachedPolicies ?? []) {
-        const policyArn: string = attached?.PolicyArn ?? '';
-        const policyName: string = attached?.PolicyName ?? policyArn;
-        if (policyArn.startsWith('arn:aws:iam::aws:policy/') && policyArn.endsWith('FullAccess')) {
-          violations.push(`managed policy ${policyName} grants full access`);
-          continue;
-        }
-        try {
-          const policy: any = await retry(async () => {
-            return await this.iam.send(new GetPolicyCommand({ PolicyArn: policyArn }));
-          });
-          const versionId: string | undefined = policy?.Policy?.DefaultVersionId;
-          if (!versionId) continue;
-          const version: any = await retry(async () => {
-            return await this.iam.send(new GetPolicyVersionCommand({ PolicyArn: policyArn, VersionId: versionId }));
-          });
-          const document = this.parsePolicyDocument(version?.PolicyVersion?.Document);
-          if (document && this.policyGrantsAdminAccess(document)) {
-            violations.push(`managed policy ${policyName} grants administrative access`);
-          }
-        } catch (error) {
-          logger.debug(`Failed to evaluate attached policy ${policyArn} of role ${roleName}`, { error: (error as Error).message });
-        }
-      }
-      marker = result?.IsTruncated ? result?.Marker : undefined;
-    } while (marker);
-
-    // Inline policies
-    marker = undefined;
-    do {
-      const result: any = await retry(async () => {
-        return await this.iam.send(new ListRolePoliciesCommand({ RoleName: roleName, Marker: marker }));
-      });
-      for (const inlineName of result?.PolicyNames ?? []) {
-        try {
-          const inline: any = await retry(async () => {
-            return await this.iam.send(new GetRolePolicyCommand({ RoleName: roleName, PolicyName: inlineName }));
-          });
-          const document = this.parsePolicyDocument(inline?.PolicyDocument);
-          if (document && this.policyGrantsAdminAccess(document)) {
-            violations.push(`inline policy ${inlineName} grants administrative access`);
-          }
-        } catch (error) {
-          logger.debug(`Failed to evaluate inline policy ${inlineName} of role ${roleName}`, { error: (error as Error).message });
-        }
-      }
-      marker = result?.IsTruncated ? result?.Marker : undefined;
-    } while (marker);
-
-    if (!role.PermissionsBoundary) {
-      violations.push('no permissions boundary configured');
-    }
-
-    if (violations.length > 0) {
-      findings.push(this.emit(
-        'bedrock_agent_role_least_privilege',
-        { agent: agentName, agentId: agent?.agentId, roleArn, role: roleName, violations },
-        {
-          message: `Bedrock agent "${agentName}" execution role violates least privilege: ${violations.join('; ')}`,
-        }
-      ));
-    }
   }
 
   // bedrock_prompt_encrypted_with_cmk
@@ -441,19 +320,6 @@ export class BedrockScanner extends BaseScanner {
       } while (nextToken);
     } catch (error) {
       logger.debug('Failed to list Bedrock prompts', { error: (error as Error).message });
-      return;
-    }
-
-    // bedrock_prompt_management_exists: region-level adoption signal, only
-    // evaluated when ListPrompts succeeded (mirrors Prowler's prompt_scanned_regions)
-    if (prompts.length === 0) {
-      findings.push(this.emit(
-        'bedrock_prompt_management_exists',
-        { region: this.region, promptCount: 0 },
-        {
-          message: `No Bedrock Prompt Management prompts exist in region ${this.region}`,
-        }
-      ));
       return;
     }
 
@@ -604,7 +470,7 @@ export class BedrockScanner extends BaseScanner {
           }
 
           // bedrock_api_key_no_administrative_privileges (evaluated once per user, reported per key)
-          const violation = await this.findUserPrivilegeViolation(userName);
+          const violation = await this.findUserPrivilegeViolation(userName, user?.Arn ?? '');
           if (violation) {
             for (const credential of credentials) {
               const credentialId: string = credential?.ServiceSpecificCredentialId ?? '';
@@ -633,7 +499,7 @@ export class BedrockScanner extends BaseScanner {
    * (simplified: wildcard-based detection, no action expansion or privilege
    * escalation combination tables).
    */
-  private async findUserPrivilegeViolation(userName: string): Promise<string | null> {
+  private async findUserPrivilegeViolation(userName: string, userArn: string): Promise<string | null> {
     // Attached managed policies
     let marker: string | undefined;
     do {

@@ -43,16 +43,6 @@ export const codebuildChecks: CheckMetadata[] = [
     tags: ['codebuild', 'webhook', 'ci-cd', 'supply-chain'],
   },
   {
-    checkId: 'codebuild_project_uses_allowed_github_organizations',
-    provider: 'aws',
-    service: 'codebuild',
-    title: 'CodeBuild Project Uses Unapproved GitHub Organization',
-    severity: 'HIGH',
-    description: 'Checks that GitHub-sourced CodeBuild projects whose service role trusts CodeBuild pull only from organizations on the approved allowlist; untrusted repositories can otherwise obtain AWS credentials through triggered builds.',
-    remediation: 'Restrict project sources to repositories under approved GitHub organizations and maintain an explicit allowlist; keep the CodeBuild service role least-privileged and require review for allowlist changes.',
-    tags: ['codebuild', 'ci-cd', 'supply-chain'],
-  },
-  {
     checkId: 'codebuild_project_logging_enabled',
     provider: 'aws',
     service: 'codebuild',

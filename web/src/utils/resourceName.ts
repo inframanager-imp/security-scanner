@@ -48,6 +48,71 @@ export function getResourceName(
     case 'vpc':
       return String(e.requirementId ?? e.sgId ?? e.vpcId ?? e.peeringConnectionId ?? '—');
 
+    case 'accessanalyzer':
+      return String(e.analyzer ?? e.arn ?? '—');
+
+    case 'codeartifact':
+      return String(e.domain ?? e.repository ?? '—');
+
+    case 'codecommit':
+      return String(e.repository ?? '—');
+
+    case 'config':
+      return String(e.recorder ?? e.region ?? 'Account-level');
+
+    case 'datapipeline':
+      return String(e.pipeline ?? e.pipelineId ?? '—');
+
+    case 'resourceexplorer2':
+      return String(e.region ?? 'Account-level');
+
+    case 'securityhub':
+      return String(e.region ?? 'Account-level');
+
+    case 'servicecatalog':
+      return String(e.portfolio ?? e.portfolioId ?? '—');
+
+    case 'shield':
+      return String(
+        e.loadBalancer ?? e.distributionId ?? e.accelerator ?? e.zone ?? e.publicIp ?? e.arn ?? '—',
+      );
+
+    case 'ssmincidents':
+      return String(e.region ?? 'Account-level');
+
+    case 'trustedadvisor':
+      return String(e.checkId ?? e.region ?? 'Account-level');
+
+    case 'wellarchitected':
+      return String(e.workload ?? e.workloadId ?? '—');
+
+    case 'gcp-apikeys':
+      return String(e.key ?? e.keyId ?? e.project ?? '—');
+
+    case 'gcp-dataproc':
+      return String(e.cluster ?? e.region ?? '—');
+
+    case 'gcp-dns':
+      return String(e.zone ?? e.dnsName ?? '—');
+
+    case 'gcp-gemini':
+      return String(e.project ?? 'Project-level');
+
+    case 'azure-appinsights':
+      return String(e.subscriptionId ?? 'Subscription-level');
+
+    case 'azure-databricks':
+      return String(e.workspace ?? e.workspaceId ?? '—');
+
+    case 'azure-defender':
+      return String(e.plan ?? e.contact ?? e.solution ?? e.resourceId ?? e.subscriptionId ?? 'Subscription-level');
+
+    case 'azure-monitor':
+      return String(e.settingName ?? e.alertRuleName ?? e.account ?? e.subscriptionId ?? 'Subscription-level');
+
+    case 'azure-policy':
+      return String(e.policyAssignment ?? e.id ?? '—');
+
     default: {
       // Fallback: try common generic keys
       for (const key of ['resourceId', 'resourceName', 'arn', 'name', 'id']) {

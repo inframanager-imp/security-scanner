@@ -175,11 +175,17 @@ export interface DriftResult {
   resourceName:    string | null;
   region:          string | null;
   driftedFields:   string[];
-  status:          'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'REVERTED';
+  controlDomain?:  string; // IAM | NETWORK | DATA_PROTECTION | LOGGING_MONITORING | WORKLOAD_HARDENING | OTHER
+  status:          'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'REVERTED' | 'SUPPRESSED' | 'CLOSED';
   firstDetectedAt: string;   // set once; never changes across re-scans
   detectedAt:      string;   // updated on every scan (last scan that saw this drift)
   acknowledgedAt:  string | null;
   resolvedAt:      string | null;
+  closedAt?:       string | null;
+  suppressedAt?:   string | null;
+  suppressedBy?:   string | null;
+  suppressionReason?:    string | null;
+  suppressionExpiresAt?: string | null;
   pendingRevert:   { id: string; status: string; requestedBy: string } | null;
 }
 
@@ -189,6 +195,29 @@ export interface DriftResultDetail extends DriftResult {
   baselineCapturedAt: string | null;
   currentLastSeenAt:  string | null;   // DELETED: last seen in inventory; others: last sync time
   pendingRevert:      { id: string; status: string; requestedBy: string; expiresAt: string } | null;
+}
+
+export interface RelatedControl {
+  frameworkId:        string;
+  frameworkName:      string;
+  frameworkShortName: string;
+  controlId:          string;
+  controlName:        string;
+  controlDescription: string;
+  relevance:          number;
+}
+
+export interface RemediationLogEntry {
+  id:             string;
+  driftResultId:  string;
+  baselineId:     string;
+  action:         'AUTO_REVERT' | 'MANUAL_RESOLVE' | 'GUIDED_PLAN_GENERATED';
+  actor:          string;
+  outcome:        'SUCCESS' | 'FAILURE';
+  message:        string | null;
+  beforeState:    unknown;
+  afterState:     unknown;
+  createdAt:      string;
 }
 
 // ─── Version History Types ────────────────────────────────────────────────────
@@ -369,7 +398,7 @@ export const baselinesApi = {
   // immediate=true skips approval gate (dev/single-user); otherwise creates ApprovalRequest
   create: (data: {
     provider: string; targetId: string; name: string; description?: string;
-    resourceTypes?: string[]; nameSearch?: string;
+    resourceTypes?: string[]; nameSearch?: string; region?: string;
     requestedBy?: string; requestedByName?: string; notes?: string; immediate?: boolean;
   }) => api.post<BaselineSummary | { approvalRequired: true; approvalId: string; message: string; expiresAt: string }>('/baselines', data),
 
@@ -383,16 +412,21 @@ export const baselinesApi = {
       `/baselines/${id}/refresh`, opts ?? {}
     ),
 
-  drift:  (id: string, page = 1, pageSize = 25, status = 'OPEN') =>
+  drift:  (id: string, page = 1, pageSize = 25, status = 'OPEN', controlDomain?: string) =>
     api.get<{ total: number; page: number; pageSize: number; results: DriftResult[] }>(
-      `/baselines/${id}/drift?page=${page}&pageSize=${pageSize}&status=${status}`
+      `/baselines/${id}/drift?page=${page}&pageSize=${pageSize}&status=${status}${controlDomain ? `&controlDomain=${controlDomain}` : ''}`
     ),
 
   driftDetail: (id: string, driftId: string) =>
     api.get<DriftResultDetail>(`/baselines/${id}/drift/${driftId}`),
 
-  updateDrift: (id: string, driftId: string, status: string) =>
-    api.patch<{ id: string; status: string }>(`/baselines/${id}/drift/${driftId}`, { status }),
+  relatedControls: (id: string, driftId: string) =>
+    api.get<{ controlDomain: string; resourceType: string; related: RelatedControl[] }>(
+      `/baselines/${id}/drift/${driftId}/related-controls`
+    ),
+
+  updateDrift: (id: string, driftId: string, status: string, opts?: { suppressionReason?: string; suppressionExpiresAt?: string }) =>
+    api.patch<{ id: string; status: string }>(`/baselines/${id}/drift/${driftId}`, { status, ...opts }),
 
   revertPlan: (id: string, driftId: string) =>
     api.post<RevertPlan>(`/baselines/${id}/drift/${driftId}/revert-plan`),
@@ -400,6 +434,12 @@ export const baselinesApi = {
   requestRevert: (id: string, driftId: string, opts: { requestedBy: string; requestedByName?: string; notes?: string; immediate?: boolean }) =>
     api.post<{ approvalRequired?: boolean; approvalId?: string; message: string; success?: boolean } >(
       `/baselines/${id}/drift/${driftId}/revert`, opts
+    ),
+
+  // Remediation audit trail (BCDD-F25)
+  remediationLog: (id: string, page = 1, pageSize = 25) =>
+    api.get<{ total: number; page: number; pageSize: number; results: RemediationLogEntry[] }>(
+      `/baselines/${id}/remediation-log?page=${page}&pageSize=${pageSize}`
     ),
 
   // Version history
@@ -470,7 +510,7 @@ export const iamEscalationApi = {
   },
   list: (params: { page?: number; pageSize?: number; provider?: string; targetId?: string; status?: string; severity?: string; escalationType?: string; days?: number } = {}) => {
     const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v !== undefined) qs.set(k, String(v)); });
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') qs.set(k, String(v)); });
     return api.get<{ total: number; page: number; pageSize: number; events: IamEscalationEvent[] }>(
       `/iam-escalation?${qs}`
     );

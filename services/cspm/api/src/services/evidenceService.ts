@@ -40,8 +40,6 @@ export async function collectEvidenceForAccount(
     select: { id: true, title: true, severity: true, checkId: true },
   });
 
-  // Findings with a stable checkId are matched via control.checkIds; legacy
-  // findings (checkId = null) fall back to title matching.
   const activeTitles = new Set<string>();
   const titleToIds = new Map<string, string[]>();
   const activeCheckIds = new Set<string>();
@@ -84,8 +82,6 @@ export async function collectEvidenceForAccount(
         ...failingCheckIds.flatMap((c) => checkIdToIds.get(c) ?? []),
       ];
 
-      // Human-readable labels for the summary: legacy title matches plus the
-      // representative finding titles of checkId matches (deduplicated).
       const failingLabels = [...failingTitles];
       for (const c of failingCheckIds) {
         const label = checkIdTitles.get(c) ?? c;

@@ -71,17 +71,17 @@ export class ConsoleReporter implements Reporter {
     console.log(`Services: ${report.services.join(', ')}`);
     console.log(`Duration: ${report.duration}ms`);
 
-    console.log(`\n📊 SUMMARY`);
+    console.log(`\nSUMMARY`);
     console.log('─'.repeat(80));
     console.log(`Total Findings: ${report.totalFindings}`);
-    console.log(`  🔴 CRITICAL: ${report.summary.critical}`);
-    console.log(`  🟠 HIGH: ${report.summary.high}`);
-    console.log(`  🟡 MEDIUM: ${report.summary.medium}`);
-    console.log(`  🔵 LOW: ${report.summary.low}`);
-    console.log(`  ⚪ INFO: ${report.summary.info}`);
+    console.log(`  CRITICAL: ${report.summary.critical}`);
+    console.log(`  HIGH: ${report.summary.high}`);
+    console.log(`  MEDIUM: ${report.summary.medium}`);
+    console.log(`  LOW: ${report.summary.low}`);
+    console.log(`  INFO: ${report.summary.info}`);
 
     if (report.findings.length > 0) {
-      console.log(`\n🔍 FINDINGS (Top 20)`);
+      console.log(`\nFINDINGS (Top 20)`);
       console.log('─'.repeat(80));
 
       const sorted = [...report.findings].sort((a, b) => {
@@ -97,7 +97,7 @@ export class ConsoleReporter implements Reporter {
 
       const displayed = sorted.slice(0, 20);
       for (const finding of displayed) {
-        console.log(`\n${getSeverityIcon(finding.severity)} [${finding.severity}] ${finding.title}`);
+        console.log(`\n[${finding.severity}] ${finding.title}`);
         console.log(`   Service: ${finding.service}`);
         console.log(`   Description: ${finding.description}`);
         console.log(`   Remediation: ${finding.remediation}`);
@@ -110,27 +110,10 @@ export class ConsoleReporter implements Reporter {
         console.log(`\n... and ${report.findings.length - 20} more findings`);
       }
     } else {
-      console.log('\n✅ No findings - system is secure!');
+      console.log('\nNo findings - system is secure!');
     }
 
     console.log('\n' + '='.repeat(80) + '\n');
-  }
-}
-
-function getSeverityIcon(severity: string): string {
-  switch (severity) {
-    case 'CRITICAL':
-      return '🔴';
-    case 'HIGH':
-      return '🟠';
-    case 'MEDIUM':
-      return '🟡';
-    case 'LOW':
-      return '🔵';
-    case 'INFO':
-      return '⚪';
-    default:
-      return '❓';
   }
 }
 

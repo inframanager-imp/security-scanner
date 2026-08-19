@@ -52,10 +52,6 @@ function serialize(value: unknown): string {
   try { return JSON.stringify(value, null, 0); } catch { return String(value); }
 }
 
-/**
- * Deep diff two config objects.
- * Returns a flat array of field changes with dot-notation paths.
- */
 export function computeConfigDiff(
   before: Record<string, unknown> | null | undefined,
   after:  Record<string, unknown> | null | undefined,
@@ -166,10 +162,6 @@ function getArrayItemKey(item: unknown, index: number): string {
   return String(index);
 }
 
-/**
- * Formats a value for display in the diff UI.
- * Keeps it concise — truncates long objects.
- */
 export function formatDiffValue(value: unknown, maxLen = 120): string {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'boolean') return value ? 'true' : 'false';

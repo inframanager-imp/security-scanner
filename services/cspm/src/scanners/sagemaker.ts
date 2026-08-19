@@ -12,11 +12,6 @@ import {
   DescribeDomainCommand,
   ListEndpointConfigsCommand,
   DescribeEndpointConfigCommand,
-  ListProcessingJobsCommand,
-  DescribeProcessingJobCommand,
-  ListMonitoringSchedulesCommand,
-  ListModelPackageGroupsCommand,
-  ListModelPackagesCommand,
 } from '@aws-sdk/client-sagemaker';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
@@ -57,9 +52,6 @@ export class SageMakerScanner extends BaseScanner {
       await this.checkTrainingJobs(findings);
       await this.checkDomains(findings);
       await this.checkEndpointConfigs(findings);
-      await this.checkClarifyProcessingJobs(findings);
-      await this.checkMonitoringSchedules(findings);
-      await this.checkModelRegistry(findings);
 
       logger.info(`SageMaker scan complete. Found ${findings.length} findings.`);
     } catch (error) {
@@ -379,7 +371,7 @@ export class SageMakerScanner extends BaseScanner {
     }
   }
 
-  // sagemaker_endpoint_config_prod_variant_instances / sagemaker_endpoint_config_kms_encryption_enabled
+  // sagemaker_endpoint_config_prod_variant_instances
   private async checkEndpointConfigs(findings: ScanningResult[]): Promise<void> {
     let endpointConfigs: any[] = [];
     try {
@@ -421,176 +413,9 @@ export class SageMakerScanner extends BaseScanner {
             }
           ));
         }
-
-        // sagemaker_endpoint_config_kms_encryption_enabled
-        if (!detail?.KmsKeyId) {
-          findings.push(this.emit(
-            'sagemaker_endpoint_config_kms_encryption_enabled',
-            { endpointConfig: name, arn, kmsKeyId: null },
-            {
-              message: `SageMaker endpoint config "${name}" does not have data encryption enabled with a KMS key`,
-            }
-          ));
-        }
       } catch (error) {
         logger.debug(`Failed to scan SageMaker endpoint config ${name}`, { error: (error as Error).message });
       }
-    }
-  }
-
-  // sagemaker_clarify_exists — at least one processing job in the region must use
-  // the AWS-managed Clarify container image. Skipped when ListProcessingJobs fails
-  // (Prowler omits regions where the listing could not be queried).
-  private async checkClarifyProcessingJobs(findings: ScanningResult[]): Promise<void> {
-    const region = this.client.getRegion();
-    let processingJobs: any[] = [];
-    try {
-      let nextToken: string | undefined;
-      do {
-        const result: any = await retry(async () => {
-          return await this.sagemaker.send(new ListProcessingJobsCommand({ NextToken: nextToken, MaxResults: 100 }));
-        });
-        processingJobs.push(...(result?.ProcessingJobSummaries ?? []));
-        nextToken = result?.NextToken;
-      } while (nextToken);
-    } catch (error) {
-      logger.debug('Failed to list SageMaker processing jobs', { error: (error as Error).message });
-      return;
-    }
-
-    let clarifyJobFound = false;
-    for (const job of processingJobs) {
-      const name: string = job?.ProcessingJobName ?? '';
-      try {
-        const detail: any = await retry(async () => {
-          return await this.sagemaker.send(new DescribeProcessingJobCommand({ ProcessingJobName: name }));
-        });
-        const imageUri: string = detail?.AppSpecification?.ImageUri ?? '';
-        if (imageUri.includes('sagemaker-clarify-processing')) {
-          clarifyJobFound = true;
-          break;
-        }
-      } catch (error) {
-        logger.debug(`Failed to describe SageMaker processing job ${name}`, { error: (error as Error).message });
-      }
-    }
-
-    if (!clarifyJobFound) {
-      findings.push(this.emit(
-        'sagemaker_clarify_exists',
-        { region, processingJobCount: processingJobs.length, clarifyJobFound: false },
-        {
-          message: `No SageMaker Clarify processing jobs found in region ${region}`,
-        }
-      ));
-    }
-  }
-
-  // sagemaker_models_monitor_enabled — at least one monitoring schedule in the
-  // region must be in the Scheduled state.
-  private async checkMonitoringSchedules(findings: ScanningResult[]): Promise<void> {
-    const region = this.client.getRegion();
-    let hasSchedules = false;
-    let isScheduled = false;
-    try {
-      let nextToken: string | undefined;
-      do {
-        const result: any = await retry(async () => {
-          return await this.sagemaker.send(new ListMonitoringSchedulesCommand({ NextToken: nextToken, MaxResults: 100 }));
-        });
-        for (const schedule of result?.MonitoringScheduleSummaries ?? []) {
-          hasSchedules = true;
-          if (schedule?.MonitoringScheduleStatus === 'Scheduled') {
-            isScheduled = true;
-            break;
-          }
-        }
-        nextToken = isScheduled ? undefined : result?.NextToken;
-      } while (nextToken);
-    } catch (error) {
-      logger.debug('Failed to list SageMaker monitoring schedules', { error: (error as Error).message });
-      return;
-    }
-
-    if (!isScheduled) {
-      findings.push(this.emit(
-        'sagemaker_models_monitor_enabled',
-        { region, hasSchedules, isScheduled: false },
-        {
-          message: hasSchedules
-            ? `No active SageMaker monitoring schedule in region ${region}; existing schedules are not in Scheduled status`
-            : `No SageMaker monitoring schedules found in region ${region}`,
-        }
-      ));
-    }
-  }
-
-  // sagemaker_models_registry_in_use — the Model Registry must have at least one
-  // Model Package Group containing an approved model package.
-  private async checkModelRegistry(findings: ScanningResult[]): Promise<void> {
-    const region = this.client.getRegion();
-    let groups: any[] = [];
-    try {
-      let nextToken: string | undefined;
-      do {
-        const result: any = await retry(async () => {
-          return await this.sagemaker.send(new ListModelPackageGroupsCommand({ NextToken: nextToken, MaxResults: 100 }));
-        });
-        groups.push(...(result?.ModelPackageGroupSummaryList ?? []));
-        nextToken = result?.NextToken;
-      } while (nextToken);
-    } catch (error) {
-      logger.debug('Failed to list SageMaker model package groups', { error: (error as Error).message });
-      return;
-    }
-
-    if (groups.length === 0) {
-      findings.push(this.emit(
-        'sagemaker_models_registry_in_use',
-        { region, hasGroups: false, hasApprovedPackages: false },
-        {
-          message: `SageMaker Model Registry in region ${region} has no Model Package Groups`,
-        }
-      ));
-      return;
-    }
-
-    let hasApprovedPackages = false;
-    try {
-      for (const group of groups) {
-        const groupName: string = group?.ModelPackageGroupName ?? '';
-        let nextToken: string | undefined;
-        do {
-          const result: any = await retry(async () => {
-            return await this.sagemaker.send(new ListModelPackagesCommand({
-              ModelPackageGroupName: groupName,
-              ModelApprovalStatus: 'Approved',
-              NextToken: nextToken,
-              MaxResults: 100,
-            }));
-          });
-          if ((result?.ModelPackageSummaryList ?? []).length > 0) {
-            hasApprovedPackages = true;
-            break;
-          }
-          nextToken = result?.NextToken;
-        } while (nextToken);
-        if (hasApprovedPackages) break;
-      }
-    } catch (error) {
-      // Cannot tell whether approved packages exist — skip instead of emitting a false finding
-      logger.debug('Failed to list SageMaker model packages', { error: (error as Error).message });
-      return;
-    }
-
-    if (!hasApprovedPackages) {
-      findings.push(this.emit(
-        'sagemaker_models_registry_in_use',
-        { region, hasGroups: true, hasApprovedPackages: false, groupCount: groups.length },
-        {
-          message: `SageMaker Model Registry in region ${region} has Model Package Groups but no approved model packages`,
-        }
-      ));
     }
   }
 }

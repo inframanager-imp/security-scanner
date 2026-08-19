@@ -12,6 +12,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../config/database';
 import { authenticate } from '../middleware/authenticate';
 import { enqueueCwppScan } from '../workers/cwppScanWorker';
+import { getCwppInfoMessage } from '../services/cwppService';
 
 const router = Router();
 router.use(authenticate);
@@ -69,7 +70,7 @@ router.get('/hosts/:resourceInventoryId', async (req: Request, res: Response) =>
 
 router.get('/stats/:provider/:accountId', async (req: Request, res: Response) => {
   const { provider, accountId } = req.params;
-  const [bySeverity, hosts, openTotal] = await Promise.all([
+  const [bySeverity, hosts, openTotal, infoMessage] = await Promise.all([
     prisma.workloadVulnerability.groupBy({
       by: ['severity'],
       where: { provider, accountId, status: 'OPEN' },
@@ -81,6 +82,7 @@ router.get('/stats/:provider/:accountId', async (req: Request, res: Response) =>
       _count: { _all: true },
     }),
     prisma.workloadVulnerability.count({ where: { provider, accountId, status: 'OPEN' } }),
+    getCwppInfoMessage(provider as 'AWS' | 'AZURE' | 'GCP', accountId),
   ]);
 
   res.json({
@@ -88,6 +90,7 @@ router.get('/stats/:provider/:accountId', async (req: Request, res: Response) =>
       bySeverity: bySeverity.map((g) => ({ severity: g.severity, count: g._count._all })),
       hostsAffected: hosts.length,
       openTotal,
+      infoMessage,
     },
   });
 });

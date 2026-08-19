@@ -5,16 +5,26 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# OpenSSL + CA certs are required by Prisma's query engine.
+# OpenSSL + CA certs are required by Prisma's query engine. The rest are
+# Chromium's runtime deps for Puppeteer (server-side "Compile PDF Report" —
+# renders the executive report HTML to a real PDF via headless Chrome).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+      openssl ca-certificates \
+      chromium \
+      libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+      libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+      libpango-1.0-0 libpangocairo-1.0-0 fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies. npm workspaces needs every workspace package.json present,
-# so we copy all three even though the web source is not used in this image.
+# Skip Puppeteer's own Chromium download — use the apt package above instead
+# (smaller image, no duplicate download of the same binary).
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Install dependencies. npm workspaces needs every workspace package.json present.
 COPY package.json ./
 COPY api/package.json ./api/
-COPY web/package.json ./web/
 RUN npm install --no-audit --no-fund
 
 # Application source (root scanner engine + the API).

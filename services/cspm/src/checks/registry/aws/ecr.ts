@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { CheckMetadata } from '../../types';
 
 // Titles must stay byte-identical to the pre-registry hardcoded titles:
@@ -46,45 +45,5 @@ export const ecrChecks: CheckMetadata[] = [
     description: 'Summarizes medium and low severity vulnerabilities found in packages installed in ECR container images.',
     remediation: 'Rebuild the image with an updated base image and updated dependencies.',
     tags: ['ecr', 'cve', 'container'],
-  },
-  {
-    checkId: 'ecr_registry_scan_images_on_push_enabled',
-    provider: 'aws',
-    service: 'ecr',
-    title: 'ECR Registry Scan on Push Not Enforced',
-    severity: 'MEDIUM',
-    description: 'Checks that the ECR registry scanning configuration has scan-on-push rules covering all repositories (no restrictive repository filters) for basic or enhanced scanning.',
-    remediation: 'Configure registry-wide scan on push: aws ecr put-registry-scanning-configuration --rules scanFrequency=SCAN_ON_PUSH with a WILDCARD "*" repository filter; prefer enhanced scanning.',
-    tags: ['ecr', 'scanning', 'registry'],
-  },
-  {
-    checkId: 'ecr_repositories_lifecycle_policy_enabled',
-    provider: 'aws',
-    service: 'ecr',
-    title: 'ECR Repository Lifecycle Policy Missing',
-    severity: 'LOW',
-    description: 'Checks that ECR repositories have a lifecycle policy configured so old, untagged or excess images are expired automatically.',
-    remediation: 'Add a lifecycle policy: aws ecr put-lifecycle-policy --repository-name <repo> --lifecycle-policy-text with rules expiring untagged and outdated images.',
-    tags: ['ecr', 'lifecycle', 'hygiene'],
-  },
-  {
-    checkId: 'ecr_repositories_not_publicly_accessible',
-    provider: 'aws',
-    service: 'ecr',
-    title: 'ECR Repository Publicly Accessible',
-    severity: 'CRITICAL',
-    description: 'Checks ECR repository policies for wildcard principals without restrictive conditions that expose the repository to anonymous image pulls or pushes.',
-    remediation: 'Remove wildcard principals from the repository policy (or delete it: aws ecr delete-repository-policy --repository-name <repo>) and grant access only to specific AWS principals.',
-    tags: ['ecr', 'public-access', 'resource-policy'],
-  },
-  {
-    checkId: 'ecr_repositories_tag_immutability',
-    provider: 'aws',
-    service: 'ecr',
-    title: 'ECR Repository Tag Immutability Disabled',
-    severity: 'MEDIUM',
-    description: 'Checks that ECR repositories enforce image tag immutability so a trusted tag cannot be repointed to a different image.',
-    remediation: 'Enable immutability: aws ecr put-image-tag-mutability --repository-name <repo> --image-tag-mutability IMMUTABLE and use versioned tags per build.',
-    tags: ['ecr', 'supply-chain', 'container'],
   },
 ];

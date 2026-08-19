@@ -337,13 +337,12 @@ router.post('/:id/credentials/verify', async (req: Request, res: Response) => {
     const result = await client.verifyCredentials();
     res.json({ data: result });
 
-    // Re-trigger pipeline if project has never been initialized
     if (result.valid) {
       const proj = await prisma.gcpProject.findUnique({
         where: { id: req.params.id },
         select: { inventoryStatus: true },
       });
-      if (proj && (proj.inventoryStatus === 'PENDING' || proj.inventoryStatus === 'FAILED')) {
+      if (proj && proj.inventoryStatus !== 'READY') {
         triggerInitialPipeline('GCP', req.params.id);
       }
     }

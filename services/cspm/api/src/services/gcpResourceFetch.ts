@@ -300,8 +300,6 @@ async function fetchServiceAccount(gcpClient: GcpClient, resourceName: string, p
 }
 
 // ─── Cloud Run ────────────────────────────────────────────────────────────────
-// Cloud Run v1 API not directly exposed via googleapis default client.
-// Return null — Cloud Run changes will show via Audit Log metadata only.
 async function fetchCloudRunService(_gcpClient: GcpClient, _resourceName: string, _projectId: string): Promise<Record<string, unknown> | null> {
   return null;
 }

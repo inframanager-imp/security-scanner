@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { CheckMetadata } from '../../types';
 
 // Titles must stay byte-identical to the pre-registry hardcoded titles:
@@ -44,45 +43,5 @@ export const secretsmanagerChecks: CheckMetadata[] = [
     description: 'Checks that Secrets Manager secrets are replicated to another region for disaster recovery.',
     remediation: 'Replicate the secret to another region for disaster recovery.',
     tags: ['secrets-manager', 'disaster-recovery', 'high-availability'],
-  },
-  {
-    checkId: 'secretsmanager_has_restrictive_resource_policy',
-    provider: 'aws',
-    service: 'secretsmanager',
-    title: 'Secret Resource Policy Not Restrictive',
-    severity: 'HIGH',
-    description: 'Checks that Secrets Manager secrets have a deny-by-default resource policy: an explicit Deny for all unauthorized principals, no cross-account Allow statements, and tightly scoped service-principal access.',
-    remediation: 'Attach a resource policy with a Deny for Principal "*" using StringNotEquals on aws:PrincipalArn listing only authorized roles, remove cross-account Allow statements, and constrain service principals with StringEquals on aws:SourceAccount.',
-    tags: ['secrets-manager', 'resource-policy', 'least-privilege'],
-  },
-  {
-    checkId: 'secretsmanager_not_publicly_accessible',
-    provider: 'aws',
-    service: 'secretsmanager',
-    title: 'Secret Publicly Accessible',
-    severity: 'HIGH',
-    description: 'Checks that Secrets Manager secret resource policies do not allow public access through wildcard principals without restrictive conditions.',
-    remediation: 'Remove wildcard principals from the secret resource policy, grant access only to specific IAM principals, and enable block-public-policy when updating the resource policy.',
-    tags: ['secrets-manager', 'public-access', 'resource-policy'],
-  },
-  {
-    checkId: 'secretsmanager_secret_rotated_periodically',
-    provider: 'aws',
-    service: 'secretsmanager',
-    title: 'Secret Not Rotated Recently',
-    severity: 'MEDIUM',
-    description: 'Checks that Secrets Manager secrets have been rotated within the last 90 days; secrets never rotated or rotated beyond that window are flagged.',
-    remediation: 'Enable automatic rotation with a schedule of 90 days or less and trigger an immediate rotation so the last-rotated date falls within the allowed window.',
-    tags: ['secrets-manager', 'secret-rotation'],
-  },
-  {
-    checkId: 'secretsmanager_secret_unused',
-    provider: 'aws',
-    service: 'secretsmanager',
-    title: 'Secret Unused',
-    severity: 'MEDIUM',
-    description: 'Checks that Secrets Manager secrets have been accessed within the last 90 days; secrets never accessed or unused beyond that window are flagged.',
-    remediation: 'Review whether the secret is still needed; rotate and retire unused secrets by scheduling deletion with a recovery window.',
-    tags: ['secrets-manager', 'secret-management', 'cleanup'],
   },
 ];

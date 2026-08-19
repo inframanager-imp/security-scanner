@@ -112,14 +112,4 @@ export const opensearchChecks: CheckMetadata[] = [
     remediation: 'Enable dedicated master nodes with at least 3 (an odd number) and distribute them across Availability Zones using Multi-AZ with Standby.',
     tags: ['opensearch', 'availability', 'cluster'],
   },
-  {
-    checkId: 'opensearch_service_domains_cloudwatch_logging_enabled',
-    provider: 'aws',
-    service: 'opensearch',
-    title: 'OpenSearch Slow Logs Not Published to CloudWatch',
-    severity: 'LOW',
-    description: 'Checks that OpenSearch domains publish both search slow logs (SEARCH_SLOW_LOGS) and index slow logs (INDEX_SLOW_LOGS) to CloudWatch Logs for visibility into expensive queries and indexing hotspots.',
-    remediation: 'Enable SEARCH_SLOW_LOGS and INDEX_SLOW_LOGS publishing to CloudWatch log groups on the domain, set meaningful thresholds and retention, and alert on anomalies.',
-    tags: ['opensearch', 'logging', 'monitoring'],
-  },
 ];

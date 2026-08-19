@@ -8,7 +8,6 @@ import {
   GetResourcePolicyCommand,
   SearchTablesCommand,
   GetMLTransformsCommand,
-  GetDevEndpointsCommand,
 } from '@aws-sdk/client-glue';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
@@ -25,31 +24,6 @@ function isSecretReference(value: string): boolean {
   // Values that reference Secrets Manager / SSM rather than embedding the secret
   return /^arn:aws/i.test(value) || /\{\{\s*resolve:/i.test(value) || /secretsmanager|parameter[-_ ]?store|ssm:/i.test(value);
 }
-
-// glue_development_endpoints_* checks are a table-driven family: same evaluation
-// against the endpoint's security configuration, differing only in which
-// encryption mode is inspected.
-const DEV_ENDPOINT_ENCRYPTION_CHECKS: {
-  checkId: string;
-  label: string;
-  getMode: (encryption: any) => string;
-}[] = [
-  {
-    checkId: 'glue_development_endpoints_s3_encryption_enabled',
-    label: 'S3 encryption',
-    getMode: encryption => encryption?.S3Encryption?.[0]?.S3EncryptionMode || 'DISABLED',
-  },
-  {
-    checkId: 'glue_development_endpoints_cloudwatch_logs_encryption_enabled',
-    label: 'CloudWatch Logs encryption',
-    getMode: encryption => encryption?.CloudWatchEncryption?.CloudWatchEncryptionMode || 'DISABLED',
-  },
-  {
-    checkId: 'glue_development_endpoints_job_bookmark_encryption_enabled',
-    label: 'job bookmark encryption',
-    getMode: encryption => encryption?.JobBookmarksEncryption?.JobBookmarksEncryptionMode || 'DISABLED',
-  },
-];
 
 export class GlueScanner extends BaseScanner {
   private glue: GlueClient;
@@ -75,11 +49,6 @@ export class GlueScanner extends BaseScanner {
       const connections = await this.getConnections();
       for (const conn of connections) {
         findings.push(...this.validateConnection(conn));
-      }
-
-      const devEndpoints = await this.getDevEndpoints();
-      for (const endpoint of devEndpoints) {
-        findings.push(...this.validateDevEndpoint(endpoint, securityConfigs));
       }
 
       findings.push(...await this.checkDataCatalog());
@@ -243,77 +212,6 @@ export class GlueScanner extends BaseScanner {
         { connection: connName, connectionType: conn.ConnectionType, jdbcEnforceSsl: conn.ConnectionProperties?.JDBC_ENFORCE_SSL || 'false' },
         { message: `Glue connection "${connName}" does not enforce SSL (JDBC_ENFORCE_SSL is not true)` }
       ));
-    }
-
-    // glue_catalog_connection_no_secrets — heuristic port of Prowler's
-    // detect-secrets scan over ConnectionProperties.
-    const properties: Record<string, any> = conn.ConnectionProperties || {};
-    const suspectProperties: string[] = [];
-    for (const [propName, propValue] of Object.entries(properties)) {
-      if (typeof propValue !== 'string' || !propValue) continue;
-      // ENCRYPTED_* values are KMS-encrypted by the catalog; SECRET_ID references Secrets Manager
-      if (propName.startsWith('ENCRYPTED_') || propName === 'SECRET_ID') continue;
-      if (isSecretReference(propValue)) continue;
-      if (SECRET_ARG_NAME.test(propName) || AWS_ACCESS_KEY_PATTERN.test(propValue)) {
-        suspectProperties.push(propName);
-      }
-    }
-    if (suspectProperties.length > 0) {
-      findings.push(this.emit(
-        'glue_catalog_connection_no_secrets',
-        { connection: connName, connectionType: conn.ConnectionType, suspectProperties },
-        { message: `Potential secrets found in Glue connection "${connName}" properties: ${suspectProperties.join(', ')}` }
-      ));
-    }
-
-    return findings;
-  }
-
-  private async getDevEndpoints(): Promise<any[]> {
-    try {
-      return await retry(async () => {
-        logger.debug('Fetching Glue development endpoints...');
-        const endpoints: any[] = [];
-        let nextToken: string | undefined;
-        do {
-          const result: any = await this.glue.send(new GetDevEndpointsCommand({ NextToken: nextToken }));
-          endpoints.push(...(result.DevEndpoints || []));
-          nextToken = result.NextToken;
-        } while (nextToken);
-        return endpoints;
-      });
-    } catch (error) {
-      // Dev endpoints are not supported in every region ("Operation is not supported")
-      logger.debug('Failed to fetch Glue development endpoints', { error: (error as Error).message });
-      return [];
-    }
-  }
-
-  // glue_development_endpoints_{s3,cloudwatch_logs,job_bookmark}_encryption_enabled
-  private validateDevEndpoint(endpoint: any, securityConfigs: Map<string, any>): ScanningResult[] {
-    const findings: ScanningResult[] = [];
-    const endpointName = endpoint.EndpointName || 'Unknown';
-    const securityConfigName: string | undefined = endpoint.SecurityConfiguration;
-    const secConfig = securityConfigName ? securityConfigs.get(securityConfigName) : undefined;
-    const encryption = secConfig?.EncryptionConfiguration;
-
-    for (const check of DEV_ENDPOINT_ENCRYPTION_CHECKS) {
-      if (!secConfig) {
-        findings.push(this.emit(
-          check.checkId,
-          { devEndpoint: endpointName, securityConfiguration: securityConfigName || null },
-          { message: `Glue development endpoint "${endpointName}" does not have a security configuration, so ${check.label} is disabled` }
-        ));
-        continue;
-      }
-      const mode = check.getMode(encryption);
-      if (mode === 'DISABLED') {
-        findings.push(this.emit(
-          check.checkId,
-          { devEndpoint: endpointName, securityConfiguration: securityConfigName, encryptionMode: mode },
-          { message: `Glue development endpoint "${endpointName}" does not have ${check.label} enabled` }
-        ));
-      }
     }
 
     return findings;

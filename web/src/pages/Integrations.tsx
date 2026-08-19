@@ -148,7 +148,6 @@ function IntegrationForm({
         </div>
       </div>
 
-      {/* Channel config */}
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-2">{meta.label} Configuration</label>
         <div className="bg-gray-50 rounded-lg p-4 space-y-3 border">
@@ -167,7 +166,6 @@ function IntegrationForm({
         </div>
       </div>
 
-      {/* Scope */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-2">Providers (empty = all)</label>
@@ -268,7 +266,7 @@ function IntegrationCard({
                 <span className="bg-blue-50 text-blue-700 rounded px-2 py-0.5">{cfg.providers.join(', ')}</span>
               )}
               {cfg.onFreezeOnly && (
-                <span className="bg-amber-100 text-amber-700 rounded px-2 py-0.5">❄ Freeze only</span>
+                <span className="bg-amber-100 text-amber-700 rounded px-2 py-0.5">Freeze only</span>
               )}
               <span className="text-gray-400">{(cfg._count?.logs ?? 0)} deliveries</span>
             </div>

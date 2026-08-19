@@ -25,18 +25,6 @@ function buildQuery(provider: ReportProvider, targetId: string, filters?: VaptRe
   return params.toString();
 }
 
-/**
- * Fetch the VAPT report as raw HTML (authenticated — same access token as the
- * rest of the app) and open it in a new tab via a Blob URL. Blob URL rather than
- * a bare `window.open('/api/...')` because the report route requires the
- * Authorization header, which a plain browser navigation can't attach; using
- * `fetch` + Blob keeps the endpoint properly authenticated instead of relying
- * on a `?token=` query param or an unauthenticated route.
- *
- * The report itself is styled for `@media print`, so "Save as PDF" from the
- * browser's print dialog produces a clean, paginated PDF — no server-side PDF
- * renderer / headless-browser dependency needed.
- */
 async function fetchReportHtml(path: string): Promise<string> {
   const { accessToken } = useAuthStore.getState();
 
@@ -71,8 +59,6 @@ function openHtmlInNewTab(html: string): void {
   const blob = new Blob([html], { type: 'text/html' });
   const url  = URL.createObjectURL(blob);
   const win  = window.open(url, '_blank');
-  // Revoke once the new tab has had a chance to load the blob; a short delay
-  // is simplest and avoids needing a load-event bridge across the new window.
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
   if (!win) {
     throw new Error('Pop-up blocked — please allow pop-ups for this site to view the report.');

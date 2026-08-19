@@ -24,6 +24,7 @@ export interface CwppStats {
   bySeverity: { severity: string; count: number }[];
   hostsAffected: number;
   openTotal: number;
+  infoMessage: string | null;
 }
 
 export const cwppApi = {

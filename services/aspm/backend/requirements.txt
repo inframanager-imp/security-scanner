@@ -3,9 +3,11 @@ uvicorn>=0.20.0
 python-owasp-zap-v2.4
 psycopg[binary]>=3.1
 PyJWT>=2.8.0
+networkx>=3.0             # attack-chain synthesis (transitive closure over finding roles)
 
 # ── Real scanner tooling (Python-based) ──────────────────────────────────────
 semgrep>=1.60.0          # SAST
 bandit>=1.7.0            # Python SAST
 pip-audit>=2.7.0         # dependency vulnerabilities
 safety>=3.0.0            # dependency vulnerabilities
+pytest>=7.4.0            # test_node — runs a Python target repo's own test suite

@@ -1497,9 +1497,7 @@ export function scoreAzureFrameworks(
   });
 }
 
-// ─── Compliance tag lookup (finding title → framework/control) ───────────────
-// Same purpose as complianceService.ts's getComplianceTags — Azure findings
-// have no stable checkId yet, so this is title-only.
+// ─── Compliance tag lookup (finding → framework/control) ─────────────────────
 
 export interface AzureComplianceTag {
   frameworkShortName: string;
@@ -1508,19 +1506,19 @@ export interface AzureComplianceTag {
 
 let azureComplianceTagIndex: Map<string, AzureComplianceTag[]> | null = null;
 
-function buildAzureComplianceTagIndex(): Map<string, AzureComplianceTag[]> {
-  const byTitle = new Map<string, AzureComplianceTag[]>();
+function buildAzureComplianceTagIndex() {
+  const index = new Map<string, AzureComplianceTag[]>();
   for (const fw of AZURE_FRAMEWORKS) {
     for (const ctrl of fw.controls) {
       const tag: AzureComplianceTag = { frameworkShortName: fw.shortName, controlId: ctrl.id };
       for (const title of ctrl.findingTitles) {
-        const list = byTitle.get(title) ?? [];
+        const list = index.get(title) ?? [];
         list.push(tag);
-        byTitle.set(title, list);
+        index.set(title, list);
       }
     }
   }
-  return byTitle;
+  return index;
 }
 
 export function getAzureComplianceTags(title: string): AzureComplianceTag[] {

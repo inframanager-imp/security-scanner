@@ -91,7 +91,9 @@ router.get('/', async (req: Request, res: Response) => {
       }),
     ]);
 
-    res.json({ total, page, pageSize, events });
+    const mapped = events.map(({ resourceId, ...rest }) => ({ ...rest, resourceName: resourceId }));
+
+    res.json({ total, page, pageSize, events: mapped });
   } catch (err) {
     logger.error('[iam-escalation] list failed', err);
     res.status(500).json({ error: 'Failed to list escalation events' });

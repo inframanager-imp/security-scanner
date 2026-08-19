@@ -109,8 +109,7 @@ export async function flattenPermissions(provider: Provider, accountId: string):
         const arn = r.nativeId;
         const ptype = r.resourceType === 'AWS::IAM::User' ? 'USER' : 'ROLE';
 
-        // Attached managed policies
-        const attached = c?.AttachedManagedPolicies ?? c?.attachedManagedPolicies ?? [];
+        const attached = c?.attachedPolicies ?? c?.AttachedManagedPolicies ?? c?.attachedManagedPolicies ?? [];
         for (const p of attached) {
           const policyArn = p.PolicyArn ?? p.policyArn;
           if (!policyArn) continue;
@@ -132,10 +131,13 @@ export async function flattenPermissions(provider: Provider, accountId: string):
           }
         }
 
-        // Inline policies
-        const inline = c?.PolicyList ?? c?.inlinePolicies ?? c?.Policies ?? [];
-        for (const ip of inline) {
-          const doc = ip.PolicyDocument ?? ip.policyDocument ?? ip.document;
+        const inlineRaw = c?.inlinePolicies ?? c?.PolicyList ?? c?.Policies;
+        const inlineDocs: unknown[] = Array.isArray(inlineRaw)
+          ? inlineRaw.map((ip: any) => ip.PolicyDocument ?? ip.policyDocument ?? ip.document)
+          : inlineRaw && typeof inlineRaw === 'object'
+            ? Object.values(inlineRaw)
+            : [];
+        for (const doc of inlineDocs) {
           if (!doc) continue;
           for (const stmt of normalizeStatements(doc)) {
             for (const flat of expandStatement(stmt)) {

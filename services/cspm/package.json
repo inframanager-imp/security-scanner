@@ -144,7 +144,7 @@
     "@azure/arm-databricks": "^4.0.0",
     "@azure/arm-policy": "^7.0.1",
     "@azure/identity": "^4.13.1",
-    "adm-zip": "^0.5.10",
+    "adm-zip": "^0.6.0",
     "chart.js": "^4.4.1",
     "commander": "^11.1.0",
     "concurrently": "^8.2.0",
@@ -153,6 +153,7 @@
     "js-yaml": "^4.1.0",
     "moment": "^2.29.4",
     "papaparse": "^5.4.1",
+    "uuid": "14.0.1",
     "winston": "^3.11.0"
   },
   "devDependencies": {

@@ -110,8 +110,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
       return;
     }
 
-    // Rotate: delete old session, create new one
-    await prisma.session.delete({ where: { tokenHash } });
+    await prisma.session.deleteMany({ where: { tokenHash } });
 
     const newAccessToken = authService.generateAccessToken(user.id, user.role);
     const newRefreshToken = authService.generateRefreshToken(user.id);

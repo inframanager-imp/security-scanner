@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   ListCertificatesCommand,
   DescribeCertificateCommand,
@@ -12,10 +11,6 @@ import { retry } from '../utils/helpers';
 
 const DAYS_30 = 30 * 24 * 60 * 60 * 1000;
 const DAYS_7  =  7 * 24 * 60 * 60 * 1000;
-
-// Weak key algorithms (Prowler default: RSA-1024, P-192), covering both the
-// hyphenated values the ACM API returns and the underscore SDK enum spellings.
-const INSECURE_KEY_ALGORITHMS = ['RSA-1024', 'RSA_1024', 'P-192', 'EC_prime192v1'];
 
 export class ACMScanner extends BaseScanner {
   constructor(client: AWSClient) {
@@ -156,43 +151,6 @@ export class ACMScanner extends BaseScanner {
             `The domain validation record (DNS CNAME or email) has not been completed.`,
         }
       ));
-    }
-
-    // Prowler evaluates the following checks only for certificates in use
-    if (inUse) {
-      // 6. Certificate Transparency logging (imported certificates are exempt)
-      const ctLoggingPreference: string = cert.Options?.CertificateTransparencyLoggingPreference ?? '';
-      if (cert.Type !== 'IMPORTED' && ctLoggingPreference !== 'ENABLED') {
-        findings.push(this.emit(
-          'acm_certificates_transparency_logs_enabled',
-          {
-            resourceId: `${arn}::ct-logging`,
-            certArn:    arn,
-            domain,
-            type:       cert.Type ?? 'UNKNOWN',
-            transparencyLoggingPreference: ctLoggingPreference || null,
-          },
-          {
-            message: `ACM certificate for "${domain}" has Certificate Transparency logging disabled. ` +
-              `Misissued or rogue certificates for the domain cannot be detected via CT logs, and unlogged public certificates may be distrusted by browsers.`,
-            remediation: `Enable CT logging: aws acm update-certificate-options --certificate-arn ${arn} --options CertificateTransparencyLoggingPreference=ENABLED`,
-          }
-        ));
-      }
-
-      // 7. Weak key algorithm
-      const keyAlgorithm: string = cert.KeyAlgorithm ?? '';
-      if (INSECURE_KEY_ALGORITHMS.includes(keyAlgorithm)) {
-        findings.push(this.emit(
-          'acm_certificates_with_secure_key_algorithms',
-          { resourceId: `${arn}::key-algorithm`, certArn: arn, domain, keyAlgorithm },
-          {
-            message: `ACM certificate for "${domain}" uses the weak key algorithm ${keyAlgorithm}. ` +
-              `Weak keys are vulnerable to factoring or discrete-log attacks that can expose the private key and enable TLS interception.`,
-            remediation: `Request a replacement certificate for "${domain}" with RSA-2048+ or ECDSA P-256+, update the resources using it, then delete the weak certificate.`,
-          }
-        ));
-      }
     }
 
     return findings;

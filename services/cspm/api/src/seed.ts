@@ -25,7 +25,6 @@ export async function seed(): Promise<void> {
   }
 }
 
-// Allow running directly
 if (require.main === module) {
   seed()
     .then(() => {

@@ -24,69 +24,56 @@ import { createCwppWorker } from './workers/cwppScanWorker';
 import { createDspmWorker } from './workers/dspmScanWorker';
 import { resumeAllMonitors, startMonitoring } from './services/threatMonitorService';
 import { resumeAllAzureMonitors, startAzureMonitoring } from './services/azureThreatMonitorService';
+import { reconcileOrphanedWork } from './services/startupReconciliation';
 import { seed } from './seed';
 
 async function main(): Promise<void> {
-  // Create HTTP server
   const server = http.createServer(app);
 
-  // Initialize Socket.IO
   initSocket(server);
   logger.info('Socket.IO initialized');
 
-  // Connect to database
   await prisma.$connect();
   logger.info('Database connected');
 
-  // Run seed on first start
   await seed();
 
-  // Start BullMQ scan worker
+  await reconcileOrphanedWork();
+
   const worker = createScanWorker();
   logger.info('Scan worker started');
 
-  // Start real-time threat monitor worker and resume any active monitors
   const threatWorker = createThreatMonitorWorker();
   logger.info('Threat monitor worker started');
 
-  // Start Azure scan worker
   const azureWorker = createAzureScanWorker();
   logger.info('Azure scan worker started');
 
-  // Start Azure threat monitor worker and resume active monitors
   const azureThreatWorker = createAzureThreatMonitorWorker();
   logger.info('Azure threat monitor worker started');
 
-  // Start GCP scan worker
   const gcpWorker = createGcpScanWorker();
   logger.info('GCP scan worker started');
 
-  // Start GCP anomaly monitor worker
   const gcpAnomalyWorker = createGcpAnomalyWorker();
   logger.info('GCP anomaly monitor worker started');
 
-  // Start asset graph build worker (powers CIEM, attack paths, risk prioritization)
+  // Powers CIEM, attack paths, risk prioritization
   const graphWorker = createGraphBuildWorker();
   logger.info('Graph build worker started');
 
-  // Start compliance evidence auto-refresh worker
   const evidenceWorker = createEvidenceWorker();
   logger.info('Evidence worker started');
 
-  // Start CWPP agentless workload scan worker
   const cwppWorker = createCwppWorker();
   logger.info('CWPP worker started');
 
-  // Start DSPM sensitive-data discovery worker
   const dspmWorker = createDspmWorker();
   logger.info('DSPM worker started');
 
-  // Resume monitors that were previously manually started
   await resumeAllMonitors();
   await resumeAllAzureMonitors();
 
-  // Auto-start threat monitoring for ALL READY accounts/subscriptions
-  // so monitoring is active without requiring a manual UI click
   try {
     const [readyAccounts, readySubs] = await Promise.all([
       prisma.account.findMany({ where: { inventoryStatus: 'READY' }, select: { id: true } }),
@@ -101,10 +88,8 @@ async function main(): Promise<void> {
     logger.warn('Auto-start threat monitoring failed (non-fatal)', { error: (err as Error).message });
   }
 
-  // Start listening — bind to loopback only so the API is reachable solely via
-  // the nginx reverse proxy (override with HOST env if you ever need otherwise).
   const port = env.PORT;
-  const host = process.env.HOST ?? '127.0.0.1';
+  const host = process.env.HOST ?? '0.0.0.0';
   server.listen(port, host, () => {
     logger.info(`AWS Scanner API running on ${host}:${port}`, {
       env: env.NODE_ENV,
@@ -113,7 +98,6 @@ async function main(): Promise<void> {
     });
   });
 
-  // Graceful shutdown
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}, starting graceful shutdown...`);
 
@@ -137,7 +121,6 @@ async function main(): Promise<void> {
       process.exit(0);
     });
 
-    // Force exit after 30 seconds
     setTimeout(() => {
       logger.error('Forced shutdown after timeout');
       process.exit(1);

@@ -119,7 +119,6 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
   const logsPollIntervalRef = useRef<any>(null);
   const modalTerminalEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch target list & set active target
   useEffect(() => {
     aspmFetch('/api/aspm/targets')
       .then(res => res.json())
@@ -144,7 +143,6 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
       .catch(err => console.error("Error setting targets in API Inventory:", err));
   }, [tenantId]);
 
-  // Fetch API Scan Jobs
   const fetchJobs = () => {
     const url = tenantId 
       ? `/api/aspm/scans/jobs?tenant_id=${tenantId}&scan_type=API,OPENAPI` 
@@ -219,14 +217,12 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
     };
   }, [activeJobForLogs, tenantId]);
 
-  // Scroll to bottom of terminal in logs modal
   useEffect(() => {
     if (modalTerminalEndRef.current) {
       modalTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs]);
 
-  // Create API Scan Job
   const handleCreateJob = (e: React.FormEvent) => {
     e.preventDefault();
     const activeId = tenantId || selectedTenantId;
@@ -273,7 +269,6 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
       .catch(err => console.error("Error creating API scan job:", err));
   };
 
-  // Start job
   const handleStartJob = (jobId: string) => {
     aspmFetch(`/api/aspm/scans/jobs/${jobId}/start`, { method: 'POST' })
       .then(res => res.json())
@@ -283,7 +278,6 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
       .catch(err => console.error("Error starting API scan job:", err));
   };
 
-  // Stop job
   const handleStopJob = (jobId: string) => {
     aspmFetch(`/api/aspm/scans/jobs/${jobId}/stop`, { method: 'POST' })
       .then(res => res.json())
@@ -293,7 +287,6 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
       .catch(err => console.error("Error stopping API scan job:", err));
   };
 
-  // Delete job
   const handleDeleteJob = (jobId: string) => {
     if (!confirm("Are you sure you want to delete this scan job record?")) return;
     aspmFetch(`/api/aspm/scans/jobs/${jobId}`, { method: 'DELETE' })
@@ -316,7 +309,7 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
       case 'Scanning':
         return (
           <span className="badge animate-pulse" style={{ background: 'rgba(37, 99, 235, 0.1)', color: 'var(--color-primary)', border: '1px solid rgba(37, 99, 235, 0.4)' }}>
-            ⚡ SCANNING
+            SCANNING
           </span>
         );
       case 'Completed':
@@ -334,7 +327,7 @@ export default function APIInventory({ tenantId }: APIInventoryProps) {
       case 'Failed':
         return (
           <span className="badge" style={{ background: 'rgba(220, 38, 38, 0.15)', color: 'var(--color-danger)', border: '1px solid rgba(220, 38, 38, 0.4)' }}>
-            🗙 FAILED
+            FAILED
           </span>
         );
       default:

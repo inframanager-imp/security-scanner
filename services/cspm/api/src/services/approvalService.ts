@@ -32,6 +32,7 @@ export interface ApprovalMetadata {
   description?:   string;
   resourceTypes?: string[];
   nameSearch?:    string;
+  region?:        string;
   // REFRESH — just needs baselineId (top-level field)
   // REVERT
   driftId?:       string;
@@ -111,7 +112,7 @@ export async function approveRequest(params: {
       await captureBaseline(
         meta.provider, meta.targetId, meta.name,
         meta.description, meta.resourceTypes, meta.nameSearch,
-        req.requestedBy,
+        req.requestedBy, meta.region,
       );
 
     } else if (req.action === 'REFRESH') {

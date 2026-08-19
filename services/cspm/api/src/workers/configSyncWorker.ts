@@ -27,17 +27,6 @@ import {
 import { syncConfigChanges, markSyncedReady } from '../services/inventoryPipeline';
 import { runDriftForTarget }                  from '../services/baselineService';
 
-/**
- * Fixed lookback window per provider — same approach as Azure Activity Logs page.
- *
- * Every run queries `now - WINDOW → now`. Wide enough to cover the provider's
- * API delivery lag. DB upsert on sourceEventId ensures no duplicates regardless
- * of how many times the same event falls inside the window.
- *
- *   AWS CloudTrail:   6h  (matches CloudTrail LookupEvents typical delivery)
- *   Azure Activity:   6h  (matches the Activity Logs page default; covers 15-min delivery lag)
- *   GCP Audit Logs:   6h  (consistent; GCP lag is ~5 min)
- */
 const PROVIDER_WINDOW_HOURS: Record<string, number> = {
   AWS:   6,
   AZURE: 6,
@@ -49,8 +38,6 @@ async function processConfigSyncJob(job: Job<ConfigSyncJobData>): Promise<void> 
 
   try {
     // ── 1. Fixed wide window: now - 6h → now ─────────────────────────────────
-    // Same logic as Azure Activity Logs page (startTime = now - preset, endTime = now).
-    // DB upsert on sourceEventId deduplicates — no lastCheck bookkeeping needed.
     const windowHours = PROVIDER_WINDOW_HOURS[provider] ?? 6;
     const checkEnd    = new Date();
     const since       = new Date(checkEnd.getTime() - windowHours * 60 * 60 * 1000);
@@ -151,9 +138,6 @@ async function processConfigSyncJob(job: Job<ConfigSyncJobData>): Promise<void> 
       }).catch(() => {});
       throw err; // re-throw so BullMQ marks job as failed
     }
-
-    // No lastCheck to advance — fixed window approach re-queries from (now - 6h)
-    // every run. DB upsert deduplicates. Nothing to persist in Redis.
 
   } catch (err) {
     logger.error(

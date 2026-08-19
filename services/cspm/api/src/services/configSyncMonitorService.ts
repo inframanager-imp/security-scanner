@@ -44,6 +44,31 @@ export async function startConfigSync(provider: string, targetId: string): Promi
   logger.info(`[config-sync] Started BullMQ job for ${provider}:${targetId.slice(0, 8)}`);
 }
 
+/**
+ * BCDD-F09 — event-driven trigger. Enqueues a ONE-OFF sync job that the
+ * existing worker (configSyncWorker.ts) picks up immediately, instead of
+ * waiting for the next 30s repeat tick. This is the receiving half of
+ * event-driven detection: point an AWS EventBridge rule / Azure Event Grid
+ * subscription / GCP Pub/Sub push subscription at
+ * POST /api/config-sync/webhook/:provider/:targetId (see routes/configSyncWebhook.ts)
+ * to call this the moment the cloud provider emits a config-change event,
+ * cutting detection latency from ~30s (worst case, mid-poll-cycle) to
+ * whatever the provider's own event delivery lag is.
+ */
+export async function triggerImmediateSync(provider: string, targetId: string): Promise<void> {
+  await configSyncQueue.add(
+    'sync-config-changes',
+    { provider, targetId } satisfies ConfigSyncJobData,
+    {
+      jobId:            `config-sync-webhook-${provider}-${targetId}-${Date.now()}`,
+      attempts:         1,
+      removeOnComplete: 10,
+      removeOnFail:     10,
+    },
+  );
+  logger.info(`[config-sync] Immediate sync triggered via webhook for ${provider}:${targetId.slice(0, 8)}`);
+}
+
 export async function stopConfigSync(provider: string, targetId: string): Promise<void> {
   const jobId = `config-sync-${provider}-${targetId}`;
   const repeatableJobs = await configSyncQueue.getRepeatableJobs();

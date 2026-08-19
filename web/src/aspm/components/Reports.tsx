@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { aspmFetch, aspmUrl } from '../aspmClient';
-import { BarChart3, Shield, Globe, ShieldAlert, Award, FileText, ExternalLink, AlertTriangle, Layers, Activity, Settings, X, Download, Loader2, Code } from 'lucide-react';
+import { BarChart3, Shield, Globe, ShieldAlert, Award, FileText, ExternalLink, AlertTriangle, Layers, Activity, Settings, X, Download, Loader2, Code, Server } from 'lucide-react';
 
 interface ReportsProps {
   tenantId?: string;
@@ -8,8 +8,6 @@ interface ReportsProps {
 
 // ----------------- SUB-COMPONENTS FOR CHARTS -----------------
 
-// Shared vertical bar chart for the severity & group breakdowns. Labels and colours
-// are aligned with the exported PDF report (report_builder.py) for consistency.
 function VBarChart({ title, bars }: { title: string; bars: { label: string; value: number; color: string }[] }) {
   const maxVal = Math.max(...bars.map((b) => b.value), 1);
   return (
@@ -160,7 +158,6 @@ function JobReportsPanel({ targetId, targetName }: JobReportsPanelProps) {
 
   const { mitre_stages, issue_groups, issue_groups_details, compliance_gauges, priorities, assets_count } = data;
 
-  // Calculate counts for charts
   const openVulns: any[] = [];
   if (issue_groups_details) {
     Object.values(issue_groups_details).forEach((list: any) => {
@@ -425,7 +422,7 @@ function JobReportsPanel({ targetId, targetName }: JobReportsPanelProps) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px', overflowY: 'auto', flex: 1 }}>
             {priorities.length === 0 ? (
               <div style={{ textAlign: 'center', color: 'var(--color-muted)', padding: '20px 0', fontSize: '0.75rem' }}>
-                🛡️ No critical vectors detected. Target scope is healthy.
+                No critical vectors detected. Target scope is healthy.
               </div>
             ) : (
               priorities.map((item: any, idx: number) => (
@@ -569,7 +566,6 @@ function JobReportsPanel({ targetId, targetName }: JobReportsPanelProps) {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                   {(vuln.remediation_steps || [vuln.remediation?.explanation]).map((step: string, sIdx: number) => (
                                     <div key={sIdx} style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
-                                      <span style={{ color: 'var(--color-success)', fontWeight: 'bold' }}>❶</span>
                                       <span>{step}</span>
                                     </div>
                                   ))}
@@ -638,7 +634,6 @@ export default function Reports({ tenantId }: ReportsProps) {
     setCompiling(true);
     setCompileProgress(0);
 
-    // Simulate audit synthesis progress loaders
     const interval = setInterval(() => {
       setCompileProgress(prev => {
         if (prev >= 100) {
@@ -675,7 +670,6 @@ export default function Reports({ tenantId }: ReportsProps) {
     );
   }
 
-  // Prepend Consolidated target option
   const consolidatedRow = {
     id: 'All',
     name: 'Consolidated System Scope',
@@ -763,8 +757,17 @@ export default function Reports({ tenantId }: ReportsProps) {
                         >
                           <FileText size={12} color="var(--color-primary)" />
                         </button>
+                        {/* DAST PDF button */}
+                        <button
+                          className="cyber-btn"
+                          style={{ padding: '4px 8px', borderColor: 'rgba(59, 130, 246, 0.3)', background: 'rgba(59, 130, 246, 0.03)' }}
+                          onClick={() => handleExportPDFDirectly(target.id, 'DAST')}
+                          title="Export DAST Web/API PDF"
+                        >
+                          <Server size={12} color="#3b82f6" />
+                        </button>
                         {/* SAST PDF button */}
-                        <button 
+                        <button
                           className="cyber-btn"
                           style={{ padding: '4px 8px', borderColor: 'rgba(168, 85, 247, 0.3)', background: 'rgba(168, 85, 247, 0.03)' }}
                           onClick={() => handleExportPDFDirectly(target.id, 'SAST')}
@@ -856,6 +859,7 @@ export default function Reports({ tenantId }: ReportsProps) {
                   onChange={(e) => setReportType(e.target.value)}
                 >
                   <option value="ALL">Consolidated Audit (All Engines)</option>
+                  <option value="DAST">DAST Web/API (Dynamic Analysis)</option>
                   <option value="SAST">SAST Code Security (Static Analysis)</option>
                   <option value="SCA">SCA Dependency Audit (Software Composition)</option>
                 </select>

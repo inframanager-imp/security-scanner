@@ -22,6 +22,7 @@ import {
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { prisma } from '../config/database';
 import { logger } from '../config/logger';
+import { mapWithConcurrency } from './concurrency';
 import * as credentialService from './credentialService';
 import {
   classifyText,
@@ -83,25 +84,22 @@ async function runAwsDspm(accountId: string): Promise<DspmResult> {
     take: 100,
   });
 
-  let resourcesScanned = 0;
-  let classifications = 0;
-  let findingsEmitted = 0;
-
-  for (const bucket of buckets) {
+  const perBucket = await mapWithConcurrency(buckets, 8, async (bucket) => {
     const bucketName = bucket.nativeId.split(':').pop()?.split('/').pop() ?? bucket.nativeId;
     const region = bucket.region ?? cred.defaultRegion;
     const s3 = new S3Client({ region, credentials });
+    let classifications = 0;
+    let findingsEmitted = 0;
 
     try {
       const result = await scanBucket(s3, bucketName, DEFAULT_SAMPLE_OBJECTS);
-      resourcesScanned++;
       if (result.aggregates.length === 0) {
         // No sensitive data; clear any previous dataSensitivity
         await prisma.resourceInventory.update({
           where: { id: bucket.id },
           data: { dataSensitivity: 'LOW' },
         });
-        continue;
+        return { scanned: true, classifications, findingsEmitted };
       }
 
       const sensitivity = sensitivityForDataTypes(result.aggregates.map((a) => a.type));
@@ -157,12 +155,18 @@ async function runAwsDspm(accountId: string): Promise<DspmResult> {
         await emitDspmFinding(accountId, bucket, result.aggregates);
         findingsEmitted++;
       }
+      return { scanned: true, classifications, findingsEmitted };
     } catch (err) {
       logger.debug('dspm.bucket.failed', {
         accountId, bucketName, error: (err as Error).message,
       });
+      return { scanned: false, classifications: 0, findingsEmitted: 0 };
     }
-  }
+  });
+
+  const resourcesScanned = perBucket.filter((r) => r.scanned).length;
+  const classifications = perBucket.reduce((sum, r) => sum + r.classifications, 0);
+  const findingsEmitted = perBucket.reduce((sum, r) => sum + r.findingsEmitted, 0);
 
   return { resourcesScanned, classifications, findingsEmitted };
 }

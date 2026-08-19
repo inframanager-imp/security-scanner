@@ -34,7 +34,6 @@ async function processAzureScanJob(job: Job<AzureScanJobData>): Promise<void> {
   const startTime = Date.now();
 
   try {
-    // Load credential
     const cred = await prisma.azureCredential.findUnique({ where: { subscriptionId } });
     if (!cred) throw new Error('No Azure credentials configured for this subscription');
 

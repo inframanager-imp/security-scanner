@@ -92,14 +92,4 @@ export const neptuneChecks: CheckMetadata[] = [
     remediation: 'Move the cluster to a DB subnet group composed only of private subnets without Internet gateway routes, and reach it through VPC-internal networking.',
     tags: ['neptune', 'network', 'public-subnet'],
   },
-  {
-    checkId: 'neptune_cluster_copy_tags_to_snapshots',
-    provider: 'aws',
-    service: 'neptune',
-    title: 'Neptune Cluster Tags Not Copied to Snapshots',
-    severity: 'LOW',
-    description: 'Checks that the Neptune cluster is configured to copy its tags to snapshots so tag-based access controls, retention and cost tracking keep applying to backup data.',
-    remediation: 'Enable tag copying: aws neptune modify-db-cluster --db-cluster-identifier <cluster-id> --copy-tags-to-snapshot --apply-immediately. Standardize the tag taxonomy and automate tagging checks in provisioning.',
-    tags: ['neptune', 'snapshot', 'governance'],
-  },
 ];

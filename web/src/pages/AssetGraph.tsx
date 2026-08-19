@@ -80,7 +80,6 @@ export function AssetGraph() {
   const [depth, setDepth] = useState<number>(2);
   const [edgeFilter, setEdgeFilter] = useState<Set<DependencyType>>(new Set());
 
-  // Load accounts/subs/projects per provider
   const { data: awsAccounts = [] } = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
@@ -107,7 +106,6 @@ export function AssetGraph() {
     if (targets.length > 0 && !targetId) setTargetId(targets[0].id);
   }, [targets, targetId]);
 
-  // Stats
   const { data: stats } = useQuery({
     queryKey: ['graph-stats', provider, targetId],
     queryFn: () => graphApi.stats(provider, targetId),
@@ -116,7 +114,7 @@ export function AssetGraph() {
   });
 
   // Exposed resources for the picker
-  const { data: exposed = [] } = useQuery({
+  const { data: exposed = [], isLoading: exposedLoading } = useQuery({
     queryKey: ['graph-exposed', provider, targetId],
     queryFn: () => graphApi.exposure(provider, targetId),
     enabled: Boolean(targetId),
@@ -139,12 +137,15 @@ export function AssetGraph() {
   });
 
   useEffect(() => {
-    if (resources.length > 0 && !focusResourceId) {
+    if (focusResourceId) return;
+    if (exposedLoading) return; // wait for the exposed-resources query to settle before falling back
+    if (exposed.length > 0) {
+      setFocusResourceId(exposed[0].resourceInventoryId);
+    } else if (resources.length > 0) {
       setFocusResourceId(resources[0].id);
     }
-  }, [resources, focusResourceId]);
+  }, [resources, exposed, exposedLoading, focusResourceId]);
 
-  // Neighborhood subgraph
   const { data: subgraph, isLoading: subgraphLoading } = useQuery({
     queryKey: ['graph-neighborhood', focusResourceId, depth, Array.from(edgeFilter).sort()],
     queryFn: () =>
@@ -244,7 +245,6 @@ export function AssetGraph() {
         </Button>
       </div>
 
-      {/* Provider / account picker */}
       <Card>
         <div className="flex flex-wrap gap-4 items-end">
           <div>
@@ -303,7 +303,6 @@ export function AssetGraph() {
           </div>
         </div>
 
-        {/* Edge type filter chips */}
         <div className="mt-4 flex flex-wrap gap-2">
           {allEdgeTypes.map((t) => {
             const active = edgeFilter.has(t);
@@ -339,7 +338,6 @@ export function AssetGraph() {
         </div>
       </Card>
 
-      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <div className="text-xs text-gray-500">Resources</div>
@@ -367,7 +365,6 @@ export function AssetGraph() {
         </Card>
       </div>
 
-      {/* Graph canvas */}
       <Card>
         <div style={{ height: 560 }}>
           {subgraphLoading && (
@@ -389,7 +386,6 @@ export function AssetGraph() {
         </div>
       </Card>
 
-      {/* Exposed-resource list */}
       <Card title="Internet-exposed resources">
         {exposed.length === 0 ? (
           <div className="text-sm text-gray-500 py-4">

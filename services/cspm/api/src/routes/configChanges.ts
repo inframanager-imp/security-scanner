@@ -109,7 +109,7 @@ router.post('/reconcile-inventory', async (req: Request, res: Response) => {
 
   const changes = await prisma.configChange.findMany({
     where,
-    select: { eventName: true, resourceId: true, resourceName: true, resourceType: true, newValue: true, eventTime: true },
+    select: { eventName: true, resourceId: true, resourceName: true, eventTime: true },
     orderBy: { eventTime: 'asc' },
   });
 
@@ -310,9 +310,6 @@ router.post('/sync', async (req: Request, res: Response) => {
             description:       event.description ?? null,
           });
 
-          // ── newValue: fetch real ARM state (full post-change resource config) ──
-          // ARM GET covers ALL Azure resource types via a single generic REST call.
-          // This is what enables exact parameter diffs for any Azure resource.
           const eventResourceId = event.resourceId ?? classified.resourceId;
           const isWrite  = op.endsWith('/write') || op.endsWith('/action');
           const isDelete = op.endsWith('/delete');
@@ -678,8 +675,6 @@ router.get('/runs', async (req: Request, res: Response) => {
         orderBy: { createdAt: 'desc' },
         take:    10,
       }),
-      // Separately fetch the most recent COMPLETED run so the UI always has a
-      // reliable "last successful sync" time regardless of current run status.
       prisma.configSyncRun.findFirst({
         where:   { provider, targetId, status: 'COMPLETED' },
         orderBy: { completedAt: 'desc' },

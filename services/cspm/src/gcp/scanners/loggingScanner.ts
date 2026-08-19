@@ -1,70 +1,65 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { GcpBaseScanner } from './baseScanner';
 import { ScanningResult } from '../../utils/types';
 
-// CIS GCP Benchmark required log metric filters. `checkId` matches the
-// corresponding Prowler logging_log_metric_filter_and_alert_for_* check
-// verbatim; `filter` is the exact log-based-metric filter string Prowler
-// looks for (substring match against LogMetric.filter, same as upstream).
+// CIS GCP Benchmark required log metric filters
 const REQUIRED_LOG_FILTERS = [
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled',
+    id:    'project-ownership-changes',
     title: 'Project ownership assignment/changes',
-    filter: '(protoPayload.serviceName="cloudresourcemanager.googleapis.com") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action="REMOVE" AND protoPayload.serviceData.policyDelta.bindingDeltas.role="roles/owner") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action="ADD" AND protoPayload.serviceData.policyDelta.bindingDeltas.role="roles/owner")',
+    filter: 'resource.type="project" AND (protoPayload.serviceName="cloudresourcemanager.googleapis.com") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action="ADD" AND protoPayload.serviceData.policyDelta.bindingDeltas.role="roles/owner") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action="REMOVE" AND protoPayload.serviceData.policyDelta.bindingDeltas.role="roles/owner")',
+    cisControl: 'CIS-2.4',
+    checkId: 'logging_log_metric_filter_and_alert_for_project_ownership_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_audit_configuration_changes_enabled',
+    id:    'audit-config-changes',
     title: 'Audit configuration changes',
     filter: 'protoPayload.methodName="SetIamPolicy" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*',
+    cisControl: 'CIS-2.5',
+    checkId: 'logging_log_metric_filter_and_alert_for_audit_configuration_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_custom_role_changes_enabled',
+    id:    'custom-role-changes',
     title: 'Custom role changes',
-    filter: 'resource.type="iam_role" AND (protoPayload.methodName="google.iam.admin.v1.CreateRole" OR protoPayload.methodName="google.iam.admin.v1.DeleteRole" OR protoPayload.methodName="google.iam.admin.v1.UpdateRole")',
+    filter: 'resource.type="iam_role" AND protoPayload.methodName="google.iam.admin.v1.CreateRole" OR protoPayload.methodName="google.iam.admin.v1.DeleteRole" OR protoPayload.methodName="google.iam.admin.v1.UpdateRole"',
+    cisControl: 'CIS-2.6',
+    checkId: 'logging_log_metric_filter_and_alert_for_custom_role_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_vpc_firewall_rule_changes_enabled',
+    id:    'vpc-firewall-rule-changes',
     title: 'VPC network firewall rule changes',
-    filter: 'resource.type="gce_firewall_rule" AND (protoPayload.methodName:"compute.firewalls.patch" OR protoPayload.methodName:"compute.firewalls.insert" OR protoPayload.methodName:"compute.firewalls.delete")',
+    filter: 'resource.type="gce_firewall_rule" AND jsonPayload.event_subtype="compute.firewalls.patch" OR jsonPayload.event_subtype="compute.firewalls.insert"',
+    cisControl: 'CIS-2.7',
+    checkId: 'logging_log_metric_filter_and_alert_for_vpc_firewall_rule_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_vpc_network_route_changes_enabled',
+    id:    'vpc-route-changes',
     title: 'VPC network route changes',
-    filter: 'resource.type="gce_route" AND (protoPayload.methodName:"compute.routes.delete" OR protoPayload.methodName:"compute.routes.insert")',
+    filter: 'resource.type="gce_route" AND jsonPayload.event_subtype="compute.routes.delete" OR jsonPayload.event_subtype="compute.routes.insert"',
+    cisControl: 'CIS-2.8',
+    checkId: 'logging_log_metric_filter_and_alert_for_vpc_network_route_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_vpc_network_changes_enabled',
+    id:    'vpc-network-changes',
     title: 'VPC network changes',
-    filter: 'resource.type="gce_network" AND (protoPayload.methodName:"compute.networks.insert" OR protoPayload.methodName:"compute.networks.patch" OR protoPayload.methodName:"compute.networks.delete" OR protoPayload.methodName:"compute.networks.removePeering" OR protoPayload.methodName:"compute.networks.addPeering")',
+    filter: 'resource.type=gce_network AND jsonPayload.event_subtype="compute.networks.insert" OR jsonPayload.event_subtype="compute.networks.patch" OR jsonPayload.event_subtype="compute.networks.delete" OR jsonPayload.event_subtype="compute.networks.removePeering" OR jsonPayload.event_subtype="compute.networks.addPeering"',
+    cisControl: 'CIS-2.9',
+    checkId: 'logging_log_metric_filter_and_alert_for_vpc_network_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_bucket_permission_changes_enabled',
+    id:    'cloud-storage-iam-changes',
     title: 'Cloud Storage IAM permission changes',
-    filter: 'resource.type="gcs_bucket" AND protoPayload.methodName="storage.setIamPermissions"',
+    filter: 'resource.type=gcs_bucket AND protoPayload.methodName="storage.setIamPermissions"',
+    cisControl: 'CIS-2.10',
+    checkId: 'logging_log_metric_filter_and_alert_for_bucket_permission_changes_enabled',
   },
   {
-    checkId: 'logging_log_metric_filter_and_alert_for_sql_instance_configuration_changes_enabled',
+    id:    'sql-instance-config-changes',
     title: 'Cloud SQL instance configuration changes',
     filter: 'protoPayload.methodName="cloudsql.instances.update"',
+    cisControl: 'CIS-2.11',
+    checkId: 'logging_log_metric_filter_and_alert_for_sql_instance_configuration_changes_enabled',
   },
-  {
-    checkId: 'logging_log_metric_filter_and_alert_for_compute_configuration_changes_enabled',
-    title: 'Compute Engine configuration changes',
-    filter: 'protoPayload.serviceName="compute.googleapis.com"',
-  },
-] as const;
-
-interface LogMetricLite {
-  name?: string | null;
-  filter?: string | null;
-}
-
-interface AlertPolicyLite {
-  name?: string | null;
-  displayName?: string | null;
-  /** Flattened filter/query strings pulled from every condition on the policy. */
-  conditionFilters: string[];
-}
+];
 
 export class GcpLoggingScanner extends GcpBaseScanner {
   constructor(client: import('../client').default) {
@@ -113,60 +108,31 @@ export class GcpLoggingScanner extends GcpBaseScanner {
         }
       } catch { /* audit config check optional */ }
 
-      // 2. Check for required log metric filters (CIS Benchmark) AND that each
-      // matching metric has a Cloud Monitoring alert policy attached to it.
-      // A log-based metric with no alert policy is a silent counter — nobody
-      // is notified when the condition it tracks actually occurs — so we
-      // treat "filter exists but unalerted" as a finding, same as Prowler.
+      // 2. Check for required log metric filters (CIS Benchmark)
       try {
         const metricsRes = await logging.projects.metrics.list({
           parent: `projects/${project}`,
         });
-        const metrics: LogMetricLite[] = metricsRes.data.metrics ?? [];
-
-        const alertPolicies = await this.listAlertPolicies(project);
+        const metrics = metricsRes.data.metrics ?? [];
 
         for (const required of REQUIRED_LOG_FILTERS) {
-          // Prowler matches on exact substring containment of the literal
-          // filter string within the metric's filter, not fuzzy keywords.
-          const matchingMetrics = metrics.filter(m => (m.filter ?? '').includes(required.filter));
+          // Check if any metric has a filter that covers this requirement
+          // We look for simplified keyword matching since exact filter strings vary
+          const keyword = required.id.split('-')[0]; // e.g., 'project', 'audit', 'custom', 'vpc', 'cloud', 'sql'
+          const hasMetric = metrics.some(m =>
+            m.filter?.toLowerCase().includes(keyword) ||
+            m.name?.toLowerCase().includes(required.id),
+          );
 
-          if (matchingMetrics.length === 0) {
+          if (!hasMetric) {
             findings.push(this.emit(
               required.checkId,
-              { project, missingFilter: required.title },
-              {
-                message: `Project "${project}" does not have a log-based metric for "${required.title}". Without this metric, changes to critical resources cannot trigger alerts.`,
-              },
-            ));
-            continue;
-          }
-
-          // At least one metric with the required filter exists. It only
-          // satisfies the check if some alert policy's condition filter
-          // references that specific metric by name (Prowler: `metric.name
-          // in filter`) — matching the metric's short/user name inside the
-          // alert condition's filter/query string.
-          const unalertedMetric = matchingMetrics.find((m) => {
-            const metricName = m.name ?? '';
-            if (!metricName) return true;
-            return !alertPolicies.some((policy) =>
-              policy.conditionFilters.some((f) => f.includes(metricName)),
-            );
-          });
-
-          if (unalertedMetric) {
-            findings.push(this.emit(
-              required.checkId,
-              { project, metric: unalertedMetric.name, missingFilter: required.title },
-              {
-                message: `Log metric filter for "${required.title}" exists in project "${project}" (metric "${unalertedMetric.name}") but no Cloud Monitoring alert policy references it, so matching events are recorded but nobody is notified.`,
-                remediation: `Create a Cloud Monitoring alert policy whose condition filter references metric.type="logging.googleapis.com/user/${unalertedMetric.name}" so that changes to "${required.title}" actually raise a notification instead of only incrementing a metric.`,
-              },
+              { project, missingFilter: required.id, cisControl: required.cisControl },
+              { message: `Project "${project}" does not have a log-based metric for "${required.title}" (${required.cisControl}). Without this metric, changes to critical resources cannot trigger alerts.` },
             ));
           }
         }
-      } catch { /* metrics/alert-policy check optional */ }
+      } catch { /* metrics check optional */ }
 
       // 3. Check for log sinks (export to long-term storage)
       try {
@@ -179,21 +145,21 @@ export class GcpLoggingScanner extends GcpBaseScanner {
           findings.push(this.emit(
             'logging_sink_created',
             { project },
-            {
-              message: `Project "${project}" has no log sinks configured. Cloud Logging retains logs for only 30 days (admin activity) or 30 days (data access) by default. Without a sink, logs cannot be retained for compliance requirements (e.g., 1-year retention for SOC2, PCI).`,
-            },
+            { message: `Project "${project}" has no log sinks configured. Cloud Logging retains logs for only 30 days (admin activity) or 30 days (data access) by default. Without a sink, logs cannot be retained for compliance requirements (e.g., 1-year retention for SOC2, PCI).` },
           ));
         } else {
-          // Check if any sink covers all log entries (empty/unfiltered filter)
-          const hasAllLogsSink = sinks.some(s => !s.filter || s.filter === '');
-          if (!hasAllLogsSink) {
-            findings.push(this.emit(
-              'logging_sink_created',
+          // Check if any sink covers _Required or _Default logs
+          const hasAdminSink = sinks.some(s =>
+            !s.filter || s.filter === '' || s.filter?.includes('logName'),
+          );
+          if (!hasAdminSink) {
+            findings.push(this.finding(
+              'Log sinks do not appear to capture admin activity logs',
+              `Project "${project}" has ${sinks.length} log sink(s) but none appear to capture all admin activity logs. Admin activity logs document all privileged operations and should be retained for audit trails.`,
+              'MEDIUM',
               { project, sinkCount: sinks.length },
-              {
-                message: `Project "${project}" has ${sinks.length} log sink(s) but none appear to export all log entries. Filtered sinks may miss admin activity or data access logs needed for a complete audit trail.`,
-                remediation: 'Ensure at least one log sink exports all log entries. Use an empty inclusion filter (or a covering org-level sink with includeChildren) so no log category is silently dropped.',
-              },
+              'Ensure at least one log sink exports admin activity logs. Use an empty filter or include "logName:cloudaudit.googleapis.com/activity" to capture all admin logs.',
+              ['logging', 'retention', 'audit-logs'],
             ));
           }
         }
@@ -205,51 +171,10 @@ export class GcpLoggingScanner extends GcpBaseScanner {
         `Could not complete Cloud Logging scan: ${(err as Error).message}`,
         'INFO',
         { error: (err as Error).message },
-        'Ensure the service account has roles/logging.viewer, roles/monitoring.viewer, and roles/iam.securityReviewer on the project.',
+        'Ensure the service account has roles/logging.viewer and roles/iam.securityReviewer on the project.',
       ));
     }
 
     return findings;
-  }
-
-  /**
-   * List alert policies for the project and flatten each policy's condition
-   * filters/queries into a single searchable array — mirrors Prowler's
-   * AlertPolicy.filters (conditionThreshold / conditionAbsent / conditionMatchedLog
-   * .filter, or conditionMonitoringQueryLanguage.query).
-   */
-  private async listAlertPolicies(project: string): Promise<AlertPolicyLite[]> {
-    const monitoring = this.client.monitoring();
-    const policies: AlertPolicyLite[] = [];
-    let pageToken: string | undefined;
-
-    do {
-      const res: any = await monitoring.projects.alertPolicies.list({
-        name: `projects/${project}`,
-        pageToken,
-      });
-      const alertPolicies = res.data.alertPolicies ?? [];
-
-      for (const policy of alertPolicies) {
-        const conditionFilters: string[] = [];
-        for (const condition of policy.conditions ?? []) {
-          const filterValue =
-            condition.conditionThreshold?.filter ??
-            condition.conditionAbsent?.filter ??
-            condition.conditionMatchedLog?.filter ??
-            condition.conditionMonitoringQueryLanguage?.query;
-          if (filterValue) conditionFilters.push(filterValue);
-        }
-        policies.push({
-          name: policy.name,
-          displayName: policy.displayName,
-          conditionFilters,
-        });
-      }
-
-      pageToken = res.data.nextPageToken ?? undefined;
-    } while (pageToken);
-
-    return policies;
   }
 }

@@ -9,8 +9,6 @@ from typing import Dict, Any, List, Optional
 import psycopg
 from psycopg.rows import dict_row
 
-# ── Connection config ─────────────────────────────────────────────────────────
-# Shared Postgres with the CSPM service; ASPM data lives in its own schema.
 DB_SCHEMA = os.environ.get("DB_SCHEMA", "aspm")
 if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", DB_SCHEMA):
     raise ValueError(f"Invalid DB_SCHEMA: {DB_SCHEMA!r}")
@@ -174,16 +172,71 @@ def init_db():
     cursor.execute("INSERT INTO integrations (name, connected, config) VALUES ('slack', 1, '{\"channel\": \"#sec-alerts\"}') ON CONFLICT (name) DO NOTHING;")
     cursor.execute("INSERT INTO integrations (name, connected, config) VALUES ('splunk', 0, '{\"host\": \"\"}') ON CONFLICT (name) DO NOTHING;")
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS git_platforms (
+        id            TEXT PRIMARY KEY,
+        platform_id   TEXT NOT NULL,
+        host_pattern  TEXT NOT NULL,
+        pr_term       TEXT NOT NULL DEFAULT 'pull request',
+        api_base      TEXT,
+        self_hosted   INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    );
+    """)
+    _now = datetime.now().isoformat()
+    _default_platforms = [
+        ("github",    r"(^|[./])github\.com$",    "pull request",  "https://api.github.com"),
+        ("gitlab",    r"(^|[./])gitlab\.com$",     "merge request", "https://gitlab.com/api/v4"),
+        ("bitbucket", r"(^|[./])bitbucket\.org$",  "merge request", "https://api.bitbucket.org/2.0"),
+        ("gitee",     r"(^|[./])gitee\.com$",      "pull request",  "https://gitee.com/api/v5"),
+        ("gitcode",   r"(^|[./])gitcode\.com$",    "pull request",  "https://api.gitcode.com/api/v5"),
+    ]
+    for platform_id, pattern, pr_term, api_base in _default_platforms:
+        cursor.execute(
+            """INSERT INTO git_platforms (id, platform_id, host_pattern, pr_term, api_base, self_hosted, created_at, updated_at)
+               VALUES (%s, %s, %s, %s, %s, 0, %s, %s)
+               ON CONFLICT (id) DO NOTHING""",
+            (f"default-{platform_id}", platform_id, pattern, pr_term, api_base, _now, _now),
+        )
+
     # Forward-compatible column adds (Postgres supports IF NOT EXISTS natively)
     cursor.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS tls_version TEXT;")
     cursor.execute("ALTER TABLE assets ADD COLUMN IF NOT EXISTS cipher_suite TEXT;")
     cursor.execute("ALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS openapi_spec TEXT;")
+    # Vulnerability Pipeline: which branch to checkout (blank = provider default).
+    cursor.execute("ALTER TABLE targets ADD COLUMN IF NOT EXISTS branch TEXT;")
+    cursor.execute("ALTER TABLE targets ADD COLUMN IF NOT EXISTS last_index_hash TEXT;")
 
-    # ── Duplicate prevention ──────────────────────────────────────────────────
-    # Tool/scan-generated rows must be unique. We (1) purge any pre-existing
-    # duplicates, then (2) add DB-level UNIQUE constraints so concurrent scans
-    # can't race past the app-level checks. Each step is wrapped so re-running
-    # init_db() on an already-migrated DB is a no-op (autocommit isolates failures).
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS code_embeddings (
+        id            TEXT PRIMARY KEY,
+        target_id     TEXT NOT NULL,
+        file_path     TEXT NOT NULL,
+        chunk_index   INTEGER NOT NULL,
+        chunk_text    TEXT NOT NULL,
+        embedding     JSONB NOT NULL,
+        created_at    TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_code_embeddings_target ON code_embeddings (target_id);")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS fix_cache (
+        id            TEXT PRIMARY KEY,
+        cwe           TEXT,
+        title         TEXT NOT NULL,
+        description   TEXT,
+        embedding     JSONB NOT NULL,
+        unsafe        TEXT NOT NULL,
+        safe          TEXT NOT NULL,
+        explanation   TEXT NOT NULL,
+        hit_count     INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fix_cache_cwe ON fix_cache (cwe);")
+
     def _safe(sql: str):
         try:
             cursor.execute(sql)
@@ -203,7 +256,6 @@ def init_db():
     conn.close()
 
 
-# Initialize DB on import
 init_db()
 
 # --- TARGETS API helpers ---
@@ -287,15 +339,13 @@ def get_vulnerabilities(target_id: Optional[str] = None, severity: Optional[str]
         vulns.append(vd)
     return vulns
 
-def add_vulnerability(target_id: str, title: str, severity: str, type_val: str, cwe: str, asset: str, description: str, poc: Dict[str, Any], ai_analysis: Dict[str, Any], remediation: Dict[str, Any], status: str = "Open") -> str:
+def add_vulnerability(target_id: str, title: str, severity: str, type_val: str, cwe: str, asset: str, description: str, poc: Dict[str, Any], ai_analysis: Dict[str, Any], remediation: Dict[str, Any], status: str = "Open", pt_verification: Optional[Dict[str, Any]] = None) -> str:
     conn = get_db_connection()
     vuln_id = f"vuln-{uuid.uuid4().hex[:8]}"
     created_at = datetime.now().isoformat()
     sla_days = 14 if severity == "Critical" else (30 if severity == "High" else 60)
     sla_deadline = (datetime.now() + timedelta(days=sla_days)).isoformat()
 
-    # Race-safe dedup: one row per (target_id, cwe, asset, title). On a repeat
-    # finding we refresh the evidence and return the existing row id (no duplicate).
     row = conn.execute(
         """INSERT INTO vulnerabilities
         (id, target_id, title, severity, type, cwe, status, created_at, sla_deadline, assigned_to, asset, description, poc, ai_analysis, remediation, pt_verification)
@@ -305,11 +355,13 @@ def add_vulnerability(target_id: str, title: str, severity: str, type_val: str, 
               description = EXCLUDED.description,
               poc = EXCLUDED.poc,
               ai_analysis = EXCLUDED.ai_analysis,
-              remediation = EXCLUDED.remediation
+              remediation = EXCLUDED.remediation,
+              pt_verification = COALESCE(EXCLUDED.pt_verification, vulnerabilities.pt_verification)
         RETURNING id""",
         (
             vuln_id, target_id, title, severity, type_val, cwe, status, created_at, sla_deadline, "Unassigned", asset, description,
-            json.dumps(poc), json.dumps(ai_analysis), json.dumps(remediation), None
+            json.dumps(poc), json.dumps(ai_analysis), json.dumps(remediation),
+            json.dumps(pt_verification) if pt_verification else None
         )
     ).fetchone()
     conn.commit()
@@ -319,22 +371,102 @@ def add_vulnerability(target_id: str, title: str, severity: str, type_val: str, 
 def update_vulnerability(vuln_id: str, fields: Dict[str, Any]):
     conn = get_db_connection()
 
-    allowed = ["status", "assigned_to", "pt_verification"]
+    allowed = ["status", "assigned_to", "pt_verification", "ai_analysis", "remediation", "severity"]
+    json_fields = ("pt_verification", "ai_analysis", "remediation")
     set_clauses = []
     params = []
 
     for k, v in fields.items():
         if k in allowed:
             set_clauses.append(f"{k} = %s")
-            if k == "pt_verification":
-                params.append(json.dumps(v))
-            else:
-                params.append(v)
+            params.append(json.dumps(v) if k in json_fields else v)
 
     if set_clauses:
         params.append(vuln_id)
         conn.execute(f"UPDATE vulnerabilities SET {', '.join(set_clauses)} WHERE id = %s", params)
         conn.commit()
+    conn.close()
+
+
+def clear_embeddings(target_id: str):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM code_embeddings WHERE target_id = %s", (target_id,))
+    conn.commit()
+    conn.close()
+
+
+def save_embedding(target_id: str, file_path: str, chunk_index: int, chunk_text: str, embedding: List[float]):
+    conn = get_db_connection()
+    row_id = f"emb-{uuid.uuid4().hex[:10]}"
+    conn.execute(
+        """INSERT INTO code_embeddings (id, target_id, file_path, chunk_index, chunk_text, embedding, created_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (row_id, target_id, file_path, chunk_index, chunk_text, json.dumps(embedding), datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_embeddings(target_id: str) -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT file_path, chunk_index, chunk_text, embedding FROM code_embeddings WHERE target_id = %s",
+        (target_id,),
+    ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["embedding"] = json.loads(d["embedding"]) if isinstance(d["embedding"], str) else d["embedding"]
+        out.append(d)
+    return out
+
+
+def save_fix(cwe: str, title: str, description: str, embedding: List[float], unsafe: str, safe: str, explanation: str) -> str:
+    """Stores a new AI-generated fix for future reuse. Called after agent-api
+    generates a fix that wasn't already served from the cache."""
+    conn = get_db_connection()
+    row_id = f"fix-{uuid.uuid4().hex[:10]}"
+    conn.execute(
+        """INSERT INTO fix_cache (id, cwe, title, description, embedding, unsafe, safe, explanation, hit_count, created_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, %s)""",
+        (row_id, cwe, title[:300], (description or "")[:2000], json.dumps(embedding), unsafe, safe, explanation, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_fix_cache_candidates(cwe: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
+    """Candidates for a similarity search. Narrows by CWE first when known —
+    a fix for CWE-89 (SQLi) is never a valid reuse for CWE-79 (XSS) regardless
+    of how similar the embeddings look, so this is a correctness filter, not
+    just a perf one — then caps at `limit` rows the same way code_embeddings'
+    RAG lookups do, since Python-side cosine scoring is O(rows)."""
+    conn = get_db_connection()
+    if cwe:
+        rows = conn.execute(
+            "SELECT id, cwe, title, unsafe, safe, explanation, embedding FROM fix_cache WHERE cwe = %s ORDER BY hit_count DESC LIMIT %s",
+            (cwe, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, cwe, title, unsafe, safe, explanation, embedding FROM fix_cache ORDER BY hit_count DESC LIMIT %s",
+            (limit,),
+        ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["embedding"] = json.loads(d["embedding"]) if isinstance(d["embedding"], str) else d["embedding"]
+        out.append(d)
+    return out
+
+
+def record_fix_cache_hit(fix_id: str):
+    conn = get_db_connection()
+    conn.execute("UPDATE fix_cache SET hit_count = hit_count + 1 WHERE id = %s", (fix_id,))
+    conn.commit()
     conn.close()
 
 # --- ASSETS API helpers ---
@@ -356,7 +488,6 @@ def get_assets(target_id: Optional[str] = None) -> Dict[str, Any]:
 
     domain = target_row["url"].replace("https://", "").replace("http://", "").split("/")[0].split(":")[0] if target_row else "consolidated.com"
 
-    # Compute summary
     live_hosts = len(subdomains)
     open_ports_count = sum(len(s["ports"]) for s in subdomains)
 
@@ -444,6 +575,78 @@ def toggle_integration_status(name: str) -> Dict[str, Any]:
     conf = json.loads(row["config"]) if row["config"] else {}
     return {"connected": bool(new_connected), **conf}
 
+# --- GIT PLATFORMS (Vulnerability Pipeline platform detection) helpers ---
+
+def _git_platform_row_to_dict(r) -> Dict[str, Any]:
+    return {
+        "id": r["id"], "platform_id": r["platform_id"], "host_pattern": r["host_pattern"],
+        "pr_term": r["pr_term"], "api_base": r["api_base"], "self_hosted": bool(r["self_hosted"]),
+        "created_at": r["created_at"], "updated_at": r["updated_at"],
+    }
+
+def list_git_platforms() -> List[Dict[str, Any]]:
+    conn = get_db_connection()
+    rows = conn.execute("SELECT * FROM git_platforms ORDER BY created_at ASC").fetchall()
+    conn.close()
+    return [_git_platform_row_to_dict(r) for r in rows]
+
+def create_git_platform(platform_id: str, host_pattern: str, pr_term: str = "pull request",
+                         api_base: Optional[str] = None, self_hosted: bool = False) -> Dict[str, Any]:
+    try:
+        re.compile(host_pattern)
+    except re.error as e:
+        raise ValueError(f"host_pattern is not a valid regex: {e}")
+
+    row_id = f"gp-{uuid.uuid4().hex[:8]}"
+    now = datetime.now().isoformat()
+    conn = get_db_connection()
+    conn.execute(
+        """INSERT INTO git_platforms (id, platform_id, host_pattern, pr_term, api_base, self_hosted, created_at, updated_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (row_id, platform_id, host_pattern, pr_term, api_base, int(self_hosted), now, now),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM git_platforms WHERE id = %s", (row_id,)).fetchone()
+    conn.close()
+    return _git_platform_row_to_dict(row)
+
+def update_git_platform(gp_id: str, **fields) -> Dict[str, Any]:
+    allowed = {"platform_id", "host_pattern", "pr_term", "api_base", "self_hosted"}
+    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if not updates:
+        raise ValueError("No updatable fields provided")
+    if "host_pattern" in updates:
+        try:
+            re.compile(updates["host_pattern"])
+        except re.error as e:
+            raise ValueError(f"host_pattern is not a valid regex: {e}")
+    if "self_hosted" in updates:
+        updates["self_hosted"] = int(bool(updates["self_hosted"]))
+
+    conn = get_db_connection()
+    existing = conn.execute("SELECT id FROM git_platforms WHERE id = %s", (gp_id,)).fetchone()
+    if not existing:
+        conn.close()
+        raise ValueError("Git platform not found")
+
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    params = list(updates.values()) + [datetime.now().isoformat(), gp_id]
+    conn.execute(f"UPDATE git_platforms SET {set_clause}, updated_at = %s WHERE id = %s", params)
+    conn.commit()
+    row = conn.execute("SELECT * FROM git_platforms WHERE id = %s", (gp_id,)).fetchone()
+    conn.close()
+    return _git_platform_row_to_dict(row)
+
+def delete_git_platform(gp_id: str) -> None:
+    conn = get_db_connection()
+    row = conn.execute("SELECT id FROM git_platforms WHERE id = %s", (gp_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("Git platform not found")
+    conn.execute("DELETE FROM git_platforms WHERE id = %s", (gp_id,))
+    conn.commit()
+    conn.close()
+
 # --- SCAN LOGS helpers ---
 def add_scan_log(target_id: str, scan_type: str, status: str, log_list: List[str]) -> str:
     log_id = f"scan-{uuid.uuid4().hex[:8]}"
@@ -455,6 +658,35 @@ def add_scan_log(target_id: str, scan_type: str, status: str, log_list: List[str
     conn.commit()
     conn.close()
     return log_id
+
+
+def get_scan_logs(target_id: str, scan_type: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Persisted scan-log rows (newest first) so a pipeline run's log lines
+    survive navigating away/back — the frontend no longer has to hold them
+    only in component state."""
+    conn = get_db_connection()
+    if scan_type:
+        rows = conn.execute(
+            "SELECT id, target_id, scan_type, status, logs, created_at FROM scan_logs "
+            "WHERE target_id = %s AND scan_type = %s ORDER BY created_at DESC LIMIT %s",
+            (target_id, scan_type, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, target_id, scan_type, status, logs, created_at FROM scan_logs "
+            "WHERE target_id = %s ORDER BY created_at DESC LIMIT %s",
+            (target_id, limit),
+        ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["logs"] = json.loads(d["logs"])
+        except Exception:
+            d["logs"] = []
+        out.append(d)
+    return out
 
 # --- SCAN JOBS helpers ---
 def reset_stale_jobs():

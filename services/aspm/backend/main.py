@@ -1,6 +1,11 @@
 import asyncio
+import json
+import logging
+import os
 import urllib.parse
 from fastapi import FastAPI, Query, HTTPException, Body, Depends
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from typing import Dict, Any, List, Optional
@@ -13,30 +18,38 @@ import backend.report_builder as report_builder
 from backend.ai_engine import get_ai_remediation_diff
 from backend.auth import verify_jwt
 
-# Every route requires a valid CSPM-issued access token (unified login).
 app = FastAPI(
     title="Aegis Sec ASPM Core Server",
     version="1.1.0",
     dependencies=[Depends(verify_jwt)],
+    docs_url="/api/aspm/docs",
+    redoc_url="/api/aspm/redoc",
+    openapi_url="/api/aspm/openapi.json",
 )
 
 # Fail any scan orphaned by a previous restart (status left 'Scanning'/'Queued').
 db.reset_stale_jobs()
 
+_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGIN", "http://localhost:8080").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ----------------- HEALTH -----------------
+
+@app.get("/api/health")
+def health() -> Dict[str, Any]:
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
 # ----------------- TARGETS API (Replacing Tenants) -----------------
 
 @app.get("/api/tenants")
 def get_tenants_compatibility():
-    # Frontend App.tsx loads tenants to populate the dropdown.
-    # We return target ID mapped to Target Name.
     return db.get_targets_dict()
 
 def validate_target_inputs(name: str, url: str, target_type: str, auth_type: str):
@@ -95,6 +108,7 @@ def create_target(
     auth_key: str = Body("", embed=True),
     auth_val: str = Body("", embed=True)
 ):
+    url = url.strip()
     validate_target_inputs(name, url, target_type, auth_type)
     if not url:
         raise HTTPException(status_code=400, detail="Target URL/IP is required")
@@ -119,11 +133,13 @@ def edit_target(
     target_type: str = Body(..., embed=True),
     auth_type: str = Body("none", embed=True),
     auth_key: str = Body("", embed=True),
-    auth_val: str = Body("", embed=True)
+    auth_val: str = Body("", embed=True),
+    branch: str = Body("", embed=True),  # Vuln Pipeline: checkout branch, blank = provider default
 ):
     target = db.get_target(target_id)
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
+    url = url.strip()
     validate_target_inputs(name, url, target_type, auth_type)
     if not url:
         raise HTTPException(status_code=400, detail="Target URL/IP is required")
@@ -135,9 +151,20 @@ def edit_target(
         "target_type": target_type,
         "auth_type": auth_type,
         "auth_key": auth_key,
-        "auth_val": auth_val
+        "auth_val": auth_val,
+        "branch": branch,
     })
     return {"status": "success"}
+
+
+@app.patch("/api/targets/{target_id}/branch")
+def set_target_branch(target_id: str, branch: str = Body(..., embed=True)):
+    """Lightweight endpoint just for the Vuln Pipeline branch picker — avoids
+    forcing the UI to resend the full target form just to change one field."""
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    db.update_target(target_id, {"branch": branch})
+    return {"status": "success", "branch": branch}
 
 
 
@@ -151,8 +178,7 @@ def get_dashboard_summary(tenant_id: str = Query(...)):
         raise HTTPException(status_code=404, detail="Target not found")
         
     vulns = db.get_vulnerabilities(tenant_id)
-    
-    # Calculate counts
+
     severities = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     open_count = 0
     resolved_count = 0
@@ -167,7 +193,6 @@ def get_dashboard_summary(tenant_id: str = Query(...)):
     total_count = len(vulns)
     compliance_score = int((resolved_count / total_count * 100)) if total_count > 0 else 100
     
-    # Get assets
     assets_data = db.get_assets(tenant_id)
     
     # SLA Breaches
@@ -220,13 +245,11 @@ async def trigger_easm_discovery(tenant_id: str = Query(...)):
         
     # Run port scan synchronously for simplicity and ease of return
     logs = []
-    # Collect all outputs from the EASM scanner generator
     for log in scanners.run_easm_scan(tenant_id):
         logs.append(log)
         
     db.add_scan_log(tenant_id, "EASM", "Completed", logs)
     
-    # Check if we generated vulnerabilities or open ports
     assets = db.get_assets(tenant_id)
     has_subdomains = len(assets["subdomains"]) > 0
     
@@ -281,7 +304,6 @@ def get_attack_paths(tenant_id: str = Query(...)):
     # Path 1: If we have critical or high vulnerabilities
     critical_vulns = [v for v in vulns if v["severity"] in ["Critical", "High"]]
     if critical_vulns:
-        # Construct a chain using the first critical vuln
         target_vuln = critical_vulns[0]
         parsed = scanners.parse_target_url(target["url"])
         
@@ -343,6 +365,71 @@ def toggle_integration(integration_name: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+
+@app.get("/api/git-platforms")
+def list_git_platforms():
+    return db.list_git_platforms()
+
+@app.post("/api/git-platforms")
+def create_git_platform(body: Dict[str, Any] = Body(...)):
+    if not body.get("platform_id") or not body.get("host_pattern"):
+        raise HTTPException(status_code=400, detail="platform_id and host_pattern are required")
+    try:
+        return db.create_git_platform(
+            body["platform_id"], body["host_pattern"],
+            body.get("pr_term", "pull request"), body.get("api_base"), bool(body.get("self_hosted", False)),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/git-platforms/{gp_id}")
+def update_git_platform(gp_id: str, body: Dict[str, Any] = Body(...)):
+    try:
+        return db.update_git_platform(gp_id, **body)
+    except ValueError as e:
+        status = 404 if "not found" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
+
+@app.delete("/api/git-platforms/{gp_id}")
+def delete_git_platform(gp_id: str):
+    try:
+        db.delete_git_platform(gp_id)
+        return {"status": "success"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+
+@app.post("/api/vuln-pipeline/branches")
+def vuln_pipeline_branches(body: Dict[str, Any] = Body(...)):
+    from backend.vuln_pipeline.platform import build_repo_context, list_branches, get_default_branch
+
+    repo_url = body.get("repo_url")
+    token = body.get("token", "")
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="repo_url is required")
+
+    try:
+        ctx = build_repo_context(repo_url, token)
+        branches = list_branches(ctx, token)
+        default_branch = get_default_branch(ctx, token)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        # Real API call failed (bad token, private repo without access, rate limit, etc.)
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if default_branch and not any(b["name"] == default_branch for b in branches):
+        branches = [{"name": default_branch, "commit_sha": "", "protected": False}] + branches
+
+    return {
+        "platform": ctx.platform, "host": ctx.host, "self_hosted": ctx.self_hosted,
+        "owner": ctx.owner, "repo": ctx.repo, "pr_term": ctx.pr_term,
+        "default_branch": default_branch or "main",
+        "branches": branches,
+    }
+
+
 # ----------------- SCAN TRACE STREAM (DAST / API) -----------------
 
 @app.get("/api/scans/stream")
@@ -358,13 +445,11 @@ def stream_scan_logs(
     # Auto-onboard if target URL is parsed but target ID doesn't exist
     target_id = tenant_id
     if not target_id:
-        # Check if URL exists
         targets = db.get_targets_list()
         matched = [t for t in targets if target in t["url"] or t["url"] in target]
         if matched:
             target_id = matched[0]["id"]
         else:
-            # Auto onboard target
             parsed = scanners.parse_target_url(target)
             target_id = db.add_target(
                 name="Auto-Onboarded Target", 
@@ -387,6 +472,252 @@ def stream_scan_logs(
                 
         db.add_scan_log(target_id, type.upper(), "Completed", logs_list)
         
+    return StreamingResponse(log_generator(), media_type="text/event-stream")
+
+
+import threading
+
+
+class _PipelineJob:
+    def __init__(self, target_id: str, resume_from: Optional[str] = None):
+        self.target_id = target_id
+        self.resume_from = resume_from
+        self.lines: List[str] = []
+        self.done = False
+        self.finished_naturally = False
+        self.lock = threading.Lock()
+
+    def append(self, line: str):
+        with self.lock:
+            self.lines.append(line)
+
+    def snapshot(self, from_index: int = 0):
+        with self.lock:
+            return list(self.lines[from_index:]), len(self.lines), self.done
+
+
+_pipeline_jobs: Dict[str, _PipelineJob] = {}
+
+
+def _compute_resume_from(target_id: str) -> Optional[str]:
+    """Looks at the most recent VULN_PIPELINE run for target_id: if it was
+    Interrupted, returns the resumable stage to restart at (the last stage
+    that had any log lines, clamped to scanners._RESUMABLE_STAGES, redone in
+    full since it may not have finished) — or None if the last run completed,
+    doesn't exist, or was interrupted before any resumable stage even started.
+
+    AwaitingApproval (the human-in-the-loop pause after fix_node) is handled
+    differently: fix_node DID complete successfully — that's what earned the
+    approval prompt — so resuming there must NOT redo fix_node, or it just
+    hits the same "[HITL] awaiting approval" pause again and never advances.
+    Instead it jumps to the stage immediately after it (patch_node)."""
+    runs = db.get_scan_logs(target_id, scan_type="VULN_PIPELINE", limit=1)
+    if not runs or runs[0]["status"] not in ("Interrupted", "AwaitingApproval"):
+        return None
+    stage_order = [s[0] for s in scanners.PIPELINE_STAGES]
+    last_idx = -1
+    for line in runs[0]["logs"]:
+        try:
+            stage = json.loads(line).get("stage")
+        except Exception:
+            continue
+        if stage in stage_order:
+            last_idx = max(last_idx, stage_order.index(stage))
+    if last_idx < 0:
+        return None
+
+    if runs[0]["status"] == "AwaitingApproval":
+        next_idx = last_idx + 1
+        if next_idx < len(stage_order) and stage_order[next_idx] in scanners._RESUMABLE_STAGES:
+            return stage_order[next_idx]
+        return None
+
+    resumable_idx = [stage_order.index(s) for s in scanners._RESUMABLE_STAGES]
+    candidates = [i for i in resumable_idx if i <= last_idx]
+    return stage_order[max(candidates)] if candidates else None
+
+
+def _run_pipeline_job(job: "_PipelineJob"):
+    finished_naturally = False
+    try:
+        for log in scanners.run_vuln_pipeline(job.target_id, resume_from=job.resume_from):
+            job.append(log)
+        finished_naturally = True
+    finally:
+        with job.lock:
+            job.done = True
+            job.finished_naturally = finished_naturally
+        if job.lines:
+            awaiting_approval = finished_naturally and "[HITL]" in job.lines[-1]
+            status = "AwaitingApproval" if awaiting_approval else ("Completed" if finished_naturally else "Interrupted")
+            db.add_scan_log(job.target_id, "VULN_PIPELINE", status, list(job.lines))
+
+
+@app.post("/api/pipeline/run")
+def start_pipeline_run(target_id: str = Body(..., embed=True), resume: bool = Body(False, embed=True)):
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    existing = _pipeline_jobs.get(target_id)
+    if existing and not existing.done:
+        return {"status": "already_running"}
+    resume_from = _compute_resume_from(target_id) if resume else None
+    job = _PipelineJob(target_id, resume_from=resume_from)
+    _pipeline_jobs[target_id] = job
+    threading.Thread(target=_run_pipeline_job, args=(job,), daemon=True).start()
+    return {"status": "started", "resumed_from": resume_from}
+
+
+@app.get("/api/pipeline/active")
+def pipeline_active(target_id: str = Query(...)):
+    job = _pipeline_jobs.get(target_id)
+    return {"running": bool(job and not job.done)}
+
+@app.get("/api/pipeline/embed")
+def pipeline_embed_trigger(target_id: str = Query(...), force: bool = Query(True)):
+    """Manually re-run just embed_node for a target, independent of a full
+    pipeline run — e.g. to pick up newly-relevant CVE/fix data mid-triage
+    without waiting for (or re-running) SAST/secret/SCA/triage too.
+    `force=True` (the default here) bypasses the content-hash skip that a
+    normal pipeline run's embed_node applies — this endpoint exists
+    specifically for "re-index right now regardless", so defaulting it off
+    would defeat the point of a manual trigger."""
+    target = db.get_target(target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    def gen():
+        lines: List[str] = []
+        ok = False
+        try:
+            scan_dir, temp_dir, prep_logs = scanners.prepare_source_code(target)
+            for log in prep_logs:
+                lines.append(log)
+                yield f"data: {log}\n\n"
+            if scan_dir is None:
+                lines.append("[!] No scannable source — cannot index.")
+                yield "data: [!] No scannable source — cannot index.\n\n"
+                return
+            try:
+                for log in scanners.index_repo_for_rag(target_id, scan_dir, force=force):
+                    lines.append(log)
+                    yield f"data: {log}\n\n"
+                ok = True
+            finally:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        finally:
+            if lines:
+                db.add_scan_log(target_id, "RAG_EMBED", "Completed" if ok else "Interrupted", lines)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/api/pipeline/embed/history")
+def pipeline_embed_history(target_id: str = Query(...), limit: int = Query(20)):
+    """Past manual RAG-index runs for this target, newest first — mirrors
+    /api/pipeline/history's shape so the frontend can render the same
+    Executions-list pattern used by the Vulnerability Pipeline."""
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    runs = db.get_scan_logs(target_id, scan_type="RAG_EMBED", limit=limit)
+    return [{"id": r["id"], "status": r["status"], "created_at": r["created_at"], "logs": r["logs"]} for r in runs]
+
+
+@app.get("/api/pipeline/history")
+def pipeline_history(target_id: str = Query(...), limit: int = Query(20)):
+    """Past VULN_PIPELINE runs for this target, newest first, with logs
+    already grouped by stage — so the UI can restore a run's stepper state
+    (or list history to pick from) without replaying the live SSE stream."""
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    runs = db.get_scan_logs(target_id, scan_type="VULN_PIPELINE", limit=limit)
+    out = []
+    for run in runs:
+        stage_logs: Dict[str, List[str]] = {}
+        stage_first_ts: Dict[str, float] = {}
+        stage_last_ts: Dict[str, float] = {}
+        for line in run["logs"]:
+            try:
+                parsed = json.loads(line)
+                stage = parsed.get("stage", "clone_node")
+                log = parsed.get("log", line)
+                ts = parsed.get("ts")
+            except Exception:
+                stage, log, ts = "clone_node", line, None
+            stage_logs.setdefault(stage, []).append(log)
+            if ts is not None:
+                stage_first_ts.setdefault(stage, ts)
+                stage_last_ts[stage] = ts
+        stage_durations = {
+            stage: round(stage_last_ts[stage] - stage_first_ts[stage], 1)
+            for stage in stage_logs
+            if stage in stage_first_ts
+        }
+        out.append({
+            "id": run["id"],
+            "status": run["status"],
+            "created_at": run["created_at"],
+            "stage_logs": stage_logs,
+            "stage_durations": stage_durations,
+        })
+    return out
+
+
+@app.get("/api/pipeline/taint-report")
+def pipeline_taint_report(target_id: str = Query(...)):
+    """Phase 1 taint-tracking infrastructure output (parse + call graph +
+    source/sink/sanitizer tags) — read-only diagnostic, NOT findings. See
+    scanners.run_taint_report / services/aspm/backend/taint/ for the
+    phased roadmap. Python-only for now."""
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    return scanners.run_taint_report(target_id)
+
+
+@app.get("/api/pipeline/attack-chains")
+def pipeline_attack_chains(target_id: str = Query(...)):
+    """Computed on-demand from the target's current open findings — not
+    persisted, not a pipeline stage. See scanners.synthesize_attack_chains."""
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+    return scanners.synthesize_attack_chains(target_id)
+
+
+@app.get("/api/pipeline/stream")
+def stream_pipeline_logs(target_id: str = Query(...), after: int = Query(0)):
+    """Tails the background job for target_id — does NOT start one (see
+    POST /pipeline/run). `after` lets a reconnecting client resume from where
+    it left off instead of replaying the whole buffer (triage can run for a
+    long time with long gaps between lines — each sequential LLM call can take
+    30-60s+ against a remote Ollama host — and a silent connection is prone to
+    being dropped by browsers/proxies as dead; without `after`, every such
+    reconnect re-showed the entire run from the start, which looked exactly
+    like the pipeline restarting even though it was just replaying history).
+    A periodic keepalive comment below also reduces how often that drop
+    happens in the first place."""
+    if not db.get_target(target_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    async def log_generator():
+        job = _pipeline_jobs.get(target_id)
+        if job is None:
+            return
+        sent = after
+        idle_ticks = 0
+        while True:
+            lines, total, done = job.snapshot(sent)
+            if lines:
+                idle_ticks = 0
+            for log in lines:
+                yield f"data: {log}\n\n"
+            sent = total
+            if done and sent >= total:
+                break
+            idle_ticks += 1
+            if idle_ticks % 50 == 0:  # ~15s of silence (50 * 0.3s) -> keepalive comment
+                yield ": keepalive\n\n"
+            await asyncio.sleep(0.3)
+
     return StreamingResponse(log_generator(), media_type="text/event-stream")
 
 
@@ -429,7 +760,6 @@ def stream_pentest_logs(target: str = Query(""), tenant_id: Optional[str] = Quer
             yield "data: [*] AI Pentesting Complete: Targets are secure against critical vulnerabilities.\n\n"
             return
             
-        # Exploit vulnerabilities found
         for idx, v in enumerate(vulns):
             yield f"data: [*] Attempting active exploitation on vulnerability: {v['title']}\n\n"
             await asyncio.sleep(0.5)
@@ -453,6 +783,43 @@ def stream_pentest_logs(target: str = Query(""), tenant_id: Optional[str] = Quer
 
 # ----------------- AI RED-TEAM OBSERVABILITY -----------------
 
+_AI_REDTEAM_PROVIDERS = [
+    {
+        "id": "openai", "label": "OpenAI",
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "key_label": "API Key (Bearer)", "key_required": True,
+    },
+    {
+        "id": "anthropic", "label": "Claude (Anthropic)",
+        "endpoint": "https://api.anthropic.com/v1/messages",
+        "key_label": "API Key (x-api-key)", "key_required": True,
+    },
+    {
+        "id": "ollama", "label": "Ollama (local)",
+        "endpoint": f"{os.environ.get('OLLAMA_BASE_URL', 'http://host.docker.internal:11434')}/v1/chat/completions",
+        "key_label": "API Key (usually not needed)", "key_required": False,
+    },
+    {
+        "id": "custom", "label": "Custom (OpenAI-compatible)",
+        "endpoint": "",
+        "key_label": "API Key (Bearer, optional)", "key_required": False,
+    },
+]
+
+
+@app.get("/api/ai-security/providers")
+def list_ai_security_providers():
+    return {"providers": _AI_REDTEAM_PROVIDERS}
+
+
+@app.get("/api/ai-security/models")
+def list_ai_security_models(provider: str = Query(...), api_key: Optional[str] = Query(None)):
+    """Real model list for the red-team provider dropdown — queries the
+    provider directly (Ollama's local /api/tags, OpenAI's /v1/models,
+    Anthropic's /v1/models), never a hardcoded list."""
+    return scanners.list_llm_models(provider, api_key or "")
+
+
 @app.post("/api/ai-security/redteam/stream")
 def llm_redteam_stream(payload: Dict[str, Any] = Body(...)):
     """Live LLM red-team: probes a real OpenAI-compatible LLM endpoint and streams
@@ -461,6 +828,7 @@ def llm_redteam_stream(payload: Dict[str, Any] = Body(...)):
     endpoint = payload.get("endpoint")
     api_key = payload.get("api_key", "")
     model = payload.get("model", "gpt-3.5-turbo")
+    provider = payload.get("provider", "openai")
     if not target_id or not endpoint:
         raise HTTPException(status_code=400, detail="target_id and endpoint are required")
     if not db.get_target(target_id):
@@ -468,7 +836,7 @@ def llm_redteam_stream(payload: Dict[str, Any] = Body(...)):
 
     def gen():
         try:
-            for line in scanners.run_llm_redteam(target_id, endpoint, api_key, model):
+            for line in scanners.run_llm_redteam(target_id, endpoint, api_key, model, provider):
                 yield f"data: {line}\n\n"
         except Exception as e:  # noqa: BLE001
             yield f"data: [!] Red-team error: {str(e)}\n\n"
@@ -637,9 +1005,7 @@ def get_vulnerability_details(cwe: str, title: str, description: str, remediatio
             ]
         }
         
-    # Default fallback
     else:
-        # Generate generic steps based on the remediation explanation
         steps_list = []
         if explanation:
             # Try splitting by common list separators if possible
@@ -673,9 +1039,11 @@ def get_reports_summary(
         rt_upper = report_type.upper()
         if rt_upper in ["SAST", "SCA"]:
             vulns = [v for v in vulns if v["type"].upper() == rt_upper]
-            
+        elif rt_upper == "DAST":
+            vulns = [v for v in vulns if v["type"].upper() in ("DAST", "API")]
+
     assets_data = db.get_assets(tenant_id)
-    
+
     # 1. Qualys MITRE ATT&CK Matrix Calculation
     mitre_stages = {
         "Initial Access": 0,
@@ -851,9 +1219,19 @@ def export_executive_report(
         rt_upper = report_type.upper()
         if rt_upper in ("SAST", "SCA"):
             vulns = [v for v in vulns if (v.get("type") or "").upper() == rt_upper]
+        elif rt_upper == "DAST":
+            vulns = [v for v in vulns if (v.get("type") or "").upper() in ("DAST", "API")]
 
     assets_data = db.get_assets(tenant_id)
     summary = get_reports_summary(tenant_id, report_type)
+
+    last_scan_at = None
+    if tenant_id:
+        recent_jobs = db.get_scan_jobs(tenant_id)
+        if report_type:
+            recent_jobs = [j for j in recent_jobs if (j.get("scan_type") or "").upper() == report_type.upper()]
+        if recent_jobs:
+            last_scan_at = recent_jobs[0].get("created_at")
 
     model = report_builder.build_model(
         target=target,
@@ -862,6 +1240,7 @@ def export_executive_report(
         summary=summary,
         details_fn=get_vulnerability_details,
         report_type=report_type,
+        last_scan_at=last_scan_at,
     )
     html = report_builder.render_html(model)
 
@@ -921,7 +1300,6 @@ def run_pentest_generator(target_id: str):
         yield "[*] AI Pentesting Complete: Targets are secure against critical vulnerabilities."
         return
         
-    # Exploit vulnerabilities found
     for idx, v in enumerate(vulns):
         yield f"[*] Attempting active exploitation on vulnerability: {v['title']}"
         time.sleep(0.3)
@@ -948,7 +1326,6 @@ def run_job_in_thread(job_id: str, target_id: str, scan_type: str):
     db.clear_vulnerabilities_by_type(target_id, scan_type)
     logs_accumulated = []
     
-    # Retrieve OpenAPI specifications if they exist for this job
     job_info = db.get_scan_job(job_id)
     spec = job_info.get("openapi_spec") if job_info else None
     
@@ -977,14 +1354,12 @@ def run_job_in_thread(job_id: str, target_id: str, scan_type: str):
             generator = scanners.run_dast_scan(target_id)
             
         for log in generator:
-            # Check if job was marked Stopped in the database
             job = db.get_scan_job(job_id)
             if not job or job["status"] == "Stopped":
                 break
                 
             logs_accumulated.append(log)
-            
-            # Calculate progress percentage dynamically
+
             progress = job["progress"]
             if "Initializing" in log:
                 progress = 10
@@ -1053,13 +1428,9 @@ def run_job_in_thread(job_id: str, target_id: str, scan_type: str):
             })
             time.sleep(0.05)
             
-        # Check final status
         job = db.get_scan_job(job_id)
         if job and job["status"] != "Stopped":
             final_logs = "\n".join(logs_accumulated)
-            # A code scan (SAST/SCA) against a non-repo target (e.g. a deployed URL)
-            # has no source to analyze and skips. Report that honestly as "Skipped"
-            # rather than "Completed", so it isn't mistaken for a clean pass.
             was_skipped = scan_type.upper() in ("SAST", "SCA") and (
                 "No valid local directory or Git repository" in final_logs
                 or "Skipping code analyzer scans" in final_logs
@@ -1080,12 +1451,15 @@ def run_job_in_thread(job_id: str, target_id: str, scan_type: str):
 @app.get("/api/scans/jobs")
 def list_scan_jobs(
     tenant_id: Optional[str] = Query(None),
-    scan_type: Optional[str] = Query(None)
+    scan_type: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None),
 ):
     jobs = db.get_scan_jobs(tenant_id)
     if scan_type:
         scan_types = [t.strip().upper() for t in scan_type.split(",")]
         jobs = [j for j in jobs if j["scan_type"].upper() in scan_types]
+    if limit is not None:
+        jobs = jobs[:limit]
     return jobs
 
 @app.post("/api/scans/jobs")

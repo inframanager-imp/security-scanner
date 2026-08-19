@@ -65,29 +65,25 @@ async function processGcpAnomalyJob(job: Job<GcpJobData>): Promise<void> {
   const { projectId } = job.data;
 
   try {
-    // Load GCP project + credentials
     const project = await prisma.gcpProject.findUnique({ where: { id: projectId } });
     if (!project) { logger.warn(`GCP anomaly: project ${projectId} not found`); return; }
 
     const cred = await prisma.gcpCredential.findUnique({ where: { projectId } });
     if (!cred) { logger.warn(`GCP anomaly: no credentials for project ${projectId}`); return; }
 
-    // Decrypt credentials
     const decrypted = decryptGcpCredentials(cred);
 
     const gcpClient = new GcpClient({
-      projectId:   project.projectId,
-      credentials: decrypted.serviceAccountKey ? JSON.parse(decrypted.serviceAccountKey) : undefined,
+      projectId:      project.projectId,
+      serviceAccount: decrypted.serviceAccountKey ? JSON.parse(decrypted.serviceAccountKey) : undefined,
     });
 
-    // Time window
     const sinceRaw = await redis.get(lastCheckKey(projectId));
     const since    = sinceRaw ? new Date(sinceRaw) : new Date(Date.now() - 5 * 60_000);
     const checkEnd = new Date();
 
     logger.debug(`GCP anomaly [${projectId}]: ${since.toISOString()} → ${checkEnd.toISOString()}`);
 
-    // Fetch Cloud Audit Log entries via Cloud Logging API
     const logging = gcpClient.logging();
     const filter = [
       `logName:"cloudaudit.googleapis.com"`,

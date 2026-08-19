@@ -4,7 +4,6 @@ import {
   ListClustersV2Command,
   ListKafkaVersionsCommand,
 } from '@aws-sdk/client-kafka';
-import { KafkaConnectClient, ListConnectorsCommand } from '@aws-sdk/client-kafkaconnect';
 import { KMSClient, DescribeKeyCommand } from '@aws-sdk/client-kms';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
@@ -14,13 +13,11 @@ import { retry } from '../utils/helpers';
 
 export class KafkaScanner extends BaseScanner {
   private kafka: KafkaClient;
-  private kafkaconnect: KafkaConnectClient;
   private kms: KMSClient;
 
   constructor(client: AWSClient) {
     super(client, 'MSK');
     this.kafka = new KafkaClient(client.getClientConfig());
-    this.kafkaconnect = new KafkaConnectClient(client.getClientConfig());
     this.kms = new KMSClient(client.getClientConfig());
   }
 
@@ -50,49 +47,9 @@ export class KafkaScanner extends BaseScanner {
         }
       }
 
-      try {
-        findings.push(...await this.validateConnectors());
-      } catch (error) {
-        logger.debug('Failed to scan MSK Connect connectors', { error: (error as Error).message });
-      }
-
       logger.info(`MSK scan complete. Found ${findings.length} findings.`);
     } catch (error) {
       logger.error('MSK scan failed', { error: (error as Error).message });
-    }
-
-    return findings;
-  }
-
-  // kafka_connector_in_transit_encryption_enabled: MSK Connect connectors must
-  // require TLS between the connector and the Kafka cluster
-  private async validateConnectors(): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-
-    const connectors: any[] = [];
-    let nextToken: string | undefined;
-    do {
-      const result: any = await retry(async () => {
-        return await this.kafkaconnect.send(new ListConnectorsCommand({ nextToken }));
-      });
-      connectors.push(...(result.connectors ?? []));
-      nextToken = result.nextToken;
-    } while (nextToken);
-
-    for (const connector of connectors) {
-      const connectorName: string = connector.connectorName ?? '';
-      const connectorArn: string = connector.connectorArn ?? '';
-      const encryptionType: string = connector.kafkaClusterEncryptionInTransit?.encryptionType ?? 'PLAINTEXT';
-      if (encryptionType !== 'TLS') {
-        findings.push(this.emit(
-          'kafka_connector_in_transit_encryption_enabled',
-          { connector: connectorName, arn: connectorArn, encryptionType },
-          {
-            message: `MSK Connect connector "${connectorName}" does not have encryption in transit enabled (encryption type: ${encryptionType})`,
-            remediation: `Re-create connector "${connectorName}" with Kafka cluster encryption in transit set to TLS; the encryption setting cannot be changed on an existing connector`,
-          }
-        ));
-      }
     }
 
     return findings;

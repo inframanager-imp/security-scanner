@@ -21,6 +21,7 @@ import {
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { prisma } from '../config/database';
 import { logger } from '../config/logger';
+import { redis } from '../config/redis';
 import * as credentialService from './credentialService';
 
 type Provider = 'AWS' | 'AZURE' | 'GCP';
@@ -38,6 +39,14 @@ export async function runCwppScanForAccount(
   if (provider === 'AWS')   return runAwsCwpp(accountId);
   if (provider === 'AZURE') return runAzureCwpp(accountId);
   return runGcpCwpp(accountId);
+}
+
+function infoCacheKey(provider: Provider, accountId: string): string {
+  return `cwpp:info:${provider}:${accountId}`;
+}
+
+export async function getCwppInfoMessage(provider: Provider, accountId: string): Promise<string | null> {
+  return redis.get(infoCacheKey(provider, accountId));
 }
 
 // ─── AWS: SSM Inventory + Inspector via Security Hub ─────────────────────────
@@ -89,6 +98,7 @@ async function runAwsCwpp(accountId: string): Promise<CwppResult> {
   if (managed.length === 0) {
     return await emitInfoFinding(accountId, 'AWS', 'No SSM-managed EC2 instances found. Install SSM Agent and attach AmazonSSMManagedInstanceCore to enable agentless package scanning.');
   }
+  await redis.del(infoCacheKey('AWS', accountId));
 
   // Step 2: get applications inventory per host
   let cvesFound = 0;
@@ -181,9 +191,6 @@ async function runAwsCwpp(accountId: string): Promise<CwppResult> {
 // ─── Azure: Defender assessments ─────────────────────────────────────────────
 
 async function runAzureCwpp(subscriptionId: string): Promise<CwppResult> {
-  // Defender for Servers requires the Security plan. We probe via REST.
-  // For now we attempt a minimal "are assessments available?" check.
-  // Full implementation reads Microsoft.Security/assessments via ARM client.
   logger.info('cwpp.azure.stub', { subscriptionId });
   return await emitInfoFinding(subscriptionId, 'AZURE', 'Azure Defender for Servers (Microsoft Defender for Cloud) integration is required for agentless VM vulnerability scanning. Enable Defender plan on this subscription.');
 }
@@ -202,9 +209,8 @@ function zero(): CwppResult {
 }
 
 async function emitInfoFinding(accountId: string, provider: Provider, message: string): Promise<CwppResult> {
-  // Create a synthetic Finding so it shows up in the UI; tied to a stub scan.
-  // Skip if there's no scan to attach to; the UI INFO surface comes via WorkloadVulnerability empty + service banner.
   logger.info('cwpp.info-finding', { provider, accountId, message });
+  await redis.set(infoCacheKey(provider, accountId), message, 'EX', 7 * 86_400);
   return zero();
 }
 

@@ -21,8 +21,6 @@ import type { TokenCredential } from '@azure/identity';
 import { logger } from '../config/logger';
 
 // ─── API version table ────────────────────────────────────────────────────────
-// Maps provider/type prefixes (lowercase) → stable ARM API version.
-// Longer/more-specific keys are matched first.
 
 const API_VERSIONS: [string, string][] = [
   // Network
@@ -109,24 +107,16 @@ const API_VERSIONS: [string, string][] = [
 ];
 
 function resolveApiVersion(resourceId: string): string {
-  // Extract the provider/type portion from the resource ID
-  // e.g. /subscriptions/.../providers/Microsoft.Network/networkSecurityGroups/nsg1/securityRules/rule1
-  // → "microsoft.network/networksecuritygroups/securityrules"
   const lower = resourceId.toLowerCase();
   const providersIdx = lower.indexOf('/providers/');
   if (providersIdx === -1) return '2022-09-01'; // fallback
 
   const afterProviders = lower.slice(providersIdx + '/providers/'.length);
-  // afterProviders = "microsoft.network/networksecuritygroups/nsg1/securityrules/rule1"
   const segments = afterProviders.split('/');
 
-  // Build progressively longer type keys (namespace + up to 3 type segments)
-  // e.g. ["microsoft.network", "microsoft.network/networksecuritygroups", "microsoft.network/networksecuritygroups/securityrules"]
   const candidates: string[] = [];
   let key = '';
   for (let i = 0; i < segments.length; i++) {
-    // Skip resource name segments (odd indices after the namespace are names, even are types)
-    // namespace = segments[0], type1 = segments[1], name1 = segments[2], type2 = segments[3] ...
     if (i === 0 || i % 2 === 1) {
       key = key ? `${key}/${segments[i]}` : segments[i];
       candidates.push(key);

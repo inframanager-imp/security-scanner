@@ -2,11 +2,12 @@
 # CSPM (Node) + ASPM (Python) behind one nginx. Both share ONE Postgres database
 # (schemas cspm + aspm) and Redis. Single UI + single login (CSPM).
 #
-# DATABASE: containerised Postgres (local dev/test deploy). Host port 5433 (5432 is
-# taken by an unrelated project's container on this box) -> container port 5432.
-# For a real deployment against an external/managed Postgres instead, see the
-# README "Local DB" section and point the two DATABASE_URLs at host.docker.internal
-# (or the managed host) after running infra/db/setup-local-db.sql against it.
+# Postgres/Redis/ZAP run as part of this same stack by default (see the
+# postgres/redis/zap services below) — container names (vapt-db/vapt-redis/
+# vapt-zap) are kept identical to the old separate-VPS setup so DATABASE_URL/
+# REDIS_URL/ZAP_PROXY in .env don't need to change. For a genuinely separate
+# DB/cache host, point those env vars at the external host instead and remove
+# the three services below.
 #
 # Run:    docker compose up -d --build
 # Open:   http://localhost:8080   (login: admin@example.com / Admin@123456)
@@ -17,16 +18,16 @@ services:
     container_name: vapt-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: scanner
-      POSTGRES_PASSWORD: scanner_pass
-      POSTGRES_DB: vapt
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER must be set in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-vapt}"
     ports:
-      - '5433:5432'
+      - '5434:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U scanner -d vapt']
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -35,13 +36,37 @@ services:
     image: redis:7-alpine
     container_name: vapt-redis
     restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"]
+    ports:
+      - '6379:6379'
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
+
+  zap:
+    image: zaproxy/zap-stable
+    container_name: vapt-zap
+    restart: unless-stopped
+    mem_limit: 1536m
+    command: >
+      zap.sh -daemon -host 0.0.0.0 -port 8090
+      -Xmx1024m
+      -config api.disablekey=false
+      -config api.key=${ZAP_API_KEY:?ZAP_API_KEY must be set in .env}
+      -config api.addrs.addr.name=.*
+      -config api.addrs.addr.regex=true
+    ports:
+      - '8090:8090'
+    healthcheck:
+      test: ['CMD', 'curl', '--silent', '--output', '/dev/null', '--fail', 'http://localhost:8090/']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   cspm-api:
     build:
@@ -49,40 +74,36 @@ services:
       dockerfile: Dockerfile.api
     container_name: vapt-cspm-api
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - '3001:3001'
     environment:
-      DATABASE_URL: "postgresql://scanner:scanner_pass@postgres:5432/vapt?schema=cspm"
-      REDIS_URL: "redis://redis:6379"
-      JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
-      JWT_REFRESH_SECRET: "change-me-refresh-secret-min-32-chars-please"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL must be set in .env — postgresql://user:pass@REMOTE_HOST:5434/vapt?schema=cspm}"
+      REDIS_URL: "${REDIS_URL:?REDIS_URL must be set in .env — redis://:pass@REMOTE_HOST:6379}"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env — see .env.example / README}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET must be set in .env}"
       JWT_ACCESS_EXPIRY: "60m"
       JWT_REFRESH_EXPIRY: "7d"
-      CREDENTIAL_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      CREDENTIAL_ENCRYPTION_KEY: "${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set in .env — 64 hex chars, encrypts stored cloud credentials}"
       PORT: "3001"
-      HOST: "0.0.0.0"
       NODE_ENV: "production"
       CORS_ORIGIN: "http://localhost:8080"
-      ADMIN_EMAIL: "admin@example.com"
-      ADMIN_PASSWORD: "Admin@123456"
-
-  # OWASP ZAP daemon for deep DAST (the ASPM backend proxies through it)
-  zap:
-    image: zaproxy/zap-stable
-    container_name: vapt-zap
-    restart: unless-stopped
-    environment:
-      ZAP_PORT: "8090"   # aligns the image's built-in healthcheck with our actual -port below
-    command: >
-      zap.sh -daemon -host 0.0.0.0 -port 8090
-      -config api.disablekey=true
-      -config api.addrs.addr.name=.*
-      -config api.addrs.addr.regex=true
+      ADMIN_EMAIL: "${ADMIN_EMAIL:?ADMIN_EMAIL must be set in .env}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env — only seeds the FIRST admin account, changing it later does not rotate an existing account's password}"
+      CONFIG_SYNC_WEBHOOK_SECRET: ""
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   aspm-api:
     build:
@@ -93,17 +114,58 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
+      agent-api:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       zap:
-        condition: service_started
+        condition: service_healthy
     environment:
-      DATABASE_URL: "postgresql+psycopg://scanner:scanner_pass@postgres:5432/vapt"
+      DATABASE_URL: "${ASPM_DATABASE_URL:?ASPM_DATABASE_URL must be set in .env — postgresql+psycopg://user:pass@REMOTE_HOST:5434/vapt}"
       DB_SCHEMA: "aspm"
-      JWT_ACCESS_SECRET: "change-me-access-secret-min-32-chars-please"
-      ZAP_PROXY: "http://zap:8090"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env — see .env.example / README}"
+      ZAP_PROXY: "${ZAP_PROXY:?ZAP_PROXY must be set in .env — http://REMOTE_HOST:8090}"
+      ZAP_API_KEY: "${ZAP_API_KEY:?ZAP_API_KEY must be set in .env — must match the VPS's docker-compose.remote.yml ZAP_API_KEY}"
+      CORS_ORIGIN: "http://localhost:8080"
+      AGENT_API_URL: "http://agent-api:8100"
+      AGENT_TRIAGE_TIMEOUT: "300"
+      TRIAGE_WORKERS: "3"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://vps-29d5b7a7.vps.ovh.ca:11434}"
       # Report timestamps render in this zone (India). Change to your locale as needed.
       TZ: "Asia/Kolkata"
+    healthcheck:
+      test: ["CMD", "curl", "--silent", "--fail", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  agent-api:
+    build:
+      context: ./services/agent-api
+      dockerfile: Dockerfile
+    container_name: vapt-agent-api
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env — see .env.example / README}"
+      LLM_PROVIDER: "openai"
+      AGENT_MODEL: "gpt-4.1-mini"
+      JUDGE_PROVIDER: "openai"
+      JUDGE_MODEL: "gpt-4.1-mini"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://vps-29d5b7a7.vps.ovh.ca:11434}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      OLLAMA_FALLBACK_ENABLED: "true"
+      OLLAMA_FALLBACK_MODEL: "qwen2.5-coder:7b"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health').status==200 else 1)\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   web:
     build:
@@ -112,11 +174,26 @@ services:
     container_name: vapt-web
     restart: unless-stopped
     depends_on:
-      - cspm-api
-      - aspm-api
+      cspm-api:
+        condition: service_healthy
+      aspm-api:
+        condition: service_healthy
+      agent-api:
+        condition: service_healthy
     ports:
       - '8080:80'
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/index.html"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
-  redis_data:
   postgres_data:
+  redis_data:
+    external: true
+    name: vapt-remote_redis_data
+
+networks:
+  default:

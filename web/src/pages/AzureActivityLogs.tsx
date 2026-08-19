@@ -141,21 +141,18 @@ export function AzureActivityLogs() {
   const [page,              setPage]              = useState(1);
   const PAGE_SIZE = 50;
 
-  // Load subscriptions
   const { data: subsPage } = useQuery({
     queryKey: ['azure-subscriptions'],
     queryFn:  () => azureApi.listSubscriptions({ limit: 100 }),
   });
   const subscriptions: AzureSubscription[] = [...(subsPage?.data ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 
-  // Auto-select first subscription alphabetically
   useEffect(() => {
     if (subscriptions.length > 0 && !subscriptionId) {
       setSubscriptionId(subscriptions[0].id);
     }
   }, [subscriptions, subscriptionId]);
 
-  // Compute time range
   const now      = new Date();
   const presetMs = PRESETS[selectedPreset].ms;
   const endTime  = isCustomRange && customEnd   ? customEnd   : now.toISOString();
@@ -184,14 +181,12 @@ export function AzureActivityLogs() {
   const allEvents   = data?.events ?? [];
   const summary     = data?.summary ?? { critical: 0, high: 0, medium: 0, low: 0, info: 0, total: 0 };
 
-  // Filtered + paginated events
   const filtered = severityFilter === 'ALL'
     ? allEvents
     : allEvents.filter(e => e.severity === severityFilter);
   const totalPages  = Math.ceil(filtered.length / PAGE_SIZE);
   const pageEvents  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Reset page on filter change
   function handleSeverityFilter(sev: Severity | 'ALL') {
     setSeverityFilter(sev);
     setPage(1);
@@ -202,7 +197,6 @@ export function AzureActivityLogs() {
 
   return (
     <div className="space-y-5">
-      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Azure Activity Logs</h2>
@@ -225,7 +219,6 @@ export function AzureActivityLogs() {
         </button>
       </div>
 
-      {/* Severity Dashboard */}
       <div className="flex gap-3">
         <SeverityCount
           label="Critical"   count={summary.critical} color="text-red-700"    bg="bg-red-100"
@@ -259,9 +252,7 @@ export function AzureActivityLogs() {
         />
       </div>
 
-      {/* Controls */}
       <div className="flex flex-wrap items-end gap-3">
-        {/* Subscription picker */}
         <div className="w-64">
           <Select
             label="Subscription"
@@ -271,7 +262,6 @@ export function AzureActivityLogs() {
           />
         </div>
 
-        {/* Time presets */}
         <div>
           <p className="text-xs font-medium text-gray-500 mb-1.5">Time Range</p>
           <div className="flex gap-1">
@@ -292,7 +282,6 @@ export function AzureActivityLogs() {
           </div>
         </div>
 
-        {/* Custom range toggle */}
         <div>
           <p className="text-xs font-medium text-gray-500 mb-1.5">
             <button
@@ -337,7 +326,6 @@ export function AzureActivityLogs() {
         </div>
       </div>
 
-      {/* Events list */}
       <Card
         padding={false}
         title={`Events${filtered.length > 0 ? ` (${filtered.length} matching)` : ''}`}

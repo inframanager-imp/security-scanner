@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { CheckMetadata } from '../../types';
 
 // Titles must stay byte-identical to the pre-registry hardcoded titles:
@@ -74,45 +73,5 @@ export const redshiftChecks: CheckMetadata[] = [
     description: 'Checks that Redshift clusters have Enhanced VPC Routing enabled so COPY and UNLOAD traffic stays within the VPC instead of traveling over the internet.',
     remediation: 'Enable enhanced VPC routing: aws redshift modify-cluster --cluster-identifier <cluster-id> --enhanced-vpc-routing',
     tags: ['redshift', 'network'],
-  },
-  {
-    checkId: 'redshift_cluster_automatic_upgrades',
-    provider: 'aws',
-    service: 'redshift',
-    title: 'Redshift Cluster Version Upgrades Disabled',
-    severity: 'MEDIUM',
-    description: 'Checks that Redshift clusters allow automatic version upgrades so engine patches are applied during the maintenance window instead of leaving clusters on vulnerable versions.',
-    remediation: 'Enable version upgrades: aws redshift modify-cluster --cluster-identifier <cluster-id> --allow-version-upgrade',
-    tags: ['redshift', 'patching'],
-  },
-  {
-    checkId: 'redshift_cluster_in_transit_encryption_enabled',
-    provider: 'aws',
-    service: 'redshift',
-    title: 'Redshift Cluster In-Transit Encryption Disabled',
-    severity: 'HIGH',
-    description: 'Checks that Redshift clusters require TLS for client connections via the require_ssl parameter in the cluster parameter group.',
-    remediation: 'Set require_ssl to true: aws redshift modify-cluster-parameter-group --parameter-group-name <group> --parameters ParameterName=require_ssl,ParameterValue=true, then reboot the cluster to apply.',
-    tags: ['redshift', 'encryption', 'in-transit'],
-  },
-  {
-    checkId: 'redshift_cluster_multi_az_enabled',
-    provider: 'aws',
-    service: 'redshift',
-    title: 'Redshift Cluster Multi-AZ Disabled',
-    severity: 'MEDIUM',
-    description: 'Checks that provisioned Redshift clusters have Multi-AZ enabled so compute spans two Availability Zones and survives an AZ failure.',
-    remediation: 'Enable Multi-AZ: aws redshift modify-cluster --cluster-identifier <cluster-id> --multi-az (supported on provisioned RA3 clusters).',
-    tags: ['redshift', 'availability', 'resilience'],
-  },
-  {
-    checkId: 'redshift_cluster_non_default_database_name',
-    provider: 'aws',
-    service: 'redshift',
-    title: 'Redshift Cluster Uses Default Database Name',
-    severity: 'LOW',
-    description: 'Checks that Redshift clusters do not use the default database name "dev", which is predictable and aids enumeration and mis-scoped policies.',
-    remediation: 'Create a new cluster with a non-default database name, migrate workloads, and retire the cluster using the default "dev" database name.',
-    tags: ['redshift', 'configuration'],
   },
 ];

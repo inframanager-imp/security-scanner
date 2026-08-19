@@ -104,8 +104,6 @@ export function AccountDetail() {
     enabled: !!id && activeTab === 'credentials',
   });
 
-  // Use the last SUCCESSFUL scan's ID for findings so a failed scan never
-  // shows "No findings" when prior results exist.
   const latestScan = account?.latestScan;
   const findingsScanId = account?.lastSuccessfulScanId ?? latestScan?.id;
   const { data: recentFindings } = useQuery({
@@ -204,7 +202,6 @@ export function AccountDetail() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <Button
@@ -246,7 +243,6 @@ export function AccountDetail() {
         </Button>
       </div>
 
-      {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-6">
           {tabs.map((tab) => (
@@ -265,11 +261,9 @@ export function AccountDetail() {
         </nav>
       </div>
 
-      {/* Tab Content */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
 
-          {/* Failed scan error banner */}
           {scanFailed && (
             <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-4">
               <XCircle size={18} className="mt-0.5 shrink-0 text-red-500" />
@@ -303,7 +297,6 @@ export function AccountDetail() {
               <SeverityDonut summary={summary} />
             </Card>
 
-            {/* Finding counts */}
             <Card title="Severity Breakdown">
               <div className="space-y-3">
                 {[
@@ -326,7 +319,6 @@ export function AccountDetail() {
               </div>
             </Card>
 
-            {/* Scan Info */}
             <Card title="Latest Scan">
               {account.latestScan ? (
                 <div className="space-y-3 text-sm">
@@ -371,7 +363,6 @@ export function AccountDetail() {
             </Card>
           </div>
 
-          {/* Recent Findings */}
           <Card title={scanFailed && account.lastSuccessfulScanId ? 'Recent Findings — Last Successful Scan (Top 5)' : 'Recent Findings (Top 5)'} padding={false}>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -519,7 +510,6 @@ export function AccountDetail() {
             </div>
           ) : (
             <>
-              {/* Current credential info */}
               {credentials && (
                 <Card title="Current Credentials">
                   <div className="space-y-2 text-sm">
@@ -562,7 +552,6 @@ export function AccountDetail() {
                 </Card>
               )}
 
-              {/* Update Credentials Form */}
               <Card title={credentials ? 'Update Credentials' : 'Add Credentials'}>
                 <div className="space-y-4">
                   {credError && (

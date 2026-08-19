@@ -11,7 +11,6 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { runDspmScanForAccount } from '../services/dspmService';
-import { buildCoalescingJobId } from '../services/coalescingJobId';
 
 export const DSPM_QUEUE = 'dspm-scans';
 
@@ -32,7 +31,7 @@ export function getDspmQueue(): Queue<DspmJob> {
 
 export async function enqueueDspmScan(data: DspmJob): Promise<string> {
   const queue = getDspmQueue();
-  const jobId = buildCoalescingJobId([data.provider, data.accountId], Date.now(), 60000);
+  const jobId = `${data.provider}:${data.accountId}:${Math.floor(Date.now() / 60000)}`;
   const job = await queue.add('dspm-scan', data, {
     jobId,
     attempts: 1,

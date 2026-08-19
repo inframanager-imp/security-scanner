@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database';
 import { authenticate } from '../middleware/authenticate';
-import { getComplianceTags } from '../services/complianceService';
 
 const router = Router();
 router.use(authenticate);
@@ -85,8 +84,7 @@ router.get('/prioritized', async (req: Request, res: Response) => {
 // GET /api/findings/services — distinct services for filter dropdowns
 router.get('/services', async (req: Request, res: Response) => {
   try {
-    // THREAT excluded — see the matching comment on GET / above.
-    const where: Record<string, unknown> = { service: { not: 'THREAT' } };
+    const where: Record<string, unknown> = {};
     if (req.query.accountId) {
       where.scan = { accountId: req.query.accountId };
     }
@@ -116,9 +114,7 @@ router.get('/', async (req: Request, res: Response) => {
     if (req.query.severity) where.severity = req.query.severity;
 
     // Multi-service: ?services=s3,ec2 OR ?service=s3 (single, legacy)
-    let explicitServiceFilter = false;
     if (req.query.services) {
-      explicitServiceFilter = true;
       const svcList = String(req.query.services)
         .split(',')
         .map((s) => s.trim())
@@ -129,17 +125,7 @@ router.get('/', async (req: Request, res: Response) => {
         where.service = { in: svcList };
       }
     } else if (req.query.service) {
-      explicitServiceFilter = true;
       where.service = req.query.service;
-    }
-
-    // Threat Detection findings (service=THREAT) are anomaly/behavioral
-    // signals with their own dedicated page (Risk & Exposure > Threat
-    // Detection) — excluded from the general findings list by default so
-    // they don't mix into Cloud Security Assessment reports. Still reachable
-    // when a caller explicitly asks for service=THREAT, which that page does.
-    if (!explicitServiceFilter) {
-      where.service = { not: 'THREAT' };
     }
 
     if (req.query.findingStatus) where.findingStatus = req.query.findingStatus;
@@ -177,10 +163,6 @@ router.get('/', async (req: Request, res: Response) => {
 
     let orderBy: object[];
     if (sortBy === 'severity') {
-      // severity asc = most severe first (CRITICAL→HIGH→…)
-      // severity desc = least severe first
-      // Alphabetical for severity: CRITICAL < HIGH < INFO < LOW < MEDIUM
-      // For "most severe first" use asc; for "least severe first" use desc
       const sevDir = req.query.sortOrder === 'desc' ? 'desc' : 'asc';
       orderBy = [{ severity: sevDir }, { discoveredAt: 'desc' }];
     } else if (sortBy === 'riskScore') {
@@ -237,7 +219,6 @@ router.get('/', async (req: Request, res: Response) => {
       findingStatus: f.findingStatus,
       tags: f.tags,
       discoveredAt: f.discoveredAt,
-      complianceTags: getComplianceTags(f.title, f.checkId),
     }));
 
     res.json({
@@ -249,12 +230,6 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/findings/deduplicate
-// Removes duplicate findings across the database (or scoped to one account).
-// Keeps the oldest OPEN/ACKNOWLEDGED finding per identity+resource group.
-// Identity prefers checkId (stable across title rewording) over
-// service+title, matching the scan-time dedup in workers/scanWorker.ts —
-// see the comment there for why.
 router.post('/deduplicate', async (req: Request, res: Response) => {
   try {
     const { accountId } = req.body as { accountId?: string };
@@ -286,7 +261,6 @@ router.post('/deduplicate', async (req: Request, res: Response) => {
         id: true,
         service: true,
         title: true,
-        checkId: true,
         evidence: true,
         findingStatus: true,
         createdAt: true,
@@ -295,11 +269,10 @@ router.post('/deduplicate', async (req: Request, res: Response) => {
       orderBy: { createdAt: 'asc' },
     });
 
-    // Group by accountId::(checkId | service::title)::resource
+    // Group by accountId::service::title::resource
     const groups = new Map<string, typeof all>();
     for (const f of all) {
-      const identity = f.checkId ? f.checkId : `${f.service}::${f.title}`;
-      const key = [f.scan.accountId, identity, resourceFingerprint(f.evidence)].join('::');
+      const key = [f.scan.accountId, f.service, f.title, resourceFingerprint(f.evidence)].join('::');
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(f);
     }

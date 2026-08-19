@@ -12,13 +12,26 @@
  *   5. Derive ResourceDependency edges from config attributes
  */
 
-import {
-  ConfigServiceClient,
-  ListDiscoveredResourcesCommand,
-  BatchGetResourceConfigCommand,
-  type ListDiscoveredResourcesCommandInput,
-} from '@aws-sdk/client-config-service';
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
+import { EC2Client, DescribeInstancesCommand, DescribeVpcsCommand, DescribeSubnetsCommand,
+  DescribeSecurityGroupsCommand, DescribeNetworkInterfacesCommand, DescribeInternetGatewaysCommand,
+  DescribeRouteTablesCommand, DescribeAddressesCommand, DescribeVolumesCommand } from '@aws-sdk/client-ec2';
+import { S3Client, ListBucketsCommand, GetBucketLocationCommand, GetBucketTaggingCommand, GetPublicAccessBlockCommand } from '@aws-sdk/client-s3';
+import {
+  IAMClient, ListRolesCommand, ListUsersCommand, ListPoliciesCommand, ListGroupsCommand, GetPolicyVersionCommand,
+  ListAttachedRolePoliciesCommand, ListRolePoliciesCommand, GetRolePolicyCommand,
+  ListAttachedUserPoliciesCommand, ListUserPoliciesCommand, GetUserPolicyCommand,
+} from '@aws-sdk/client-iam';
+import { RDSClient, DescribeDBInstancesCommand, DescribeDBClustersCommand } from '@aws-sdk/client-rds';
+import { LambdaClient, ListFunctionsCommand } from '@aws-sdk/client-lambda';
+import { EKSClient, ListClustersCommand as EksListClustersCommand, DescribeClusterCommand } from '@aws-sdk/client-eks';
+import { ElasticLoadBalancingV2Client, DescribeLoadBalancersCommand } from '@aws-sdk/client-elastic-load-balancing-v2';
+import { DynamoDBClient, ListTablesCommand, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
+import { KMSClient, ListKeysCommand, DescribeKeyCommand } from '@aws-sdk/client-kms';
+import { SNSClient, ListTopicsCommand } from '@aws-sdk/client-sns';
+import { SQSClient, ListQueuesCommand } from '@aws-sdk/client-sqs';
+import { CloudFrontClient, ListDistributionsCommand } from '@aws-sdk/client-cloudfront';
+import { ElastiCacheClient, DescribeCacheClustersCommand } from '@aws-sdk/client-elasticache';
 import { prisma }     from '../config/database';
 import { Prisma }     from '@prisma/client';
 import * as credentialService  from './credentialService';
@@ -27,36 +40,8 @@ import { decryptGcpCredentials }   from './gcpCredentialService';
 import AzureClient  from '../../../src/azure/client';
 import GcpClient    from '../../../src/gcp/client';
 import { DependencyType } from '@prisma/client';
-
-// ─── AWS resource types to discover ──────────────────────────────────────────
-
-const AWS_RESOURCE_TYPES: string[] = [
-  'AWS::EC2::Instance',
-  'AWS::EC2::VPC',
-  'AWS::EC2::Subnet',
-  'AWS::EC2::SecurityGroup',
-  'AWS::EC2::NetworkInterface',
-  'AWS::EC2::InternetGateway',
-  'AWS::EC2::RouteTable',
-  'AWS::EC2::EIP',
-  'AWS::EC2::Volume',
-  'AWS::S3::Bucket',
-  'AWS::IAM::Role',
-  'AWS::IAM::User',
-  'AWS::IAM::Policy',
-  'AWS::IAM::Group',
-  'AWS::RDS::DBInstance',
-  'AWS::RDS::DBCluster',
-  'AWS::Lambda::Function',
-  'AWS::EKS::Cluster',
-  'AWS::ElasticLoadBalancingV2::LoadBalancer',
-  'AWS::DynamoDB::Table',
-  'AWS::KMS::Key',
-  'AWS::SNS::Topic',
-  'AWS::SQS::Queue',
-  'AWS::CloudFront::Distribution',
-  'AWS::ElastiCache::CacheCluster',
-];
+import { logger } from '../config/logger';
+import { mapWithConcurrency } from './concurrency';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,16 +49,18 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-async function getConfigClient(accountId: string, region: string): Promise<ConfigServiceClient> {
+interface AwsCreds { accessKeyId: string; secretAccessKey: string; sessionToken?: string }
+
+async function getAwsCredentials(accountId: string, region: string): Promise<AwsCreds> {
   const cred = await prisma.awsCredential.findUnique({ where: { accountId } });
   if (!cred) throw new Error('No credentials for account');
   const dec = credentialService.decryptCredentials(cred);
   if (!dec.accessKeyId || !dec.secretAccessKey) throw new Error('Missing access key credentials');
 
-  let credentials = {
+  let credentials: AwsCreds = {
     accessKeyId:     dec.accessKeyId,
     secretAccessKey: dec.secretAccessKey,
-    sessionToken:    undefined as string | undefined,
+    sessionToken:    undefined,
   };
 
   if (cred.authMethod === 'ASSUME_ROLE' && cred.roleArn) {
@@ -90,7 +77,389 @@ async function getConfigClient(accountId: string, region: string): Promise<Confi
       sessionToken:    assumed.Credentials.SessionToken,
     };
   }
-  return new ConfigServiceClient({ region, credentials });
+  return credentials;
+}
+
+interface DiscoveredItem {
+  nativeId: string; resourceType: string; resourceName?: string;
+  region?: string; tags?: Record<string, string>; configState: Record<string, unknown>;
+}
+
+function tagListToMap(tags?: { Key?: string; Value?: string }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const t of tags ?? []) if (t.Key) out[t.Key] = t.Value ?? '';
+  return out;
+}
+
+async function listAwsResourcesDirect(creds: AwsCreds, region: string): Promise<DiscoveredItem[]> {
+  const cfg = { region, credentials: creds };
+  const items: DiscoveredItem[] = [];
+
+  const safe = async (label: string, fn: () => Promise<void>) => {
+    try { await fn(); } catch (e) {
+      logger.error(`[resource-discovery] ${label} failed:`, (e as Error).message);
+    }
+  };
+
+  await safe('EC2 instances', async () => {
+    const c = new EC2Client(cfg);
+    let nextToken: string | undefined;
+    do {
+      const resp = await c.send(new DescribeInstancesCommand({ NextToken: nextToken }));
+      nextToken = resp.NextToken;
+      for (const res of resp.Reservations ?? []) for (const i of res.Instances ?? []) {
+        if (!i.InstanceId) continue;
+        const tags = tagListToMap(i.Tags);
+        items.push({ nativeId: i.InstanceId, resourceType: 'AWS::EC2::Instance', resourceName: tags.Name, region, tags, configState: i as unknown as Record<string, unknown> });
+      }
+    } while (nextToken);
+  });
+
+  await safe('EC2 VPCs', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeVpcsCommand({}));
+    for (const v of resp.Vpcs ?? []) {
+      if (!v.VpcId) continue;
+      const tags = tagListToMap(v.Tags);
+      items.push({ nativeId: v.VpcId, resourceType: 'AWS::EC2::VPC', resourceName: tags.Name, region, tags, configState: v as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 subnets', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeSubnetsCommand({}));
+    for (const s of resp.Subnets ?? []) {
+      if (!s.SubnetId) continue;
+      const tags = tagListToMap(s.Tags);
+      items.push({ nativeId: s.SubnetId, resourceType: 'AWS::EC2::Subnet', resourceName: tags.Name, region, tags, configState: s as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 security groups', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeSecurityGroupsCommand({}));
+    for (const g of resp.SecurityGroups ?? []) {
+      if (!g.GroupId) continue;
+      const tags = tagListToMap(g.Tags);
+      items.push({ nativeId: g.GroupId, resourceType: 'AWS::EC2::SecurityGroup', resourceName: g.GroupName, region, tags, configState: g as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 network interfaces', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeNetworkInterfacesCommand({}));
+    for (const n of resp.NetworkInterfaces ?? []) {
+      if (!n.NetworkInterfaceId) continue;
+      const tags = tagListToMap(n.TagSet);
+      items.push({ nativeId: n.NetworkInterfaceId, resourceType: 'AWS::EC2::NetworkInterface', resourceName: n.Description, region, tags, configState: n as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 internet gateways', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeInternetGatewaysCommand({}));
+    for (const g of resp.InternetGateways ?? []) {
+      if (!g.InternetGatewayId) continue;
+      const tags = tagListToMap(g.Tags);
+      items.push({ nativeId: g.InternetGatewayId, resourceType: 'AWS::EC2::InternetGateway', resourceName: tags.Name, region, tags, configState: g as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 route tables', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeRouteTablesCommand({}));
+    for (const rt of resp.RouteTables ?? []) {
+      if (!rt.RouteTableId) continue;
+      const tags = tagListToMap(rt.Tags);
+      items.push({ nativeId: rt.RouteTableId, resourceType: 'AWS::EC2::RouteTable', resourceName: tags.Name, region, tags, configState: rt as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 elastic IPs', async () => {
+    const c = new EC2Client(cfg);
+    const resp = await c.send(new DescribeAddressesCommand({}));
+    for (const a of resp.Addresses ?? []) {
+      const id = a.AllocationId ?? a.PublicIp;
+      if (!id) continue;
+      const tags = tagListToMap(a.Tags);
+      items.push({ nativeId: id, resourceType: 'AWS::EC2::EIP', resourceName: tags.Name ?? a.PublicIp, region, tags, configState: a as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('EC2 volumes', async () => {
+    const c = new EC2Client(cfg);
+    let nextToken: string | undefined;
+    do {
+      const resp = await c.send(new DescribeVolumesCommand({ NextToken: nextToken }));
+      nextToken = resp.NextToken;
+      for (const v of resp.Volumes ?? []) {
+        if (!v.VolumeId) continue;
+        const tags = tagListToMap(v.Tags);
+        items.push({ nativeId: v.VolumeId, resourceType: 'AWS::EC2::Volume', resourceName: tags.Name, region, tags, configState: v as unknown as Record<string, unknown> });
+      }
+    } while (nextToken);
+  });
+
+  await safe('S3 buckets', async () => {
+    const c = new S3Client(cfg);
+    const resp = await c.send(new ListBucketsCommand({}));
+    const buckets = (resp.Buckets ?? []).filter((b) => b.Name);
+
+    await mapWithConcurrency(buckets, 10, async (b) => {
+      const bucketName = b.Name!;
+      let bucketRegion = region;
+      let tags: Record<string, string> = {};
+      let publicAccessBlock: unknown = null;
+      try {
+        const loc = await c.send(new GetBucketLocationCommand({ Bucket: bucketName }));
+        bucketRegion = loc.LocationConstraint || 'us-east-1';
+      } catch { /* ignore — some buckets are inaccessible cross-account/policy-restricted */ }
+      try {
+        const tagResp = await c.send(new GetBucketTaggingCommand({ Bucket: bucketName }));
+        tags = tagListToMap(tagResp.TagSet);
+      } catch { /* no tags or no permission — not fatal */ }
+      try {
+        const pabResp = await c.send(new GetPublicAccessBlockCommand({ Bucket: bucketName }));
+        publicAccessBlock = pabResp.PublicAccessBlockConfiguration ?? null;
+      } catch {
+        publicAccessBlock = { BlockPublicAcls: false, BlockPublicPolicy: false, IgnorePublicAcls: false, RestrictPublicBuckets: false };
+      }
+      items.push({
+        nativeId: bucketName, resourceType: 'AWS::S3::Bucket', resourceName: bucketName, region: bucketRegion, tags,
+        configState: { ...b, PublicAccessBlock: publicAccessBlock } as unknown as Record<string, unknown>,
+      });
+    });
+  });
+
+  await safe('IAM roles', async () => {
+    const c = new IAMClient(cfg);
+    let marker: string | undefined;
+    const roles: Array<{ Arn: string; RoleName: string; [k: string]: unknown }> = [];
+    do {
+      const resp = await c.send(new ListRolesCommand({ Marker: marker }));
+      marker = resp.IsTruncated ? resp.Marker : undefined;
+      for (const role of resp.Roles ?? []) if (role.Arn) roles.push(role as any);
+    } while (marker);
+
+    await mapWithConcurrency(roles, 10, async (role) => {
+      let attachedPolicies: unknown[] = [];
+      const inlinePolicies: Record<string, unknown> = {};
+      try {
+        const attachedResp = await c.send(new ListAttachedRolePoliciesCommand({ RoleName: role.RoleName }));
+        attachedPolicies = attachedResp.AttachedPolicies ?? [];
+      } catch { /* non-fatal — this role's managed-policy grants just won't flatten */ }
+      try {
+        const inlineResp = await c.send(new ListRolePoliciesCommand({ RoleName: role.RoleName }));
+        for (const pname of inlineResp.PolicyNames ?? []) {
+          try {
+            const p = await c.send(new GetRolePolicyCommand({ RoleName: role.RoleName, PolicyName: pname }));
+            inlinePolicies[pname] = p.PolicyDocument ? JSON.parse(decodeURIComponent(p.PolicyDocument)) : null;
+          } catch { /* non-fatal */ }
+        }
+      } catch { /* non-fatal */ }
+      items.push({
+        nativeId: role.Arn, resourceType: 'AWS::IAM::Role', resourceName: role.RoleName as string,
+        configState: { ...role, attachedPolicies, inlinePolicies } as unknown as Record<string, unknown>,
+      });
+    });
+  });
+
+  await safe('IAM users', async () => {
+    const c = new IAMClient(cfg);
+    let marker: string | undefined;
+    const users: Array<{ Arn: string; UserName: string; [k: string]: unknown }> = [];
+    do {
+      const resp = await c.send(new ListUsersCommand({ Marker: marker }));
+      marker = resp.IsTruncated ? resp.Marker : undefined;
+      for (const u of resp.Users ?? []) if (u.Arn) users.push(u as any);
+    } while (marker);
+
+    await mapWithConcurrency(users, 10, async (u) => {
+      let attachedPolicies: unknown[] = [];
+      const inlinePolicies: Record<string, unknown> = {};
+      try {
+        const attachedResp = await c.send(new ListAttachedUserPoliciesCommand({ UserName: u.UserName }));
+        attachedPolicies = attachedResp.AttachedPolicies ?? [];
+      } catch { /* non-fatal */ }
+      try {
+        const inlineResp = await c.send(new ListUserPoliciesCommand({ UserName: u.UserName }));
+        for (const pname of inlineResp.PolicyNames ?? []) {
+          try {
+            const p = await c.send(new GetUserPolicyCommand({ UserName: u.UserName, PolicyName: pname }));
+            inlinePolicies[pname] = p.PolicyDocument ? JSON.parse(decodeURIComponent(p.PolicyDocument)) : null;
+          } catch { /* non-fatal */ }
+        }
+      } catch { /* non-fatal */ }
+      items.push({
+        nativeId: u.Arn, resourceType: 'AWS::IAM::User', resourceName: u.UserName,
+        configState: { ...u, attachedPolicies, inlinePolicies } as unknown as Record<string, unknown>,
+      });
+    });
+  });
+
+  await safe('IAM policies', async () => {
+    const c = new IAMClient(cfg);
+    let marker: string | undefined;
+    do {
+      const resp = await c.send(new ListPoliciesCommand({ Scope: 'Local', Marker: marker }));
+      marker = resp.IsTruncated ? resp.Marker : undefined;
+      for (const p of resp.Policies ?? []) {
+        if (!p.Arn) continue;
+        let document: unknown = null;
+        if (p.Arn && p.DefaultVersionId) {
+          try {
+            const versionResp = await c.send(new GetPolicyVersionCommand({ PolicyArn: p.Arn, VersionId: p.DefaultVersionId }));
+            const raw = versionResp.PolicyVersion?.Document;
+            document = raw ? JSON.parse(decodeURIComponent(raw)) : null;
+          } catch { /* non-fatal — leave document null, that policy's grants just won't flatten */ }
+        }
+        items.push({ nativeId: p.Arn, resourceType: 'AWS::IAM::Policy', resourceName: p.PolicyName, configState: { ...p, Document: document } as unknown as Record<string, unknown> });
+      }
+    } while (marker);
+  });
+
+  await safe('IAM groups', async () => {
+    const c = new IAMClient(cfg);
+    let marker: string | undefined;
+    do {
+      const resp = await c.send(new ListGroupsCommand({ Marker: marker }));
+      marker = resp.IsTruncated ? resp.Marker : undefined;
+      for (const g of resp.Groups ?? []) {
+        if (!g.Arn) continue;
+        items.push({ nativeId: g.Arn, resourceType: 'AWS::IAM::Group', resourceName: g.GroupName, configState: g as unknown as Record<string, unknown> });
+      }
+    } while (marker);
+  });
+
+  await safe('RDS instances', async () => {
+    const c = new RDSClient(cfg);
+    const resp = await c.send(new DescribeDBInstancesCommand({}));
+    for (const db of resp.DBInstances ?? []) {
+      if (!db.DBInstanceArn) continue;
+      const tags = tagListToMap(db.TagList);
+      items.push({ nativeId: db.DBInstanceArn, resourceType: 'AWS::RDS::DBInstance', resourceName: db.DBInstanceIdentifier, region, tags, configState: db as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('RDS clusters', async () => {
+    const c = new RDSClient(cfg);
+    const resp = await c.send(new DescribeDBClustersCommand({}));
+    for (const db of resp.DBClusters ?? []) {
+      if (!db.DBClusterArn) continue;
+      const tags = tagListToMap(db.TagList);
+      items.push({ nativeId: db.DBClusterArn, resourceType: 'AWS::RDS::DBCluster', resourceName: db.DBClusterIdentifier, region, tags, configState: db as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('Lambda functions', async () => {
+    const c = new LambdaClient(cfg);
+    let marker: string | undefined;
+    do {
+      const resp = await c.send(new ListFunctionsCommand({ Marker: marker }));
+      marker = resp.NextMarker;
+      for (const fn of resp.Functions ?? []) {
+        if (!fn.FunctionArn) continue;
+        items.push({ nativeId: fn.FunctionArn, resourceType: 'AWS::Lambda::Function', resourceName: fn.FunctionName, region, configState: fn as unknown as Record<string, unknown> });
+      }
+    } while (marker);
+  });
+
+  await safe('EKS clusters', async () => {
+    const c = new EKSClient(cfg);
+    const list = await c.send(new EksListClustersCommand({}));
+    for (const name of list.clusters ?? []) {
+      try {
+        const desc = await c.send(new DescribeClusterCommand({ name }));
+        if (!desc.cluster?.arn) continue;
+        items.push({ nativeId: desc.cluster.arn, resourceType: 'AWS::EKS::Cluster', resourceName: name, region, tags: desc.cluster.tags, configState: desc.cluster as unknown as Record<string, unknown> });
+      } catch (e) { logger.error('[resource-discovery] EKS describe failed:', (e as Error).message); }
+    }
+  });
+
+  await safe('ELBv2 load balancers', async () => {
+    const c = new ElasticLoadBalancingV2Client(cfg);
+    const resp = await c.send(new DescribeLoadBalancersCommand({}));
+    for (const lb of resp.LoadBalancers ?? []) {
+      if (!lb.LoadBalancerArn) continue;
+      items.push({ nativeId: lb.LoadBalancerArn, resourceType: 'AWS::ElasticLoadBalancingV2::LoadBalancer', resourceName: lb.LoadBalancerName, region, configState: lb as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('DynamoDB tables', async () => {
+    const c = new DynamoDBClient(cfg);
+    let start: string | undefined;
+    do {
+      const list = await c.send(new ListTablesCommand({ ExclusiveStartTableName: start }));
+      start = list.LastEvaluatedTableName;
+      for (const name of list.TableNames ?? []) {
+        try {
+          const desc = await c.send(new DescribeTableCommand({ TableName: name }));
+          const t = desc.Table;
+          if (!t?.TableArn) continue;
+          items.push({ nativeId: t.TableArn, resourceType: 'AWS::DynamoDB::Table', resourceName: name, region, configState: t as unknown as Record<string, unknown> });
+        } catch (e) { logger.error('[resource-discovery] DynamoDB describe failed:', (e as Error).message); }
+      }
+    } while (start);
+  });
+
+  await safe('KMS keys', async () => {
+    const c = new KMSClient(cfg);
+    let marker: string | undefined;
+    do {
+      const resp = await c.send(new ListKeysCommand({ Marker: marker }));
+      marker = resp.Truncated ? resp.NextMarker : undefined;
+      for (const k of resp.Keys ?? []) {
+        if (!k.KeyArn) continue;
+        try {
+          const desc = await c.send(new DescribeKeyCommand({ KeyId: k.KeyId }));
+          // Skip AWS-managed keys — only customer-managed keys are meaningful to inventory.
+          if (desc.KeyMetadata?.KeyManager !== 'CUSTOMER') continue;
+          items.push({ nativeId: k.KeyArn, resourceType: 'AWS::KMS::Key', resourceName: k.KeyId, region, configState: (desc.KeyMetadata ?? {}) as unknown as Record<string, unknown> });
+        } catch (e) { logger.error('[resource-discovery] KMS describe failed:', (e as Error).message); }
+      }
+    } while (marker);
+  });
+
+  await safe('SNS topics', async () => {
+    const c = new SNSClient(cfg);
+    let nextToken: string | undefined;
+    do {
+      const resp = await c.send(new ListTopicsCommand({ NextToken: nextToken }));
+      nextToken = resp.NextToken;
+      for (const t of resp.Topics ?? []) {
+        if (!t.TopicArn) continue;
+        items.push({ nativeId: t.TopicArn, resourceType: 'AWS::SNS::Topic', resourceName: t.TopicArn.split(':').pop(), region, configState: t as unknown as Record<string, unknown> });
+      }
+    } while (nextToken);
+  });
+
+  await safe('SQS queues', async () => {
+    const c = new SQSClient(cfg);
+    const resp = await c.send(new ListQueuesCommand({}));
+    for (const url of resp.QueueUrls ?? []) {
+      items.push({ nativeId: url, resourceType: 'AWS::SQS::Queue', resourceName: url.split('/').pop(), region, configState: { QueueUrl: url } });
+    }
+  });
+
+  await safe('CloudFront distributions', async () => {
+    const c = new CloudFrontClient({ ...cfg, region: 'us-east-1' }); // CloudFront is a global service
+    const resp = await c.send(new ListDistributionsCommand({}));
+    for (const d of resp.DistributionList?.Items ?? []) {
+      if (!d.ARN) continue;
+      items.push({ nativeId: d.ARN, resourceType: 'AWS::CloudFront::Distribution', resourceName: d.DomainName, configState: d as unknown as Record<string, unknown> });
+    }
+  });
+
+  await safe('ElastiCache clusters', async () => {
+    const c = new ElastiCacheClient(cfg);
+    const resp = await c.send(new DescribeCacheClustersCommand({}));
+    for (const cl of resp.CacheClusters ?? []) {
+      if (!cl.CacheClusterId) continue;
+      items.push({ nativeId: cl.CacheClusterId, resourceType: 'AWS::ElastiCache::CacheCluster', resourceName: cl.CacheClusterId, region, configState: cl as unknown as Record<string, unknown> });
+    }
+  });
+
+  return items;
 }
 
 // ─── Dependency extraction helpers ───────────────────────────────────────────
@@ -302,59 +671,24 @@ export async function discoverAwsResources(
 ): Promise<{ discovered: number; updated: number; deleted: number }> {
   const cred = await prisma.awsCredential.findUnique({ where: { accountId } });
   const r    = region ?? cred?.defaultRegion ?? 'us-east-1';
-  const client = await getConfigClient(accountId, r);
+  const creds = await getAwsCredentials(accountId, r);
 
   const seenIds = new Set<string>();
   let discovered = 0;
 
-  for (const resourceType of AWS_RESOURCE_TYPES) {
-    let nextToken: string | undefined;
-    const identifiers: { resourceType: string; resourceId: string }[] = [];
-
-    // List all resource IDs for this type
-    do {
-      const listInput: ListDiscoveredResourcesCommandInput = {
-        resourceType: resourceType as ListDiscoveredResourcesCommandInput['resourceType'],
-        nextToken,
-        includeDeletedResources: false,
-      };
-      const resp = await client.send(new ListDiscoveredResourcesCommand(listInput));
-      nextToken = resp.nextToken;
-      for (const r of resp.resourceIdentifiers ?? []) {
-        if (r.resourceId) identifiers.push({ resourceType: r.resourceType!, resourceId: r.resourceId });
-      }
-    } while (nextToken);
-
-    // Batch fetch full config (max 100 per request)
-    for (let i = 0; i < identifiers.length; i += 100) {
-      const batch = identifiers.slice(i, i + 100);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const batchCmd = new BatchGetResourceConfigCommand({
-        resourceKeys: batch.map((b) => ({ resourceType: b.resourceType as any, resourceId: b.resourceId })),
-      });
-      const resp = await client.send(batchCmd);
-
-      for (const item of resp.baseConfigurationItems ?? []) {
-        const config = (item.configuration ? JSON.parse(item.configuration) : {}) as Record<string, unknown>;
-
-        // Tags — BaseConfigurationItem.tags is typed as Record<string,string>|undefined
-        const tagsList = (item as Record<string, unknown>).tags as Record<string, string> | undefined ?? {};
-
-        await upsertResource({
-          provider:     'AWS',
-          awsAccountId: accountId,
-          nativeId:     item.arn ?? item.resourceId ?? '',
-          resourceType: item.resourceType ?? resourceType,
-          resourceName: item.resourceName ?? config.resourceName as string | undefined,
-          region:       item.awsRegion,
-          tags:         tagsList,
-          configState:  config,
-        }, seenIds);
-        discovered++;
-
-        // Deps pass (second pass after all resources are upserted)
-      }
-    }
+  const found = await listAwsResourcesDirect(creds, r);
+  for (const item of found) {
+    await upsertResource({
+      provider:     'AWS',
+      awsAccountId: accountId,
+      nativeId:     item.nativeId,
+      resourceType: item.resourceType,
+      resourceName: item.resourceName,
+      region:       item.region,
+      tags:         item.tags,
+      configState:  item.configState,
+    }, seenIds);
+    discovered++;
   }
 
   // Dependency pass — iterate all active resources for this account
@@ -389,7 +723,6 @@ export async function discoverAwsResources(
     deleted++;
   }
 
-  await client.destroy();
   return { discovered, updated: 0, deleted };
 }
 

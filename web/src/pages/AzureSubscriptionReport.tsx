@@ -11,11 +11,8 @@ import {
   Trash2,
   CheckCircle2,
   AlertCircle,
-  FileBarChart,
 } from 'lucide-react';
 import { azureApi } from '../api/azure';
-import { VaptReportModal } from '../components/ui/VaptReportModal';
-import { ComplianceTagBadges } from '../components/ui/ComplianceTagBadges';
 import { AzureReadinessSection } from '../components/ui/ReadinessSection';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -25,6 +22,7 @@ import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { SeverityBadge, FindingStatusBadge } from '../components/ui/Badge';
 import { Pagination } from '../components/ui/Table';
+import { ComplianceTagBadges } from '../components/ui/ComplianceTagBadges';
 import type { AzureFinding, FindingStatus } from '../types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -186,7 +184,6 @@ export function AzureSubscriptionReport() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<FindingStatus>('ACKNOWLEDGED');
   const [cleanupResult, setCleanupResult] = useState<{ deleted: number; message: string } | null>(null);
-  const [vaptModalOpen, setVaptModalOpen] = useState(false);
 
   const { data: sub, isLoading: subLoading } = useQuery({
     queryKey: ['azure-subscription', id],
@@ -295,7 +292,6 @@ export function AzureSubscriptionReport() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
           <Button
@@ -355,26 +351,6 @@ export function AzureSubscriptionReport() {
             </Button>
           )}
 
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<FileBarChart size={14} />}
-            onClick={() => setVaptModalOpen(true)}
-            title="Generate a professional VAPT-style security report (view HTML, print to PDF)"
-          >
-            VAPT Report
-          </Button>
-
-          {id && (
-            <VaptReportModal
-              open={vaptModalOpen}
-              onClose={() => setVaptModalOpen(false)}
-              provider="AZURE"
-              targetId={id}
-              targetName={sub?.name ?? 'this subscription'}
-            />
-          )}
-
           {sub?.lastSuccessfulScanId ?? sub?.latestScan?.id ? (
             <a
               href={azureApi.exportFindings(sub?.lastSuccessfulScanId ?? sub?.latestScan?.id ?? '')}
@@ -405,12 +381,9 @@ export function AzureSubscriptionReport() {
         </div>
       </div>
 
-      {/* Compliance Readiness */}
       {id && <AzureReadinessSection subscriptionId={id} />}
 
-      {/* Findings Table */}
       <Card padding={false}>
-        {/* Filter Bar */}
         <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-end gap-3">
           <Select
             value={severity}
@@ -452,7 +425,6 @@ export function AzureSubscriptionReport() {
           </span>
         </div>
 
-        {/* Table */}
         {isLoading ? (
           <div className="p-6 space-y-3">
             {[...Array(6)].map((_, i) => (
@@ -580,7 +552,6 @@ export function AzureSubscriptionReport() {
           </div>
         )}
 
-        {/* Pagination */}
         {findingsPage && findingsPage.totalPages > 1 && (
           <Pagination
             page={page}
@@ -592,7 +563,6 @@ export function AzureSubscriptionReport() {
         )}
       </Card>
 
-      {/* Bulk Update Modal */}
       <Modal
         open={bulkModalOpen}
         onClose={() => setBulkModalOpen(false)}

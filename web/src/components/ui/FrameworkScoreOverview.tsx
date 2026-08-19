@@ -77,12 +77,6 @@ interface FrameworkScoreOverviewProps {
   className?: string;
 }
 
-/**
- * "Framework Score Overview" card — average compliance score per framework
- * (CIS, PCI DSS, SOC 2, ISO 27001, HIPAA, NIST, GDPR, FedRAMP) across every
- * scanned AWS account and Azure subscription. Renders nothing when there's no
- * compliance data yet (matches the empty-state behavior both host pages want).
- */
 export function FrameworkScoreOverview({ awsAccounts, azureSubs, className }: FrameworkScoreOverviewProps) {
   const frameworkGauges = useMemo(
     () => computeFrameworkGauges(awsAccounts, azureSubs),

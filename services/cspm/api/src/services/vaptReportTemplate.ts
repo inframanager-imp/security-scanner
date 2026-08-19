@@ -34,9 +34,6 @@ function gaugeColor(score: number): string {
 }
 
 // ─── Escaping ──────────────────────────────────────────────────────────────
-// Findings/evidence ultimately derive from scanned cloud resources (names,
-// tags, etc. an account owner controls) — escape everything interpolated
-// into the document so a crafted resource name can't inject markup.
 
 function esc(value: unknown): string {
   return String(value ?? '')

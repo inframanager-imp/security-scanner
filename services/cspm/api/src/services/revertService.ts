@@ -194,7 +194,6 @@ function planAwsRevert(driftType: string, type: string, resourceName: string, bC
     };
   }
 
-  // Generic fallback
   return {
     canAutoRevert: false, riskLevel: 'MEDIUM',
     description: `Modified configuration for "${resourceName}" requires manual restoration.`,
@@ -312,6 +311,19 @@ export async function executeRevert(
     result = { success: false, message: (err as Error).message };
     logger.error(`[revert] Failed to revert ${drift.resourceName}: ${result.message}`);
   }
+
+  await prisma.remediationLog.create({
+    data: {
+      driftResultId: driftId,
+      baselineId,
+      action:      'AUTO_REVERT',
+      actor:       executedBy,
+      outcome:     result.success ? 'SUCCESS' : 'FAILURE',
+      message:     result.message,
+      beforeState: drift.currentConfig ?? undefined,
+      afterState:  drift.baselineConfig ?? undefined,
+    },
+  }).catch((err) => logger.error(`[revert] Failed to write remediation audit log: ${(err as Error).message}`));
 
   return result;
 }

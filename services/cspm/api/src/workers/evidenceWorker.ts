@@ -16,7 +16,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { collectEvidenceForAccount } from '../services/evidenceService';
-import { buildEvidenceRefreshJobId, type EvidenceJobData } from '../services/evidenceJobId';
+import { buildEvidenceRefreshJobId, EvidenceJobData } from '../services/evidenceJobId';
 
 export const EVIDENCE_QUEUE = 'evidence-refresh';
 
@@ -33,6 +33,7 @@ export function getEvidenceQueue(): Queue<EvidenceJob> {
 
 export async function enqueueEvidenceRefresh(data: EvidenceJob): Promise<string> {
   const queue = getEvidenceQueue();
+  // Coalesce same-account refreshes within a 1-minute window
   const jobId = buildEvidenceRefreshJobId(data, Math.floor(Date.now() / 60000));
   const job = await queue.add('refresh-evidence', data, {
     jobId,

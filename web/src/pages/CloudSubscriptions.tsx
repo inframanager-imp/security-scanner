@@ -132,7 +132,6 @@ function InventoryPipelineBadge({ row }: { row: CloudRow }) {
     );
   }
 
-  // PENDING
   return (
     <span className="text-xs text-gray-400">Pending</span>
   );
@@ -144,11 +143,6 @@ function ProviderCard({
   provider, selected, onClick,
 }: { provider: CloudProvider; selected: boolean; onClick: () => void }) {
   const cfg = PROVIDER_CONFIG[provider];
-  const icons: Record<CloudProvider, string> = {
-    AWS:   '🟠',
-    AZURE: '🔵',
-    GCP:   '🟢',
-  };
   return (
     <button
       onClick={onClick}
@@ -158,7 +152,7 @@ function ProviderCard({
           : 'border-gray-200 hover:border-gray-300 bg-white'
       }`}
     >
-      <span className="text-3xl">{icons[provider]}</span>
+      <span className={`h-3 w-3 rounded-full ${cfg.dot}`} />
       <span className="text-sm font-semibold text-gray-800">{cfg.label}</span>
     </button>
   );
@@ -336,7 +330,6 @@ export function CloudSubscriptions() {
   const allRows = [...awsRows, ...azureRows, ...gcpRows].sort((a, b) => a.name.localeCompare(b.name));
   const rows    = provFilter === 'ALL' ? allRows : allRows.filter(r => r.provider === provFilter);
 
-  // Summary counts
   const totalCritical  = allRows.reduce((s, r) => s + (r.summary?.critical ?? 0), 0);
   const totalHigh      = allRows.reduce((s, r) => s + (r.summary?.high     ?? 0), 0);
   const totalFindings  = allRows.reduce((s, r) => s + (r.summary?.total    ?? 0), 0);
@@ -487,7 +480,6 @@ export function CloudSubscriptions() {
   return (
     <div className="space-y-6">
 
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Cloud Subscriptions</h2>
@@ -498,7 +490,6 @@ export function CloudSubscriptions() {
         </Button>
       </div>
 
-      {/* Summary cards */}
       {allRows.length > 0 && (
         <div className="grid grid-cols-5 gap-4">
           {[
@@ -522,7 +513,6 @@ export function CloudSubscriptions() {
         </div>
       )}
 
-      {/* Provider filter tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200">
         {(['ALL', 'AWS', 'AZURE', 'GCP'] as const).map(p => (
           <button
@@ -544,7 +534,6 @@ export function CloudSubscriptions() {
         ))}
       </div>
 
-      {/* Table */}
       <Card padding={false}>
         {isLoading ? (
           <div className="flex items-center justify-center h-40">
@@ -628,7 +617,6 @@ export function CloudSubscriptions() {
           </div>
         ) : (
           <div className="space-y-5">
-            {/* Step header */}
             <div className="flex items-center gap-2">
               <button onClick={() => { setStep('pick-provider'); setAddError(null); }}
                 className="text-gray-400 hover:text-gray-600">
@@ -638,7 +626,6 @@ export function CloudSubscriptions() {
               <span className="text-sm text-gray-500">{formLabel}</span>
             </div>
 
-            {/* Provider-specific form */}
             {provider === 'AWS' && (
               <AWSAddForm form={awsForm} onChange={setAwsForm} error={addError} />
             )}

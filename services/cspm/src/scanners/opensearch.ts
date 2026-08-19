@@ -201,26 +201,6 @@ export class OpenSearchScanner extends BaseScanner {
       ));
     }
 
-    // opensearch_service_domains_cloudwatch_logging_enabled: search and index
-    // slow logs must both be published to CloudWatch Logs
-    const searchSlowLogsEnabled = logPublishingOptions.SEARCH_SLOW_LOGS?.Enabled === true;
-    const indexSlowLogsEnabled = logPublishingOptions.INDEX_SLOW_LOGS?.Enabled === true;
-    if (!searchSlowLogsEnabled || !indexSlowLogsEnabled) {
-      let message: string;
-      if (indexSlowLogsEnabled) {
-        message = `OpenSearch domain "${domainName}" has INDEX_SLOW_LOGS enabled but SEARCH_SLOW_LOGS disabled`;
-      } else if (searchSlowLogsEnabled) {
-        message = `OpenSearch domain "${domainName}" has SEARCH_SLOW_LOGS enabled but INDEX_SLOW_LOGS disabled`;
-      } else {
-        message = `OpenSearch domain "${domainName}" has SEARCH_SLOW_LOGS and INDEX_SLOW_LOGS disabled`;
-      }
-      findings.push(this.emit(
-        'opensearch_service_domains_cloudwatch_logging_enabled',
-        { domain: domainName, searchSlowLogs: searchSlowLogsEnabled, indexSlowLogs: indexSlowLogsEnabled },
-        { message }
-      ));
-    }
-
     // opensearch_service_domains_updated_to_the_latest_service_software_version
     if (status.ServiceSoftwareOptions?.UpdateAvailable === true) {
       findings.push(this.emit(

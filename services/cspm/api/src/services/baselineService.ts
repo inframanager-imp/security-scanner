@@ -60,6 +60,23 @@ function driftSeverity(resourceType: string, driftedFields: string[]): string {
   return 'MEDIUM';
 }
 
+// ─── Control domain classifier (BCDD-F03) ──────────────────────────────────────
+
+const DOMAIN_PATTERNS: Array<[RegExp, string]> = [
+  [/iam|role|policy|user|group\.?(?!lb)|permission|identity/i, 'IAM'],
+  [/network|securitygroup|security\.group|firewall|nsg|vpc|subnet|route.?table|nacl|loadbalancer|elb|gateway/i, 'NETWORK'],
+  [/kms|keyvault|key\.vault|encrypt|s3|bucket|storage|rds|database|dynamodb|cosmos|sql/i, 'DATA_PROTECTION'],
+  [/cloudtrail|cloudwatch|log|monitor|siem|audit|activitylog/i, 'LOGGING_MONITORING'],
+  [/ec2|instance|vm|lambda|function|container|ecs|aks|gke|compute|ami|image|os\b/i, 'WORKLOAD_HARDENING'],
+];
+
+export function classifyControlDomain(resourceType: string): string {
+  for (const [pattern, domain] of DOMAIN_PATTERNS) {
+    if (pattern.test(resourceType)) return domain;
+  }
+  return 'OTHER';
+}
+
 // ─── Version helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -115,6 +132,7 @@ export async function captureBaseline(
   resourceTypes?: string[],
   nameSearch?: string,
   capturedBy?: string,
+  region?: string,
 ): Promise<string> {
   const where =
     provider === 'AWS'   ? { awsAccountId: targetId } :
@@ -127,9 +145,10 @@ export async function captureBaseline(
   const nameFilter = nameSearch
     ? { resourceName: { contains: nameSearch, mode: 'insensitive' as const } }
     : {};
+  const regionFilter = region ? { region } : {};
 
   const resources = await prisma.resourceInventory.findMany({
-    where: { ...where, state: 'ACTIVE', ...typeFilter, ...nameFilter },
+    where: { ...where, state: 'ACTIVE', ...typeFilter, ...nameFilter, ...regionFilter },
     select: {
       nativeId: true, resourceType: true, resourceName: true,
       region: true, configState: true,
@@ -147,6 +166,9 @@ export async function captureBaseline(
   const baseline = await prisma.configBaseline.create({
     data: {
       provider, targetId, name, description,
+      resourceTypes: resourceTypes ?? [],
+      nameSearch:    nameSearch ?? null,
+      region:        region ?? null,
       resourceCount: resources.length,
       currentVersion: 1,
       snapshots: { createMany: { data: snapshotData } },
@@ -183,7 +205,7 @@ export async function refreshBaseline(baselineId: string, refreshedBy?: string):
   });
   if (!baseline) throw new Error('Baseline not found');
 
-  const { provider, targetId, currentVersion } = baseline;
+  const { provider, targetId, currentVersion, resourceTypes, nameSearch, region } = baseline;
   const nextVersion = currentVersion + 1;
 
   // Save current state as a historical version BEFORE replacing snapshots
@@ -199,8 +221,13 @@ export async function refreshBaseline(baselineId: string, refreshedBy?: string):
     provider === 'AZURE' ? { azureSubId:   targetId } :
     { gcpProjectId: targetId };
 
+  // BCDD-F06: reapply the SAME scope this baseline was captured with.
+  const typeFilter   = resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {};
+  const nameFilter   = nameSearch ? { resourceName: { contains: nameSearch, mode: 'insensitive' as const } } : {};
+  const regionFilter = region ? { region } : {};
+
   const resources = await prisma.resourceInventory.findMany({
-    where: { ...where, state: 'ACTIVE' },
+    where: { ...where, state: 'ACTIVE', ...typeFilter, ...nameFilter, ...regionFilter },
     select: { nativeId: true, resourceType: true, resourceName: true, region: true, configState: true },
   });
 
@@ -257,23 +284,35 @@ export async function detectDrift(baselineId: string): Promise<{
     });
     if (!baseline) throw new Error('Baseline not found');
 
-    const { provider, targetId } = baseline;
+    const { provider, targetId, resourceTypes, nameSearch, region } = baseline;
     const where =
       provider === 'AWS'   ? { awsAccountId: targetId } :
       provider === 'AZURE' ? { azureSubId:   targetId } :
       { gcpProjectId: targetId };
 
+    const typeFilter   = resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {};
+    const nameFilter   = nameSearch ? { resourceName: { contains: nameSearch, mode: 'insensitive' as const } } : {};
+    const regionFilter = region ? { region } : {};
+
     // Current ACTIVE resources
     const current = await prisma.resourceInventory.findMany({
-      where: { ...where, state: 'ACTIVE' },
+      where: { ...where, state: 'ACTIVE', ...typeFilter, ...nameFilter, ...regionFilter },
       select: { nativeId: true, resourceType: true, resourceName: true, region: true, configState: true },
     });
 
     const baselineMap = new Map(baseline.snapshots.map((s) => [s.nativeId, s]));
     const currentMap  = new Map(current.map((r) => [r.nativeId, r]));
 
+    // ── Auto-expire lapsed suppressions (BCDD-F16) ──────────────────────────────
+    const expired = await prisma.driftResult.updateMany({
+      where: { baselineId, status: 'SUPPRESSED', suppressionExpiresAt: { lte: new Date() } },
+      data:  { status: 'OPEN' },
+    });
+    if (expired.count > 0) {
+      logger.info(`[baseline] ${expired.count} suppressed drift result(s) expired back to OPEN for baseline ${baselineId}`);
+    }
+
     // ── Detect reverts in previously OPEN results ──────────────────────────────
-    // A REVERTED result = was drifted before, config/presence is now back to baseline.
     const openResults = await prisma.driftResult.findMany({
       where:  { baselineId, status: 'OPEN' },
       // Also fetch firstDetectedAt so we can carry it through to the re-created records
@@ -330,7 +369,7 @@ export async function detectDrift(baselineId: string): Promise<{
     // ── Build fresh drift records ──────────────────────────────────────────────
     type DriftCreate = {
       baselineId: string; nativeId: string; resourceType: string; resourceName: string | null;
-      region: string | null; driftType: string; severity: string;
+      region: string | null; driftType: string; severity: string; controlDomain: string;
       currentConfig: object | null; baselineConfig: object | null; driftedFields: string[];
       firstDetectedAt?: Date; lastSeenAt?: Date | null;
     };
@@ -347,6 +386,7 @@ export async function detectDrift(baselineId: string): Promise<{
           region:          res.region,
           driftType:       'ADDED',
           severity:        driftSeverity(res.resourceType, []),
+          controlDomain:   classifyControlDomain(res.resourceType),
           currentConfig:   res.configState as object,
           baselineConfig:  null,
           driftedFields:   [],
@@ -366,6 +406,7 @@ export async function detectDrift(baselineId: string): Promise<{
           region:          snap.region,
           driftType:       'DELETED',
           severity:        driftSeverity(snap.resourceType, []),
+          controlDomain:   classifyControlDomain(snap.resourceType),
           baselineConfig:  snap.configState as object,
           currentConfig:   null,
           driftedFields:   [],
@@ -389,6 +430,7 @@ export async function detectDrift(baselineId: string): Promise<{
           region:          res.region,
           driftType:       'MODIFIED',
           severity:        driftSeverity(res.resourceType, changed),
+          controlDomain:   classifyControlDomain(res.resourceType),
           driftedFields:   changed,
           baselineConfig:  snap.configState as object,
           currentConfig:   res.configState  as object,

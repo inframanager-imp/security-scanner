@@ -112,8 +112,6 @@ export async function buildIdentityEdges(
       }
     }
 
-    // AWS IAM Role/User: attached managed policies create IDENTITY_PERMITS edges
-    // configState typically contains AttachedManagedPolicies + Policies (inline)
     if (
       provider === 'AWS' &&
       (r.resourceType === 'AWS::IAM::Role' ||
@@ -373,7 +371,7 @@ function isInternetExposed(provider: Provider, r: ResourceLite): boolean {
       const pab = c.PublicAccessBlock ?? c.publicAccessBlock;
       const blocksAll =
         pab && pab.BlockPublicAcls && pab.BlockPublicPolicy && pab.IgnorePublicAcls && pab.RestrictPublicBuckets;
-      if (!blocksAll) return Boolean(c.isPublic ?? c.IsPublic ?? false);
+      if (!blocksAll) return true;
     }
     if (r.resourceType === 'AWS::EC2::SecurityGroup') {
       const ingress = c.IpPermissions ?? c.ipPermissions ?? [];

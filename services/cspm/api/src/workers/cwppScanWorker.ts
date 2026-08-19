@@ -14,7 +14,6 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { runCwppScanForAccount } from '../services/cwppService';
-import { buildCoalescingJobId } from '../services/coalescingJobId';
 
 export const CWPP_QUEUE = 'cwpp-scans';
 
@@ -35,7 +34,7 @@ export function getCwppQueue(): Queue<CwppJob> {
 
 export async function enqueueCwppScan(data: CwppJob): Promise<string> {
   const queue = getCwppQueue();
-  const jobId = buildCoalescingJobId([data.provider, data.accountId], Date.now(), 60000);
+  const jobId = `${data.provider}:${data.accountId}:${Math.floor(Date.now() / 60000)}`;
   const job = await queue.add('cwpp-scan', data, {
     jobId,
     attempts: 1,

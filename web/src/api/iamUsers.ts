@@ -43,9 +43,6 @@ export interface IamUsersResponse {
 }
 
 export const iamUsersApi = {
-  // Response has both `data` and `meta` — the api client's paginated-response
-  // detection flattens `meta` alongside `data` rather than unwrapping to a
-  // bare array, so the return type mirrors that (not IamUserRow[] directly).
   list: (accountId: string) =>
     api.get<IamUsersResponse>(`/iam-users?accountId=${accountId}`),
 };

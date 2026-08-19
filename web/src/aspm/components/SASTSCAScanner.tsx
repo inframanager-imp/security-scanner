@@ -21,7 +21,6 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
   const logsPollIntervalRef = useRef<any>(null);
   const modalTerminalEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch targets list
   useEffect(() => {
     aspmFetch('/api/aspm/targets')
       .then(res => res.json())
@@ -64,7 +63,6 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
 
   useEffect(() => {
     fetchJobs();
-    // Poll jobs to update progress dynamically
     pollIntervalRef.current = setInterval(() => {
       const url = tenantId 
         ? `/api/aspm/scans/jobs?tenant_id=${tenantId}&scan_type=SAST,SCA` 
@@ -82,7 +80,6 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
     };
   }, [tenantId]);
 
-  // Poll for logs of selected active job
   useEffect(() => {
     if (activeJobForLogs) {
       const fetchLogs = () => {
@@ -95,6 +92,9 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
             const current = allJobs.find(j => j.id === activeJobForLogs.id);
             if (current) {
               setLogs(current.logs ? current.logs.split('\n') : []);
+              if (current.status !== activeJobForLogs.status) {
+                setActiveJobForLogs(current);
+              }
               if (current.status !== 'Scanning') {
                 if (logsPollIntervalRef.current) clearInterval(logsPollIntervalRef.current);
               }
@@ -121,7 +121,6 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
     };
   }, [activeJobForLogs, tenantId]);
 
-  // Scroll to bottom of terminal in logs modal
   useEffect(() => {
     if (modalTerminalEndRef.current) {
       modalTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -184,7 +183,7 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
       case 'Scanning':
         return (
           <span className="badge animate-pulse" style={{ background: 'rgba(37, 99, 235, 0.1)', color: 'var(--color-primary)', border: '1px solid rgba(37, 99, 235, 0.4)' }}>
-            ⚡ ANALYZING
+            ANALYZING
           </span>
         );
       case 'Completed':
@@ -202,7 +201,7 @@ export default function SASTSCAScanner({ tenantId }: SASTSCAScannerProps) {
       case 'Failed':
         return (
           <span className="badge" style={{ background: 'rgba(220, 38, 38, 0.15)', color: 'var(--color-danger)', border: '1px solid rgba(220, 38, 38, 0.4)' }}>
-            🗙 FAILED
+            FAILED
           </span>
         );
       case 'Skipped':

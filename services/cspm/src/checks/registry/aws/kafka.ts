@@ -72,14 +72,4 @@ export const kafkaChecks: CheckMetadata[] = [
     remediation: 'Upgrade the cluster to the latest MSK-supported Kafka version during a maintenance window, validating client compatibility in staging first.',
     tags: ['kafka', 'msk', 'patching', 'version'],
   },
-  {
-    checkId: 'kafka_connector_in_transit_encryption_enabled',
-    provider: 'aws',
-    service: 'kafka',
-    title: 'MSK Connect Connector In-Transit Encryption Disabled',
-    severity: 'HIGH',
-    description: 'Checks that MSK Connect connectors require TLS for connections to Kafka brokers; without it, streamed records and credentials can be intercepted or tampered with on the network path.',
-    remediation: 'Re-create the connector with Kafka cluster encryption in transit set to TLS (the setting is immutable on existing connectors), prefer private connectivity and pair with mutual authentication.',
-    tags: ['kafka', 'msk-connect', 'encryption', 'in-transit'],
-  },
 ];

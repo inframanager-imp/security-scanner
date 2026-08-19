@@ -12,6 +12,8 @@
  *    fall back to byte-identical title matching against control.findingTitles.
  */
 
+import { classifyControlDomain } from './baselineService';
+
 export type FrameworkId = 'PCI_DSS' | 'SOC2' | 'ISO27001' | 'HIPAA' | 'CIS_AWS' | 'NIST_800_53' | 'GDPR' | 'FEDRAMP';
 
 export interface ComplianceControl {
@@ -61,16 +63,6 @@ interface ComplianceFrameworkDef extends Omit<ComplianceFramework, 'controls'> {
 
 // ---------------------------------------------------------------------------
 // Finding title → stable registry checkId resolution
-//
-// Hardcoded snapshot of src/checks/registry/aws/*.ts (title → checkId), so the
-// api build stays decoupled from the scanner registry. Titles here are
-// byte-identical to both the registry entries and the control findingTitles
-// below. A title may map to more than one checkId when two checks emit the
-// same title (e.g. the ec2 and vpc EBS-default-encryption checks).
-//
-// Titles with NO registry entry stay title-only on purpose (legacy/stale
-// titles still present on old findings): 'ECR Enhanced Scanning Not Enabled',
-// 'ECR Image Scan Failed'.
 // ---------------------------------------------------------------------------
 
 const TITLE_TO_CHECK_IDS: Record<string, string[]> = {
@@ -1661,6 +1653,53 @@ export const FRAMEWORKS: ComplianceFramework[] = FRAMEWORK_DEFS.map((fw) => ({
   })),
 }));
 
+// ─── Drift → compliance control mapping (BCDD-F13) ─────────────────────────────
+
+export interface RelatedControl {
+  frameworkId:    FrameworkId;
+  frameworkName:  string;
+  frameworkShortName: string;
+  controlId:      string;
+  controlName:    string;
+  controlDescription: string;
+  relevance:      number; // 0-1, keyword overlap with the resource type
+}
+
+// Lazily classify + cache each control's domain once (FRAMEWORKS is static).
+let _controlDomainCache: Map<string, string> | null = null;
+function controlDomain(ctrl: ComplianceControl): string {
+  if (!_controlDomainCache) _controlDomainCache = new Map();
+  const key = ctrl.id;
+  if (!_controlDomainCache.has(key)) {
+    _controlDomainCache.set(key, classifyControlDomain(`${ctrl.id} ${ctrl.name}`));
+  }
+  return _controlDomainCache.get(key)!;
+}
+
+export function getRelatedControls(driftControlDomain: string, resourceType: string): RelatedControl[] {
+  const resourceWords = resourceType.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  const results: RelatedControl[] = [];
+
+  for (const fw of FRAMEWORKS) {
+    for (const ctrl of fw.controls) {
+      if (ctrl.findingTitles.length === 0 && ctrl.checkIds.length === 0) continue; // NOT_EVALUATED — nothing to relate
+      if (controlDomain(ctrl) !== driftControlDomain) continue;
+
+      const controlWords = `${ctrl.id} ${ctrl.name}`.toLowerCase();
+      const overlap = resourceWords.filter((w) => controlWords.includes(w)).length;
+      const relevance = resourceWords.length > 0 ? overlap / resourceWords.length : 0;
+
+      results.push({
+        frameworkId: fw.id, frameworkName: fw.name, frameworkShortName: fw.shortName,
+        controlId: ctrl.id, controlName: ctrl.name, controlDescription: ctrl.description,
+        relevance,
+      });
+    }
+  }
+
+  return results.sort((a, b) => b.relevance - a.relevance).slice(0, 15);
+}
+
 // ---------------------------------------------------------------------------
 // Scoring helper
 // ---------------------------------------------------------------------------
@@ -1731,9 +1770,6 @@ export function scoreFrameworks(
 }
 
 // ─── Compliance tag lookup (finding → framework/control) ─────────────────────
-// Powers the "Compliance" column on the Reports/AccountReport findings
-// tables — reverse index built once at module load (a few hundred
-// title/checkId → control entries), not recomputed per request.
 
 export interface ComplianceTag {
   frameworkShortName: string;

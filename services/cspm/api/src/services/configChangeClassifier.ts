@@ -9,8 +9,6 @@ export type CloudProvider  = 'AWS' | 'AZURE' | 'GCP';
 export type ChangeAction   = 'CREATED' | 'MODIFIED' | 'DELETED';
 
 // ─── Azure noise filter ───────────────────────────────────────────────────────
-// Namespaces that produce /action events which are NOT config changes:
-// health notifications, diagnostics alerts, policy evaluations, advisor recs etc.
 const AZURE_NOISE_NAMESPACES = [
   'microsoft.resourcehealth',
   'microsoft.advisor',

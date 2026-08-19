@@ -119,8 +119,6 @@ router.get('/', async (req: Request, res: Response) => {
       prisma.account.count(),
     ]);
 
-    // For accounts whose latest scan is in-progress (no summary yet),
-    // fall back to the most recent completed scan's summary so counts stay visible.
     const needFallback = accounts.filter((a) => a.scans[0] && !a.scans[0].summary).map((a) => a.id);
     const fallbackMap = new Map<string, NonNullable<(typeof accounts)[0]['scans'][0]['summary']>>();
     if (needFallback.length > 0) {
@@ -227,8 +225,6 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     const latestScan = account.scans[0] || null;
 
-    // For FAILED or still-running scans (no summary yet), fall back to the
-    // most recent COMPLETED scan so the UI can still show findings + summary.
     let fallbackSummary: typeof latestScan.summary | null = null;
     let lastSuccessfulScanId: string | null = null;
 
@@ -483,12 +479,11 @@ router.post('/:id/credentials/verify', async (req: Request, res: Response) => {
 
     res.json({ data: { valid: true, awsAccountId } });
 
-    // Re-trigger pipeline if account has never been initialized
     const acct = await prisma.account.findUnique({
       where: { id: req.params.id },
       select: { inventoryStatus: true },
     });
-    if (acct && (acct.inventoryStatus === 'PENDING' || acct.inventoryStatus === 'FAILED')) {
+    if (acct && acct.inventoryStatus !== 'READY') {
       triggerInitialPipeline('AWS', req.params.id);
     }
   } catch (err) {

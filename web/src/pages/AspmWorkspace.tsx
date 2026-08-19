@@ -8,6 +8,10 @@ import APIInventory from '../aspm/components/APIInventory';
 import AIPentester from '../aspm/components/AIPentester';
 import AISecurityModule from '../aspm/components/AISecurityModule';
 import SASTSCAScanner from '../aspm/components/SASTSCAScanner';
+import Vulnerabilities from '../aspm/components/Vulnerabilities';
+import VulnPipeline from '../aspm/components/VulnPipeline';
+import RagIndex from '../aspm/components/RagIndex';
+import TaintReport from '../aspm/components/TaintReport';
 
 import { aspmFetch } from '../aspm/aspmClient';
 import '../aspm/aspm-theme.css';
@@ -23,13 +27,12 @@ const MODULES: Record<string, { kind: string; scoped: boolean }> = {
   code:     { kind: 'sast_sca',  scoped: true },
   pentest:  { kind: 'pentest',   scoped: true },
   'ai-red': { kind: 'ai_sec',    scoped: false },
+  vulnerabilities: { kind: 'vulnerabilities', scoped: false },
+  pipeline: { kind: 'vuln_pipeline', scoped: false },
+  'rag-index': { kind: 'rag_index', scoped: false },
+  'taint-report': { kind: 'taint_report', scoped: false },
 };
 
-/**
- * Application Security (ASPM) workspace. Driven by the URL module slug
- * (/appsec/:module) so the CSPM left-sidebar group navigates it — no internal nav.
- * A shared "Active Target" selector scopes the target-specific views.
- */
 export default function AspmWorkspace() {
   const { module } = useParams();
   const mod = MODULES[module ?? 'overview'] ?? MODULES.overview;
@@ -120,6 +123,10 @@ export default function AspmWorkspace() {
       case 'sast_sca':  return <SASTSCAScanner key={tid} tenantId={tid} />;
       case 'pentest':   return <AIPentester key={tid} tenantId={tid} />;
       case 'ai_sec':    return <AISecurityModule />;
+      case 'vulnerabilities': return <Vulnerabilities tenantId={selectedTenant || undefined} />;
+      case 'vuln_pipeline': return <VulnPipeline tenantId={selectedTenant || undefined} />;
+      case 'rag_index': return <RagIndex tenantId={selectedTenant || undefined} />;
+      case 'taint_report': return <TaintReport tenantId={selectedTenant || undefined} />;
       case 'targets':   return null; // rendered below
       default:          return <Dashboard key={tid} tenantId={tid} />;
     }
@@ -284,7 +291,6 @@ export default function AspmWorkspace() {
         </div>
       )}
 
-      {/* Active module view */}
       {renderModule()}
     </div>
   );

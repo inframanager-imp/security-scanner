@@ -4,47 +4,47 @@
 
 set -e
 
-echo "🔧 AWS Scanner - Build Script"
+echo "AWS Scanner - Build Script"
 echo "=============================="
 
 # Check Node.js version
 NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
 if [ "$NODE_VERSION" -lt 18 ]; then
-    echo "❌ Error: Node.js 18+ required"
+    echo "Error: Node.js 18+ required"
     exit 1
 fi
 
-echo "✅ Node.js version: $(node -v)"
-echo "✅ npm version: $(npm -v)"
+echo "Node.js version: $(node -v)"
+echo "npm version: $(npm -v)"
 
 # Clean previous builds
-echo "🧹 Cleaning previous builds..."
+echo "Cleaning previous builds..."
 npm run clean || true
 
 # Install dependencies
-echo "📦 Installing dependencies..."
+echo "Installing dependencies..."
 npm install
 
 # Run linting
-echo "🔍 Running linter..."
+echo "Running linter..."
 npm run lint || echo "⚠️  Lint warnings found"
 
 # Run tests
-echo "🧪 Running tests..."
+echo "Running tests..."
 npm run test:coverage
 
 # Build
-echo "🔨 Building..."
+echo "Building..."
 npm run build
 
 # Create .env file from template
 if [ ! -f .env ]; then
-    echo "📝 Creating .env file from template..."
+    echo "Creating .env file from template..."
     cp .env.example .env || echo "⚠️  Could not create .env file"
 fi
 
 echo ""
-echo "✅ Build complete!"
+echo "Build complete!"
 echo ""
 echo "Next steps:"
 echo "1. Configure AWS credentials: aws configure"

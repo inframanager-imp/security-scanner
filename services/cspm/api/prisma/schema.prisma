@@ -112,11 +112,7 @@ model Scan {
   accountId    String
   status       ScanStatus   @default(QUEUED)
   triggeredBy  String?
-  // Not @unique: BullMQ job ids are only unique per-queue-in-the-moment, not
-  // globally over time — old rows keep their jobId forever, so a recycled
-  // BullMQ id eventually collides and this update() throws on every scan
-  // (harmless — the scan still runs — but it happened on 100% of scans).
-  jobId        String?
+  jobId        String?      @unique
   services     String[]
   regions      String[]
   startedAt    DateTime?
@@ -163,10 +159,6 @@ model Finding {
   businessContext Json? // tag-derived: env, dataClass, owner, etc.
   exploitability  String? // KNOWN_EXPLOIT | POC | THEORETICAL
   enrichedAt      DateTime?
-  // AI triage (content lives in AiArtifact; these exist for filter/sort only)
-  aiTriagedAt     DateTime?
-  aiFpLikelihood  Int? // 0–100, higher = more likely a false positive
-  aiClusterKey    String?
   createdAt       DateTime      @default(now())
   scan            Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
@@ -177,8 +169,6 @@ model Finding {
   @@index([findingStatus])
   @@index([riskScore(sort: Desc)])
   @@index([reachability])
-  @@index([aiFpLikelihood])
-  @@index([aiClusterKey])
 }
 
 // ─── Azure Models ──────────────────────────────────────────────────────────────
@@ -223,8 +213,7 @@ model AzureScan {
   id             String            @id @default(uuid())
   subscriptionId String
   status         ScanStatus        @default(QUEUED)
-  // Not @unique — see Scan.jobId for why (BullMQ ids recycle over time).
-  jobId          String?
+  jobId          String?           @unique
   services       String[]
   startedAt      DateTime?
   completedAt    DateTime?
@@ -269,10 +258,6 @@ model AzureFinding {
   businessContext Json?
   exploitability  String?
   enrichedAt      DateTime?
-  // AI triage (content lives in AiArtifact; these exist for filter/sort only)
-  aiTriagedAt     DateTime?
-  aiFpLikelihood  Int? // 0–100, higher = more likely a false positive
-  aiClusterKey    String?
   createdAt       DateTime      @default(now())
   scan            AzureScan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
@@ -282,8 +267,6 @@ model AzureFinding {
   @@index([findingStatus])
   @@index([riskScore(sort: Desc)])
   @@index([reachability])
-  @@index([aiFpLikelihood])
-  @@index([aiClusterKey])
 }
 
 // ─── Config Change Tracking ────────────────────────────────────────────────────
@@ -566,8 +549,7 @@ model GcpScan {
   id           String          @id @default(uuid())
   projectId    String
   status       ScanStatus      @default(QUEUED)
-  // Not @unique — see Scan.jobId for why (BullMQ ids recycle over time).
-  jobId        String?
+  jobId        String?         @unique
   services     String[]
   startedAt    DateTime?
   completedAt  DateTime?
@@ -612,10 +594,6 @@ model GcpFinding {
   businessContext Json?
   exploitability  String?
   enrichedAt      DateTime?
-  // AI triage (content lives in AiArtifact; these exist for filter/sort only)
-  aiTriagedAt     DateTime?
-  aiFpLikelihood  Int? // 0–100, higher = more likely a false positive
-  aiClusterKey    String?
   createdAt       DateTime      @default(now())
   scan            GcpScan       @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
@@ -623,8 +601,6 @@ model GcpFinding {
   @@index([severity])
   @@index([service])
   @@index([findingStatus])
-  @@index([aiFpLikelihood])
-  @@index([aiClusterKey])
 }
 
 // ─── Alerting ──────────────────────────────────────────────────────────────────
@@ -724,6 +700,12 @@ model ConfigBaseline {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   currentVersion Int      @default(1)
+  // Scope (BCDD-F06): persisted so refresh/drift-detect reapply the SAME
+  // scope the baseline was captured with, instead of silently reverting to
+  // "whole account" on the next refresh.
+  resourceTypes  String[] @default([])
+  nameSearch     String?
+  region         String?
 
   snapshots    BaselineSnapshot[]
   driftResults DriftResult[]
@@ -760,13 +742,23 @@ model DriftResult {
   region          String?
   driftType       String // MODIFIED | ADDED | DELETED
   severity        String    @default("MEDIUM")
+  // controlDomain (BCDD-F03): IAM | NETWORK | DATA_PROTECTION | LOGGING_MONITORING | WORKLOAD_HARDENING | OTHER
+  controlDomain   String    @default("OTHER")
   driftedFields   Json?
   baselineConfig  Json?
   currentConfig   Json?
   lastSeenAt      DateTime? // for DELETED: last time resource was in inventory
+  // status: OPEN | ACKNOWLEDGED | RESOLVED | REVERTED | SUPPRESSED | CLOSED
   status          String    @default("OPEN")
   acknowledgedAt  DateTime?
   resolvedAt      DateTime?
+  // Suppression (BCDD-F16): mandatory justification + expiry so accepted risks
+  // don't recur as noise, but automatically re-open once the exception lapses.
+  suppressedAt          DateTime?
+  suppressedBy          String?
+  suppressionReason     String?
+  suppressionExpiresAt  DateTime?
+  closedAt        DateTime?
 
   baseline ConfigBaseline @relation(fields: [baselineId], references: [id], onDelete: Cascade)
 
@@ -774,6 +766,31 @@ model DriftResult {
   @@index([status])
   @@index([driftType])
   @@index([severity])
+  @@index([controlDomain])
+}
+
+// ─── Remediation Audit Trail (BCDD-F25) ────────────────────────────────────────
+// Every remediation action — manual, guided, or automated — logged with actor,
+// before/after state, and outcome. Distinct from DriftResult's own status/
+// timestamp fields: those record *what state a finding is in*, this records
+// *what action was taken and by whom*, immutably (rows are never updated).
+
+model RemediationLog {
+  id            String   @id @default(uuid())
+  driftResultId String
+  baselineId    String
+  // action: AUTO_REVERT | MANUAL_RESOLVE | GUIDED_PLAN_GENERATED
+  action        String
+  actor         String
+  // outcome: SUCCESS | FAILURE
+  outcome       String
+  message       String?  @db.Text
+  beforeState   Json?
+  afterState    Json?
+  createdAt     DateTime @default(now())
+
+  @@index([driftResultId, createdAt(sort: Desc)])
+  @@index([baselineId, createdAt(sort: Desc)])
 }
 
 // ─── Baseline Version History ─────────────────────────────────────────────────

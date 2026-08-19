@@ -347,10 +347,8 @@ export function ConfigChangesReport() {
   const provider = rawProvider?.toUpperCase() as CloudProvider;
   const qc = useQueryClient();
 
-  // Tab
   const [activeTab, setActiveTab] = useState<ReportTab>('changes');
 
-  // Filters
   const [changeAction, setChangeAction] = useState<ChangeAction | ''>('');
   const [severity,     setSeverity]     = useState('');
   const [category,     setCategory]     = useState('');
@@ -363,22 +361,16 @@ export function ConfigChangesReport() {
   const [sortOrder,    setSortOrder]    = useState<'asc' | 'desc'>('desc');
   const [page,         setPage]         = useState(1);
 
-  // Activity log pagination
   const [activityPage, setActivityPage] = useState(1);
 
-  // Reset activity page when provider/id changes
   useEffect(() => { setActivityPage(1); }, [provider, id]);
 
-  // Selection
   const [selected,      setSelected]      = useState<Set<string>>(new Set());
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkStatus,    setBulkStatus]    = useState<ChangeStatus>('ACKNOWLEDGED');
   const [bulkNotes,     setBulkNotes]     = useState('');
 
-  // Expanded row
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Sync (auto-refresh every 35s; manual sync via small icon button)
 
   // ── Account / subscription info ──
   const { data: awsAccount } = useQuery({
@@ -458,14 +450,9 @@ export function ConfigChangesReport() {
     staleTime: 30_000,
     refetchInterval: 65_000,  // slightly longer than the 60s server sync so new run is already written
   });
-  // Use lastSuccessfulSyncAt from the API — this is always the completedAt of the most
-  // recent COMPLETED run, so it's never polluted by RUNNING/FAILED timestamps.
   const lastSyncTime = runsData?.lastSuccessfulSyncAt ?? null;
   const lastChangesStored = runsData?.lastChangesStored ?? null;
 
-  // ── Live Socket.IO sync updates ──
-  // Listens for config:changes / config:heartbeat events from the BullMQ worker.
-  // Automatically invalidates react-query cache so the list refreshes without a manual reload.
   const { connected: syncConnected, lastSyncedAt: liveLastSyncedAt, secondsSinceSync } = useConfigSync({
     provider: provider as string,
     targetId: id,
@@ -629,7 +616,6 @@ export function ConfigChangesReport() {
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            {/* Live sync indicator */}
             {syncConnected && (
               <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -856,10 +842,8 @@ export function ConfigChangesReport() {
       {/* ══ Tab: Configuration Changes ══ */}
       {activeTab === 'changes' && (
         <Card padding={false}>
-          {/* Filter bar */}
           <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-2">
             <Filter size={14} className="text-gray-400 shrink-0" />
-            {/* Action filter chips */}
             {(['', 'CREATED', 'MODIFIED', 'DELETED'] as const).map((a) => (
               <button
                 key={a || 'ALL'}
@@ -933,7 +917,6 @@ export function ConfigChangesReport() {
             )}
           </div>
 
-          {/* Table */}
           {listLoading ? (
             <div className="flex items-center justify-center h-40">
               <div className="animate-spin rounded-full h-7 w-7 border-2 border-blue-600 border-t-transparent" />

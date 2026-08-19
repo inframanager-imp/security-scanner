@@ -7,10 +7,16 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # ── System scanners via apt + build/runtime deps ─────────────────────────────
+# nodejs/npm: used by build_node (Vulnerability Pipeline stage) to run a real
+# syntax/build check on JavaScript/TypeScript repos — the repos this pipeline
+# actually gets tested against (e.g. OWASP NodeGoat) are Node.js, not Java, and
+# there's no JDK/Maven in this image (too heavy to add just for this), so
+# build_node honestly reports "no toolchain" for Java rather than faking it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl wget unzip git jq bind9-dnsutils \
       nmap sslscan hydra sqlmap \
       perl libnet-ssleay-perl libjson-perl libxml-writer-perl \
+      nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # nikto isn't in Debian trixie — install the upstream Perl tool from GitHub

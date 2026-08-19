@@ -165,8 +165,6 @@ import { CosmosDBManagementClient }       from '@azure/arm-cosmosdb';
 import { AzureDatabricksManagementClient } from '@azure/arm-databricks';
 import { ApplicationInsightsManagementClient } from '@azure/arm-appinsights';
 import { PolicyClient }                   from '@azure/arm-policy';
-import { RecoveryServicesBackupClient }   from '@azure/arm-recoveryservicesbackup';
-import { SecurityCenter }                 from '@azure/arm-security';
 
 export interface AzureClientOptions {
   subscriptionId: string;
@@ -238,10 +236,8 @@ export class AzureClient {
   search()            { return new SearchManagementClient(this.credential, this.subscriptionId, this.opts()); }
   automation()        { return new AutomationClient(this.credential, this.subscriptionId, 'status'); }
   cosmos()            { return new CosmosDBManagementClient(this.credential, this.subscriptionId, this.opts()); }
-  recoveryServicesBackup() { return new RecoveryServicesBackupClient(this.credential, this.subscriptionId, this.opts()); }
-  securityCenter()    { return new SecurityCenter(this.credential, this.subscriptionId, this.opts()); }
-  databricks()         { return new AzureDatabricksManagementClient(this.credential, this.subscriptionId, this.opts()); }
-  policy()             { return new PolicyClient(this.credential, this.subscriptionId, this.opts()); }
+  databricks()        { return new AzureDatabricksManagementClient(this.credential, this.subscriptionId, this.opts()); }
+  policy()            { return new PolicyClient(this.credential, this.subscriptionId, this.opts()); }
   /**
    * NOTE: @azure/arm-appinsights is still on the legacy @azure/ms-rest-js SDK
    * generation (no stable release exists on the modern @azure/core-rest-pipeline

@@ -1,12 +1,9 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   DescribeCacheClustersCommand,
   DescribeReplicationGroupsCommand,
-  DescribeCacheSubnetGroupsCommand,
   type CacheCluster,
   type ReplicationGroup,
 } from '@aws-sdk/client-elasticache';
-import { DescribeRouteTablesCommand } from '@aws-sdk/client-ec2';
 import { BaseScanner, ScannerOptions } from './baseScanner';
 import AWSClient from '../aws/client';
 import { ScanningResult } from '../utils/types';
@@ -32,14 +29,7 @@ export class ElastiCacheScanner extends BaseScanner {
 
     logger.info(`ElastiCache: ${clusterList.length} cluster(s), ${rgList.length} replication group(s)`);
 
-    for (const cluster of clusterList) {
-      findings.push(...this.scanCluster(cluster));
-      try {
-        findings.push(...(await this.checkClusterPublicSubnet(cluster)));
-      } catch (error) {
-        logger.debug(`Failed to check subnets for ElastiCache cluster ${cluster.CacheClusterId}`, { error: (error as Error).message });
-      }
-    }
+    for (const cluster of clusterList) findings.push(...this.scanCluster(cluster));
     for (const rg of rgList)           findings.push(...this.scanReplicationGroup(rg));
 
     logger.info(`ElastiCache scan complete. ${findings.length} findings.`);
@@ -134,79 +124,6 @@ export class ElastiCacheScanner extends BaseScanner {
     return findings;
   }
 
-  // elasticache_cluster_uses_public_subnet: any subnet of the cache subnet group
-  // whose route table has a default route to an Internet gateway is public
-  private async checkClusterPublicSubnet(cluster: CacheCluster): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-    const id     = cluster.CacheClusterId ?? 'Unknown';
-    const engine = cluster.Engine ?? 'unknown';
-    const subnetGroupName = cluster.CacheSubnetGroupName;
-    if (!subnetGroupName) return findings;
-
-    const subnetGroupResult = await retry(() =>
-      this.client.elasticache.send(new DescribeCacheSubnetGroupsCommand({ CacheSubnetGroupName: subnetGroupName }))
-    );
-
-    const publicSubnets: string[] = [];
-    for (const subnetGroup of subnetGroupResult.CacheSubnetGroups ?? []) {
-      const vpcId: string = subnetGroup.VpcId ?? '';
-      for (const subnet of subnetGroup.Subnets ?? []) {
-        const subnetId: string = subnet.SubnetIdentifier ?? '';
-        if (!subnetId) continue;
-        try {
-          if (await this.isSubnetPublic(subnetId, vpcId)) {
-            publicSubnets.push(subnetId);
-          }
-        } catch (error) {
-          logger.debug(`Failed to evaluate route tables for subnet ${subnetId}`, { error: (error as Error).message });
-        }
-      }
-    }
-
-    if (publicSubnets.length > 0) {
-      const resourceLabel = engine === 'redis' ? 'Redis node' : `${engine} cluster`;
-      findings.push(this.emit(
-        'elasticache_cluster_uses_public_subnet',
-        { resourceId: `${id}::public-subnet`, clusterId: id, engine, subnetGroup: subnetGroupName, publicSubnets },
-        {
-          message: `ElastiCache ${resourceLabel} "${id}" is using public subnet(s): ${publicSubnets.join(', ')}. ` +
-            `Caches in public subnets can be exposed to direct Internet access.`,
-          remediation: `Move cluster "${id}" to a cache subnet group containing only private subnets without Internet gateway routes.`,
-        }
-      ));
-    }
-
-    return findings;
-  }
-
-  private async isSubnetPublic(subnetId: string, vpcId: string): Promise<boolean> {
-    let routeTablesResult = await retry(() =>
-      this.client.ec2.send(new DescribeRouteTablesCommand({
-        Filters: [{ Name: 'association.subnet-id', Values: [subnetId] }],
-      }))
-    );
-
-    // A subnet with no explicit route table association uses the VPC main route table
-    if (!routeTablesResult.RouteTables || routeTablesResult.RouteTables.length === 0) {
-      const mainFilters: any[] = [{ Name: 'association.main', Values: ['true'] }];
-      if (vpcId) {
-        mainFilters.push({ Name: 'vpc-id', Values: [vpcId] });
-      }
-      routeTablesResult = await retry(() =>
-        this.client.ec2.send(new DescribeRouteTablesCommand({ Filters: mainFilters }))
-      );
-    }
-
-    for (const routeTable of routeTablesResult.RouteTables ?? []) {
-      for (const route of routeTable.Routes ?? []) {
-        if (route.GatewayId && route.GatewayId.includes('igw') && route.DestinationCidrBlock === '0.0.0.0/0') {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
   private scanReplicationGroup(rg: ReplicationGroup): ScanningResult[] {
     const findings: ScanningResult[] = [];
     const id = rg.ReplicationGroupId ?? 'Unknown';
@@ -220,32 +137,6 @@ export class ElastiCacheScanner extends BaseScanner {
           message: `Redis replication group "${id}" does not require an AUTH token. ` +
             `Any client with network access to the Redis endpoint can connect without authentication.`,
           remediation: `Enable Redis AUTH: aws elasticache modify-replication-group --replication-group-id ${id} --auth-token <token> --apply-immediately`,
-        }
-      ));
-    }
-
-    // Automatic minor version upgrades
-    if (!rg.AutoMinorVersionUpgrade) {
-      findings.push(this.emit(
-        'elasticache_redis_cluster_auto_minor_version_upgrades',
-        { resourceId: `${id}::auto-minor-version-upgrade`, replicationGroupId: id },
-        {
-          message: `Redis replication group "${id}" does not have automatic minor version upgrades enabled. ` +
-            `Nodes may keep running engine versions with known CVEs and stability bugs.`,
-          remediation: `Enable automatic minor version upgrades: aws elasticache modify-replication-group --replication-group-id ${id} --auto-minor-version-upgrade --apply-immediately`,
-        }
-      ));
-    }
-
-    // Automatic failover
-    if (rg.AutomaticFailover !== 'enabled') {
-      findings.push(this.emit(
-        'elasticache_redis_cluster_automatic_failover_enabled',
-        { resourceId: `${id}::automatic-failover`, replicationGroupId: id, automaticFailover: rg.AutomaticFailover ?? 'disabled' },
-        {
-          message: `Redis replication group "${id}" does not have automatic failover enabled. ` +
-            `A primary node or AZ outage would stop writes until a replica is promoted manually.`,
-          remediation: `Enable automatic failover: aws elasticache modify-replication-group --replication-group-id ${id} --automatic-failover-enabled --apply-immediately`,
         }
       ));
     }

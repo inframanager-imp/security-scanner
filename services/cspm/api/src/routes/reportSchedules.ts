@@ -8,6 +8,10 @@
  * POST   /api/report-schedules/:id/run  — trigger on-demand generation
  * GET    /api/report-schedules/:id/runs — run history
  * GET    /api/report-schedules/:id/preview — download HTML report immediately
+ * GET    /api/report-schedules/compile     — ad-hoc report (no saved schedule needed);
+ *                                             ?targetId= scopes to one account, omit for
+ *                                             "All Accounts"; ?format=pdf for a real PDF
+ *                                             download instead of HTML
  */
 
 import { Router, Request, Response } from 'express';
@@ -15,13 +19,48 @@ import { prisma }                     from '../config/database';
 import {
   computeNextRun,
   generateOnDemandReport,
+  gatherExecutiveReportData,
+  generateExecutiveReportHtml,
+  renderHtmlToPdf,
 }                                     from '../services/reportService';
 import { logger }                     from '../config/logger';
+import { authenticate }               from '../middleware/authenticate';
 
 const router = Router();
+router.use(authenticate);
 
 const VALID_SECTIONS = ['SUMMARY', 'CONFIG_CHANGES', 'DRIFT', 'IAM_ESCALATION', 'POSTURE'];
 const VALID_FREQS    = ['DAILY', 'WEEKLY', 'MONTHLY', 'ON_DEMAND'];
+
+// ─── Ad-hoc compile (no saved schedule) ────────────────────────────────────────
+// Must be declared before the /:id routes below so Express doesn't treat
+// "compile" as an :id path param.
+
+router.get('/compile', async (req: Request, res: Response) => {
+  try {
+    // AWS-only for now — see the doc comment on gatherExecutiveReportData.
+    const targetId = typeof req.query.targetId === 'string' ? req.query.targetId : null;
+    const wantsPdf = req.query.format === 'pdf';
+
+    const data = await gatherExecutiveReportData(targetId);
+    const html = generateExecutiveReportHtml(data);
+
+    if (wantsPdf) {
+      const pdf = await renderHtmlToPdf(html);
+      const filename = `${data.title.replace(/[^a-z0-9]+/gi, '-')}-security-report.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(pdf);
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    logger.error(`[reports] Ad-hoc compile failed: ${(err as Error).message}`);
+    res.status(500).json({ error: 'Failed to compile report' });
+  }
+});
 
 // ─── List schedules ───────────────────────────────────────────────────────────
 

@@ -317,6 +317,7 @@ def build_model(
     details_fn: Callable,
     report_type: Optional[str] = None,
     generated_at: Optional[datetime] = None,
+    last_scan_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the full data model the template renders. Pure (no I/O)."""
     generated_at = generated_at or datetime.now()
@@ -324,6 +325,13 @@ def build_model(
     generated_date = gen_local.strftime("%d %B %Y")
     generated_time = gen_local.strftime("%H:%M %Z").strip() or gen_local.strftime("%H:%M UTC")
     generated_full = f"{generated_date} at {generated_time}"
+
+    last_scan_display = "No scan on record"
+    if last_scan_at:
+        try:
+            last_scan_display = datetime.fromisoformat(last_scan_at).strftime("%d %B %Y at %H:%M")
+        except (ValueError, TypeError):
+            last_scan_display = str(last_scan_at)
     open_vulns = [v for v in vulns if v.get("status") in ("Open", "In Progress")]
 
     sev = _severity_counts(open_vulns)
@@ -341,17 +349,15 @@ def build_model(
         kind, subtitle = "SAST", "Static Application Security Testing (SAST) Report"
     elif rt == "SCA":
         kind, subtitle = "SCA", "Software Composition Analysis (SCA) Report"
+    elif rt == "DAST":
+        kind, subtitle = "DAST", "Dynamic Application Security Testing (DAST Web/API) Report"
 
     findings = _grouped_findings(vulns, details_fn)
 
-    # A type-filtered (SAST/SCA) report with no findings almost always means that
-    # scan type was never run for this scope (e.g. a deployed URL, not a source
-    # repo) — NOT that the code is clean. Reporting "Secure / 100% compliant" there
-    # would be misleading, so flag it "Not Assessed" and suppress the empty charts
-    # and the (vacuous) 100% compliance gauges.
-    not_assessed = rt in ("SAST", "SCA") and len(vulns) == 0
+    not_assessed = rt in ("SAST", "SCA", "DAST") and len(vulns) == 0
     type_full = {"SAST": "Static Application Security Testing (SAST)",
-                 "SCA": "Software Composition Analysis (SCA)"}.get(rt, "")
+                 "SCA": "Software Composition Analysis (SCA)",
+                 "DAST": "Dynamic Application Security Testing (DAST Web/API)"}.get(rt, "")
 
     if not_assessed:
         risk = {"label": "Not Assessed", "color": "#64748b",
@@ -401,6 +407,8 @@ def build_model(
         "generated_time": generated_time,
         "generated_full": generated_full,
         "generated_iso": generated_at.date().isoformat(),
+        "last_scan_at": last_scan_at,
+        "last_scan_display": last_scan_display,
         "not_assessed": not_assessed,
         "page_footer_center": _css_safe(f"Generated {generated_full}"),
         "classification": "CONFIDENTIAL",

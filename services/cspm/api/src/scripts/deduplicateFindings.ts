@@ -24,7 +24,6 @@ import { logger } from '../config/logger';
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // ─── Resource fingerprint ───────────────────────────────────────────────────
-// Must match the same logic in scanWorker.ts so keys are comparable.
 const FINGERPRINT_KEYS = [
   'functionName', 'trailName', 'bucket', 'username', 'accessKeyId',
   'keyId', 'dbId', 'clusterId', 'secretName', 'sgId', 'instanceId',
@@ -52,7 +51,6 @@ const STATUS_PRIORITY: Record<string, number> = {
 async function run(): Promise<void> {
   logger.info(`=== Finding Deduplication ${DRY_RUN ? '[DRY RUN]' : ''} ===`);
 
-  // 1. Load all findings with the account ID we need for grouping
   logger.info('Loading all findings...');
   const all = await prisma.finding.findMany({
     select: {
@@ -64,12 +62,12 @@ async function run(): Promise<void> {
       createdAt: true,
       scan: { select: { accountId: true } },
     },
-    orderBy: { createdAt: 'asc' }, // oldest first
+    orderBy: { createdAt: 'asc' },
   });
 
   logger.info(`Loaded ${all.length} total findings.`);
 
-  // 2. Group by dedup key: accountId:service:title:resourceFingerprint
+  // Group by dedup key: accountId:service:title:resourceFingerprint
   const groups = new Map<string, typeof all>();
 
   for (const f of all) {
@@ -84,16 +82,13 @@ async function run(): Promise<void> {
     groups.get(key)!.push(f);
   }
 
-  // 3. Identify duplicates within each group
   const toDelete: string[] = [];
   let groupsWithDuplicates = 0;
 
   for (const [key, members] of groups) {
-    if (members.length <= 1) continue; // no duplicates
+    if (members.length <= 1) continue;
     groupsWithDuplicates++;
 
-    // Sort: prefer OPEN/ACKNOWLEDGED over RESOLVED/FALSE_POSITIVE,
-    // then oldest first within the same priority.
     members.sort((a, b) => {
       const pa = STATUS_PRIORITY[a.findingStatus] ?? 99;
       const pb = STATUS_PRIORITY[b.findingStatus] ?? 99;
@@ -128,7 +123,7 @@ async function run(): Promise<void> {
     return;
   }
 
-  // 4. Delete in batches of 500 to avoid query size limits
+  // Batch to avoid query size limits
   const BATCH = 500;
   let deleted = 0;
   for (let i = 0; i < toDelete.length; i += BATCH) {

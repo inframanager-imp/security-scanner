@@ -115,7 +115,6 @@ function AlertForm({
 
   return (
     <div className="space-y-6">
-      {/* Basic */}
       <div className="grid grid-cols-2 gap-4">
         <div className="col-span-2">
           <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
@@ -152,7 +151,6 @@ function AlertForm({
         </div>
       </div>
 
-      {/* Channel-specific config */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           {CHANNEL_LABELS[form.channel]} Configuration
@@ -173,7 +171,6 @@ function AlertForm({
         </div>
       </div>
 
-      {/* Filters */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Providers (empty = all)</label>
@@ -493,7 +490,6 @@ export default function AlertConfiguration() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-blue-50 rounded-xl">
@@ -512,7 +508,6 @@ export default function AlertConfiguration() {
         </button>
       </div>
 
-      {/* Info bar */}
       <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg p-3 mb-6 text-sm text-blue-800">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
         <p>
@@ -522,7 +517,6 @@ export default function AlertConfiguration() {
         </p>
       </div>
 
-      {/* Create form */}
       {showForm && !editingId && (
         <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-6 mb-6">
           <h2 className="text-sm font-semibold text-gray-800 mb-4">New Alert Configuration</h2>
@@ -534,7 +528,6 @@ export default function AlertConfiguration() {
         </div>
       )}
 
-      {/* Edit form */}
       {editingId && editInitial && (
         <div className="bg-white rounded-xl border border-amber-200 shadow-sm p-6 mb-6">
           <h2 className="text-sm font-semibold text-gray-800 mb-4">Edit Alert Configuration</h2>
@@ -547,7 +540,6 @@ export default function AlertConfiguration() {
         </div>
       )}
 
-      {/* Config list */}
       {isLoading ? (
         <div className="text-center py-12 text-gray-500">Loading configurations…</div>
       ) : configs.length === 0 ? (

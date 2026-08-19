@@ -13,16 +13,6 @@ export const bedrockChecks: CheckMetadata[] = [
     tags: ['bedrock', 'guardrail', 'agent', 'ai-safety'],
   },
   {
-    checkId: 'bedrock_agent_role_least_privilege',
-    provider: 'aws',
-    service: 'bedrock',
-    title: 'Bedrock Agent Execution Role Overprivileged',
-    severity: 'HIGH',
-    description: 'Checks that Bedrock agent execution roles follow least privilege: no AWS-managed *FullAccess policy attached, no attached or inline policy granting administrative access, and a permissions boundary configured; a prompt-injected agent can invoke any API its role allows.',
-    remediation: 'Detach AWS-managed *FullAccess policies from the agent execution role, replace wildcard statements with actions and resource ARNs scoped to what the agent needs, and attach a permissions boundary capping the role.',
-    tags: ['bedrock', 'iam', 'agent', 'least-privilege'],
-  },
-  {
     checkId: 'bedrock_api_key_no_administrative_privileges',
     provider: 'aws',
     service: 'bedrock',
@@ -111,16 +101,6 @@ export const bedrockChecks: CheckMetadata[] = [
     description: 'Checks that Bedrock Prompt Management prompts are encrypted at rest with a customer-managed KMS key instead of the default AWS-owned key.',
     remediation: 'Recreate or update the prompt with a customer-managed KMS key (customerEncryptionKeyArn) and restrict the key policy to the principals that need to use the prompt.',
     tags: ['bedrock', 'encryption', 'kms', 'prompt-management'],
-  },
-  {
-    checkId: 'bedrock_prompt_management_exists',
-    provider: 'aws',
-    service: 'bedrock',
-    title: 'Bedrock Prompt Management Not Adopted in Region',
-    severity: 'LOW',
-    description: 'Checks that at least one Bedrock Prompt Management prompt exists in the region, as an adoption signal for centralized prompt creation, versioning and governance over instructions sent to foundation models.',
-    remediation: 'Adopt Bedrock Prompt Management to centralize prompt definitions with versioning, pair managed prompts with guardrails, and restrict who can create or modify prompts via least-privilege IAM policies.',
-    tags: ['bedrock', 'prompt-management', 'governance'],
   },
   {
     checkId: 'bedrock_vpc_endpoints_configured',

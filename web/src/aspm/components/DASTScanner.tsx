@@ -21,7 +21,6 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
   const logsPollIntervalRef = useRef<any>(null);
   const modalTerminalEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch targets and set active target
   useEffect(() => {
     aspmFetch('/api/aspm/targets')
       .then(res => res.json())
@@ -46,9 +45,14 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       .catch(err => console.error("Error setting targets in DAST:", err));
   }, [tenantId]);
 
+  // Capped at the last 10 scans per target — the backend already orders
+  // DESC by created_at (db.get_scan_jobs), so jobs[0] doubles as "last
+  // scanned at" for this target without a separate query.
+  const jobsListUrl = () =>
+    tenantId ? `/api/aspm/scans/jobs?tenant_id=${tenantId}&scan_type=DAST&limit=10` : '/api/aspm/scans/jobs?scan_type=DAST&limit=10';
+
   const fetchJobs = () => {
-    const url = tenantId ? `/api/aspm/scans/jobs?tenant_id=${tenantId}&scan_type=DAST` : '/api/aspm/scans/jobs?scan_type=DAST';
-    aspmFetch(url)
+    aspmFetch(jobsListUrl())
       .then(res => res.json())
       .then(data => {
         setJobs(data);
@@ -62,10 +66,8 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
 
   useEffect(() => {
     fetchJobs();
-    // Set up polling for jobs list to update progress in background UI
     pollIntervalRef.current = setInterval(() => {
-      const url = tenantId ? `/api/aspm/scans/jobs?tenant_id=${tenantId}&scan_type=DAST` : '/api/aspm/scans/jobs?scan_type=DAST';
-      aspmFetch(url)
+      aspmFetch(jobsListUrl())
         .then(res => res.json())
         .then(data => {
           setJobs(data);
@@ -89,6 +91,9 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
             const current = allJobs.find(j => j.id === activeJobForLogs.id);
             if (current) {
               setLogs(current.logs ? current.logs.split('\n') : []);
+              if (current.status !== activeJobForLogs.status) {
+                setActiveJobForLogs(current);
+              }
               if (current.status !== 'Scanning') {
                 if (logsPollIntervalRef.current) clearInterval(logsPollIntervalRef.current);
               }
@@ -115,14 +120,12 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
     };
   }, [activeJobForLogs, tenantId]);
 
-  // Scroll to bottom of terminal in logs modal
   useEffect(() => {
     if (modalTerminalEndRef.current) {
       modalTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs]);
 
-  // Create job
   const handleCreateJob = (e: React.FormEvent) => {
     e.preventDefault();
     const activeId = tenantId || selectedTenantId;
@@ -141,12 +144,11 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       .then(res => res.json())
       .then(() => {
         fetchJobs();
-        setShowWizard(false); // Close wizard upon job creation
+        setShowWizard(false);
       })
       .catch(err => console.error("Error creating scan job:", err));
   };
 
-  // Start job
   const handleStartJob = (jobId: string) => {
     aspmFetch(`/api/aspm/scans/jobs/${jobId}/start`, { method: 'POST' })
       .then(res => res.json())
@@ -156,7 +158,6 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       .catch(err => console.error("Error starting scan job:", err));
   };
 
-  // Stop job
   const handleStopJob = (jobId: string) => {
     aspmFetch(`/api/aspm/scans/jobs/${jobId}/stop`, { method: 'POST' })
       .then(res => res.json())
@@ -166,7 +167,6 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       .catch(err => console.error("Error stopping scan job:", err));
   };
 
-  // Delete job
   const handleDeleteJob = (jobId: string) => {
     if (!confirm("Are you sure you want to delete this scan job record?")) return;
     aspmFetch(`/api/aspm/scans/jobs/${jobId}`, { method: 'DELETE' })
@@ -182,7 +182,7 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       case 'Scanning':
         return (
           <span className="badge animate-pulse" style={{ background: 'rgba(37, 99, 235, 0.1)', color: 'var(--color-primary)', border: '1px solid rgba(37, 99, 235, 0.4)' }}>
-            ⚡ SCANNING
+            SCANNING
           </span>
         );
       case 'Completed':
@@ -200,7 +200,7 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       case 'Failed':
         return (
           <span className="badge" style={{ background: 'rgba(220, 38, 38, 0.15)', color: 'var(--color-danger)', border: '1px solid rgba(220, 38, 38, 0.4)' }}>
-            🗙 FAILED
+            FAILED
           </span>
         );
       default:
@@ -218,12 +218,20 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
       {/* Jobs Manager Dashboard Table */}
       <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '10px' }}>
-          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text)' }}>
-            <Activity size={18} color="var(--color-primary)" />
-            Vulnerability Scanning Jobs
-          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text)' }}>
+              <Activity size={18} color="var(--color-primary)" />
+              Vulnerability Scanning Jobs
+            </h3>
+            {jobs.length > 0 && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+                Last scanned: <strong style={{ color: 'var(--color-text)' }}>{new Date(jobs[0].created_at).toLocaleString()}</strong>
+                {' · '}{jobs[0].target_url}
+              </span>
+            )}
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button 
+            <button
               className="cyber-btn"
               onClick={() => setShowWizard(prev => !prev)}
               style={{ padding: '4px 10px', fontSize: '0.8rem', background: 'rgba(37, 99, 235, 0.1)', borderColor: 'var(--color-primary)' }}
@@ -231,7 +239,7 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
               + Add Job
             </button>
             <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-              Background worker processes active in UI session
+              Showing last {jobs.length} scan{jobs.length === 1 ? '' : 's'}
             </span>
           </div>
         </div>
@@ -263,7 +271,8 @@ export default function DASTScanner({ tenantId }: DASTScannerProps) {
                   const isScanning = job.status === 'Scanning';
                   return (
                     <tr key={job.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)', transition: 'background 0.2s' }} className="table-row-hover">
-                      <td style={{ padding: '12px 5px', color: 'var(--color-muted)', fontSize: '0.75rem' }}>
+                      <td style={{ padding: '12px 5px', color: 'var(--color-muted)', fontSize: '0.75rem' }} title={new Date(job.created_at).toLocaleString()}>
+                        {new Date(job.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}{' '}
                         {new Date(job.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </td>
                       <td style={{ padding: '12px 5px', fontWeight: 600, color: 'var(--color-text)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.target_url}>

@@ -64,15 +64,6 @@ function isGcpDeletion(methodName: string): boolean {
 }
 
 // ─── Sub-resource parent extraction ──────────────────────────────────────────
-//
-// Azure resource IDs look like:
-//   /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Network/networkSecurityGroups/{nsg}/securityRules/{rule}
-//
-// AWS resource IDs / ARNs for sub-resources typically embed the parent:
-//   arn:aws:ec2:us-east-1:123:security-group-rule/sgr-xxx
-//
-// We try to find the parent by progressively stripping path segments from the
-// trailing end of the resourceId until we find a matching inventory record.
 
 function parentCandidates(resourceId: string): string[] {
   const candidates: string[] = [];
@@ -85,8 +76,6 @@ function parentCandidates(resourceId: string): string[] {
 }
 
 // ─── Sub-resource key extraction ─────────────────────────────────────────────
-// Returns a short key like "securityRules" or "ingressRules" to namespace
-// the sub-resource data within the parent's configState.
 
 function subResourceKey(resourceId: string, resourceType: string | null): string {
   if (resourceType) {
@@ -154,8 +143,6 @@ async function findInventoryRecord(
 }
 
 // ─── Merge new state into configState ────────────────────────────────────────
-// For direct resources: replace configState with newValue (merged).
-// For sub-resources: inject under a keyed section within the parent configState.
 
 function mergeConfigState(
   existing: Prisma.JsonValue,

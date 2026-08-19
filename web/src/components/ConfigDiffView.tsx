@@ -27,17 +27,14 @@ const TYPE_STYLES = {
 export function ConfigDiffView({ before, after, changeAction = 'MODIFIED' }: ConfigDiffViewProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  // For pure CREATED — show after config as a flat list
   if (changeAction === 'CREATED' && !before && after) {
     return <ConfigSnapshot label="New Resource Configuration" config={after} color="emerald" />;
   }
 
-  // For pure DELETED — show before config as a flat list
   if (changeAction === 'DELETED' && before && !after) {
     return <ConfigSnapshot label="Resource Configuration (before deletion)" config={before} color="red" />;
   }
 
-  // Both null — no config data available
   if (!before && !after) {
     return (
       <div className="text-xs text-gray-400 italic py-2">
@@ -46,7 +43,6 @@ export function ConfigDiffView({ before, after, changeAction = 'MODIFIED' }: Con
     );
   }
 
-  // Only one side — show what we have
   if (!before && after) {
     return <ConfigSnapshot label="Resource Configuration (after)" config={after} color="emerald" />;
   }
@@ -125,7 +121,6 @@ function ChangeRow({ change }: { change: FieldChange }) {
   const styles = TYPE_STYLES[change.type];
   const Icon = styles.Icon;
 
-  // Determine if values are complex enough to warrant expand
   const isComplexBefore = change.before !== null && typeof change.before === 'object';
   const isComplexAfter  = change.after  !== null && typeof change.after  === 'object';
   const isComplex = isComplexBefore || isComplexAfter;
@@ -139,7 +134,6 @@ function ChangeRow({ change }: { change: FieldChange }) {
         <Icon size={11} className={change.type === 'added' ? 'text-emerald-600 mt-0.5 shrink-0' : change.type === 'removed' ? 'text-red-600 mt-0.5 shrink-0' : 'text-amber-600 mt-0.5 shrink-0'} />
 
         <div className="flex-1 min-w-0">
-          {/* Field path */}
           <span className="font-mono font-semibold text-gray-800 break-all">{displayPath || change.path}</span>
 
           {change.type === 'changed' && (
@@ -170,7 +164,6 @@ function ChangeRow({ change }: { change: FieldChange }) {
             </div>
           )}
 
-          {/* Expand button for complex values */}
           {isComplex && (
             <button
               onClick={() => setExpanded((e) => !e)}

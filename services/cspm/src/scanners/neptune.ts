@@ -182,17 +182,6 @@ export class NeptuneScanner extends BaseScanner {
       ));
     }
 
-    // neptune_cluster_copy_tags_to_snapshots
-    if (!(cluster.CopyTagsToSnapshot ?? false)) {
-      findings.push(this.emit(
-        'neptune_cluster_copy_tags_to_snapshots',
-        { cluster: clusterName, arn: clusterArn, copyTagsToSnapshot: false },
-        {
-          message: `Neptune cluster "${clusterName}" is not configured to copy tags to snapshots`,
-        }
-      ));
-    }
-
     return findings;
   }
 

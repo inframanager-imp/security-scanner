@@ -1,34 +1,23 @@
-# Local runtime configuration & secrets — never commit
 .env
-.env.*
-!.env.example
+.env.local
+.env.remote
+.llm-sast-scanner-cache/
+.claude
 
 # Dependencies
 node_modules/
 
-# Build artifacts
-dist/
-build/
-*.tsbuildinfo
-
 # Python
-.venv/
 __pycache__/
 *.pyc
 
-# Logs
-*.log
-nohup.out
+# Editor
+.vscode/
 
-# Caches
-.cache/
+# DB backups — real data, never commit
+infra/db/backups/
 
-# Editor / OS
-.DS_Store
-Thumbs.db
-
-# Claude Code project metadata (local-only)
-.claude/
-
-# Personal notes vault (Obsidian) — not application source
-security-scanner-dev-brain/
+# Watchdog state/logs and local webhook config
+infra/monitoring/.env
+infra/monitoring/.state
+infra/monitoring/watchdog.log

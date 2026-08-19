@@ -1,10 +1,10 @@
 import { CheckMetadata } from '../types';
 import { awsChecks } from './aws';
-import { azureChecks } from './azure';
 import { gcpChecks } from './gcp';
+import { azureChecks } from './azure';
 
 const byId = new Map<string, CheckMetadata>();
-for (const checks of [awsChecks, azureChecks, gcpChecks]) {
+for (const checks of [awsChecks, gcpChecks, azureChecks]) {
   for (const check of checks) {
     if (byId.has(check.checkId)) {
       throw new Error(`Duplicate checkId in registry: ${check.checkId}`);

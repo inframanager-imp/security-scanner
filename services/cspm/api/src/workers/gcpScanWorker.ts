@@ -45,7 +45,6 @@ async function processGcpScanJob(job: Job<GcpScanJobData>): Promise<void> {
     });
     if (!project) throw new Error('GCP project record not found');
 
-    // Parse service account JSON key if provided
     let credentials: Record<string, unknown> | undefined;
     if (decrypted.serviceAccountKey) {
       try {

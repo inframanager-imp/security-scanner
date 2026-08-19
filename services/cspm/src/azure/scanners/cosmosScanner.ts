@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { AzureBaseScanner } from './baseScanner';
 import { ScanningResult } from '../../utils/types';
 
@@ -27,9 +26,7 @@ export class AzureCosmosScanner extends AzureBaseScanner {
           findings.push(this.emit(
             'azure_cosmosdb_public_network_access_disabled',
             { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" has publicNetworkAccess set to "Enabled". The data plane endpoint is reachable from the public internet.`,
-            },
+            { message: `CosmosDB account "${name}" has publicNetworkAccess set to "Enabled". The data plane endpoint is reachable from the public internet.` },
           ));
         }
 
@@ -44,20 +41,7 @@ export class AzureCosmosScanner extends AzureBaseScanner {
           findings.push(this.emit(
             'azure_cosmosdb_firewall_rules_configured',
             { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" has no IP firewall rules and no virtual network rules configured. Any client on the internet can attempt to authenticate to the account.`,
-            },
-          ));
-        }
-
-        // cosmosdb_account_firewall_use_selected_networks — VNet filter should be enabled
-        if (!acct.isVirtualNetworkFilterEnabled) {
-          findings.push(this.emit(
-            'cosmosdb_account_firewall_use_selected_networks',
-            { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" does not have virtual network filtering enabled, so firewall access is not restricted to selected networks.`,
-            },
+            { message: `CosmosDB account "${name}" has no IP firewall rules and no virtual network rules configured. Any client on the internet can attempt to authenticate to the account.` },
           ));
         }
 
@@ -66,9 +50,7 @@ export class AzureCosmosScanner extends AzureBaseScanner {
           findings.push(this.emit(
             'azure_cosmosdb_network_acl_bypass_restricted',
             { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" has networkAclBypass set to "AzureServices". This allows any Azure service in any tenant to bypass the IP firewall, which is overly broad.`,
-            },
+            { message: `CosmosDB account "${name}" has networkAclBypass set to "AzureServices". This allows any Azure service in any tenant to bypass the IP firewall, which is overly broad.` },
           ));
         }
 
@@ -77,9 +59,7 @@ export class AzureCosmosScanner extends AzureBaseScanner {
           findings.push(this.emit(
             'cosmosdb_account_use_aad_and_rbac',
             { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" has local authentication enabled. Primary/secondary account keys provide unrestricted data plane access and cannot be scoped to specific databases or operations.`,
-            },
+            { message: `CosmosDB account "${name}" has local authentication enabled. Primary/secondary account keys provide unrestricted data plane access and cannot be scoped to specific databases or operations.` },
           ));
         }
 
@@ -88,9 +68,7 @@ export class AzureCosmosScanner extends AzureBaseScanner {
           findings.push(this.emit(
             'azure_cosmosdb_automatic_failover_enabled',
             { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" does not have automatic failover configured. If the primary region becomes unavailable, a manual failover is required, increasing RTO.`,
-            },
+            { message: `CosmosDB account "${name}" does not have automatic failover configured. If the primary region becomes unavailable, a manual failover is required, increasing RTO.` },
           ));
         }
 
@@ -107,63 +85,25 @@ export class AzureCosmosScanner extends AzureBaseScanner {
               findings.push(this.emit(
                 'azure_cosmosdb_backup_interval_sufficient',
                 { account: name, resourceGroup: rg, backupIntervalHours: intervalHours },
-                {
-                  message: `CosmosDB account "${name}" has a periodic backup interval of ${intervalHours}h. Data loss window (RPO) is greater than 24 hours.`,
-                },
+                { message: `CosmosDB account "${name}" has a periodic backup interval of ${intervalHours}h. Data loss window (RPO) is greater than 24 hours.` },
               ));
             }
             if (retentionHours !== null && retentionHours < 168) { // less than 7 days
               findings.push(this.emit(
                 'azure_cosmosdb_backup_retention_sufficient',
                 { account: name, resourceGroup: rg, retentionHours },
-                {
-                  message: `CosmosDB account "${name}" retains backups for only ${retentionHours}h (${(retentionHours / 24).toFixed(1)} days). This may be insufficient for detecting and recovering from data corruption.`,
-                },
+                { message: `CosmosDB account "${name}" retains backups for only ${retentionHours}h (${(retentionHours / 24).toFixed(1)} days). This may be insufficient for detecting and recovering from data corruption.` },
               ));
             }
           }
-
-          // cosmosdb_account_backup_policy_continuous
-          if (backup.type !== 'Continuous') {
-            findings.push(this.emit(
-              'cosmosdb_account_backup_policy_continuous',
-              { account: name, resourceGroup: rg, backupType: backup.type },
-              {
-                message: `CosmosDB account "${name}" uses "${backup.type}" backup policy instead of Continuous. Continuous backup enables point-in-time restore and reduces data-loss risk.`,
-              },
-            ));
-          }
         } else {
-          findings.push(this.emit(
-            'cosmosdb_account_backup_policy_continuous',
+          findings.push(this.finding(
+            'CosmosDB account backup policy not configured',
+            `CosmosDB account "${name}" has no backup policy returned by the API. Backup status cannot be verified.`,
+            'INFO',
             { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" has no backup policy returned by the API. Backup status cannot be verified.`,
-              severity: 'INFO',
-            },
-          ));
-        }
-
-        // cosmosdb_account_minimum_tls_version
-        const tlsVersion = acct.minimalTlsVersion;
-        if (tlsVersion !== 'Tls12' && tlsVersion !== 'Tls13') {
-          findings.push(this.emit(
-            'cosmosdb_account_minimum_tls_version',
-            { account: name, resourceGroup: rg, minimalTlsVersion: tlsVersion ?? 'unset' },
-            {
-              message: `CosmosDB account "${name}" does not enforce TLS 1.2 or higher (minimalTlsVersion: "${tlsVersion ?? 'unset'}").`,
-            },
-          ));
-        }
-
-        // cosmosdb_account_use_private_endpoints
-        if (!(acct.privateEndpointConnections ?? []).length) {
-          findings.push(this.emit(
-            'cosmosdb_account_use_private_endpoints',
-            { account: name, resourceGroup: rg },
-            {
-              message: `CosmosDB account "${name}" is not using Private Endpoint connections. Access relies on the public data-plane endpoint rather than private network isolation.`,
-            },
+            'Verify backup is configured in the Azure Portal under the CosmosDB account > Backup & Restore settings.',
+            ['cosmosdb', 'backup'],
           ));
         }
       }

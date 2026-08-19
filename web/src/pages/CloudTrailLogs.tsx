@@ -360,10 +360,10 @@ const TIME_RANGES = [
 
 const SEV_FILTER_OPTIONS = [
   { value: '',         label: 'All Severities' },
-  { value: 'CRITICAL', label: '🔴 Critical' },
-  { value: 'HIGH',     label: '🟠 High' },
-  { value: 'MEDIUM',   label: '🟡 Medium' },
-  { value: 'INFO',     label: '🟢 Info' },
+  { value: 'CRITICAL', label: 'Critical' },
+  { value: 'HIGH',     label: 'High' },
+  { value: 'MEDIUM',   label: 'Medium' },
+  { value: 'INFO',     label: 'Info' },
 ];
 
 const READ_ONLY_OPTIONS = [
@@ -436,7 +436,6 @@ function SeverityDashboard({ events, activeSeverity, onFilter }: SeverityDashboa
 
   return (
     <div className="space-y-3">
-      {/* Stat cards */}
       <div className="grid grid-cols-4 gap-3">
         {cards.map(({ sev, label, icon }) => {
           const c   = SEV_CONFIG[sev];
@@ -463,7 +462,6 @@ function SeverityDashboard({ events, activeSeverity, onFilter }: SeverityDashboa
         })}
       </div>
 
-      {/* Stacked bar */}
       {events.length > 0 && (
         <div className="flex rounded-full overflow-hidden h-2.5 gap-px">
           {(['CRITICAL', 'HIGH', 'MEDIUM', 'INFO'] as EventSeverity[]).map(sev => {
@@ -595,7 +593,6 @@ function ExpandedEvent({ event }: { event: CloudTrailEvent }) {
       <td colSpan={10} className="border-b border-gray-200">
         <div className={`px-6 py-5 bg-white border-l-4 ${borderColor} space-y-4`}>
 
-          {/* Tab bar */}
           <div className="flex items-center gap-1 border-b border-gray-200 pb-2">
             {tabs.map(t => (
               <button
@@ -609,7 +606,6 @@ function ExpandedEvent({ event }: { event: CloudTrailEvent }) {
                 {t.icon} {t.label}
               </button>
             ))}
-            {/* Quick meta on right */}
             <div className="ml-auto flex items-center gap-2">
               <SeverityBadge severity={sev} />
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
@@ -623,14 +619,12 @@ function ExpandedEvent({ event }: { event: CloudTrailEvent }) {
             </div>
           </div>
 
-          {/* Tab: Change Diff */}
           {tab === 'diff' && (
             <div className="bg-gray-950 rounded-xl p-4">
               <ChangeDiffPanel event={event} />
             </div>
           )}
 
-          {/* Tab: Details */}
           {tab === 'details' && (
             <div className="space-y-4">
               {event.errorMessage && (
@@ -695,7 +689,6 @@ function ExpandedEvent({ event }: { event: CloudTrailEvent }) {
             </div>
           )}
 
-          {/* Tab: Raw JSON */}
           {tab === 'raw' && (
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -750,14 +743,13 @@ export function CloudTrailLogs() {
   const [expandedId,       setExpandedId]       = useState<string|null>(null);
   const [committedStart,   setCommittedStart]   = useState('');
   const [committedEnd,     setCommittedEnd]     = useState('');
-  const [isLive,           setIsLive]           = useState(true);   // live by default
+  const [isLive,           setIsLive]           = useState(true);
   const [lastRefreshed,    setLastRefreshed]    = useState<Date|null>(null);
 
   const { data: accountsPage } = useQuery({
     queryKey: ['accounts'],
     queryFn:  () => accountsApi.list(),
   });
-  // Sort alphabetically by name
   const accounts = useMemo(() =>
     [...(accountsPage?.data ?? [])].sort((a: any, b: any) => a.name.localeCompare(b.name)),
     [accountsPage],
@@ -803,7 +795,6 @@ export function CloudTrailLogs() {
     refetchIntervalInBackground: true,   // keep polling even when tab is inactive
   });
 
-  // Track last successful refresh time
   useEffect(() => {
     if (result) setLastRefreshed(new Date());
   }, [result]);
@@ -912,7 +903,6 @@ export function CloudTrailLogs() {
   return (
     <div className="space-y-6">
 
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">CloudTrail Logs</h2>
@@ -963,7 +953,6 @@ export function CloudTrailLogs() {
         </div>
       </div>
 
-      {/* Severity Dashboard — always at top */}
       <Card>
         <div className="flex items-center gap-2 mb-4">
           <ShieldCheck size={16} className="text-indigo-500" />
@@ -989,9 +978,7 @@ export function CloudTrailLogs() {
         )}
       </Card>
 
-      {/* Controls */}
       <Card>
-        {/* AWS Account + Region */}
         <div className="grid grid-cols-3 gap-4 mb-4">
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">AWS Account</label>
@@ -1018,7 +1005,6 @@ export function CloudTrailLogs() {
           </div>
         </div>
 
-        {/* Time Range */}
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
             <Clock size={14} className="inline mr-1" />Time Range
@@ -1055,7 +1041,6 @@ export function CloudTrailLogs() {
             </button>
           </div>
 
-          {/* Custom date/time pickers */}
           {isCustomRange && !isLive && (
             <div className="mt-3 flex flex-wrap gap-3 items-end p-3 bg-gray-50 border border-gray-200 rounded-lg">
               <div>
@@ -1088,7 +1073,6 @@ export function CloudTrailLogs() {
           )}
         </div>
 
-        {/* Filters row */}
         <div className="grid grid-cols-5 gap-3">
           <Select value={readOnly}  onChange={e => handleReadOnlyChange(e.target.value)} options={READ_ONLY_OPTIONS} />
           <Select value={sevFilter} onChange={e => setSevFilter(e.target.value)}         options={SEV_FILTER_OPTIONS} />
@@ -1104,13 +1088,10 @@ export function CloudTrailLogs() {
         </div>
       </Card>
 
-      {/* Results table */}
       {accountId && (isLive || !!committedStart) && (
         <Card padding={false}>
-          {/* Table toolbar */}
           <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Live indicator */}
               {isLive && (
                 <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-50 border border-green-200">
                   <span className="relative flex h-2 w-2">
@@ -1146,7 +1127,6 @@ export function CloudTrailLogs() {
             </div>
           </div>
 
-          {/* Error */}
           {error && (
             <div className="p-6 flex items-start gap-3 text-red-700 bg-red-50">
               <AlertCircle size={18} className="shrink-0 mt-0.5" />
@@ -1158,7 +1138,6 @@ export function CloudTrailLogs() {
             </div>
           )}
 
-          {/* Loading */}
           {isLoading && !error && (
             <div className="p-6 space-y-3">
               {[...Array(6)].map((_, i) => (
@@ -1167,7 +1146,6 @@ export function CloudTrailLogs() {
             </div>
           )}
 
-          {/* Table */}
           {!isLoading && !error && (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">

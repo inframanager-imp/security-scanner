@@ -1,8 +1,6 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   ListTopicsCommand,
   GetTopicAttributesCommand,
-  ListSubscriptionsByTopicCommand,
   type Topic,
 } from '@aws-sdk/client-sns';
 import { BaseScanner, ScannerOptions } from './baseScanner';
@@ -95,40 +93,6 @@ export class SNSScanner extends BaseScanner {
         }
       ));
     }
-
-    // 3. Subscriptions delivering to plain HTTP endpoints
-    try {
-      let nextToken: string | undefined;
-      do {
-        const result = await retry(() =>
-          this.client.sns.send(new ListSubscriptionsByTopicCommand({ TopicArn: arn, NextToken: nextToken }))
-        );
-        for (const subscription of result.Subscriptions ?? []) {
-          const subscriptionArn = subscription.SubscriptionArn ?? '';
-          if (subscriptionArn === 'PendingConfirmation') continue;
-          if (subscription.Protocol === 'http') {
-            findings.push(this.emit(
-              'sns_subscription_not_using_http_endpoints',
-              {
-                resourceId:      subscriptionArn,
-                subscriptionArn,
-                topicArn:        arn,
-                topicName,
-                protocol:        'http',
-                endpoint:        subscription.Endpoint,
-              },
-              {
-                message: `SNS subscription "${subscriptionArn}" on topic "${topicName}" delivers to an HTTP endpoint. ` +
-                  `Messages are sent unencrypted and can be intercepted or tampered with in transit.`,
-                remediation: `Delete the HTTP subscription and re-create it with an HTTPS endpoint: ` +
-                  `aws sns subscribe --topic-arn ${arn} --protocol https --notification-endpoint <https-url>`,
-              }
-            ));
-          }
-        }
-        nextToken = result.NextToken;
-      } while (nextToken);
-    } catch { /* no permission */ }
 
     return findings;
   }

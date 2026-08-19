@@ -18,7 +18,7 @@ describe('evidenceJobId.buildEvidenceRefreshJobId', () => {
     expect(jobId).not.toContain(':');
   });
 
-  it('would be accepted by BullMQ\'s custom-jobId validation', () => {
+  it("would be accepted by BullMQ's custom-jobId validation", () => {
     const jobId = buildEvidenceRefreshJobId({ provider: 'AWS', accountId: 'acct-1', frameworkId: 'cis-1.4' }, 12345);
     expect(isAcceptedByBullMQ(jobId)).toBe(true);
   });
@@ -40,11 +40,13 @@ describe('evidenceJobId.buildEvidenceRefreshJobId', () => {
     expect(a).not.toBe(b);
   });
 
-  it('produces distinct ids across different providers or accounts', () => {
+  it('produces distinct ids across different providers, accounts, or frameworks', () => {
     const aws = buildEvidenceRefreshJobId({ provider: 'AWS', accountId: 'acct-4' }, 100);
     const azure = buildEvidenceRefreshJobId({ provider: 'AZURE', accountId: 'acct-4' }, 100);
     const otherAccount = buildEvidenceRefreshJobId({ provider: 'AWS', accountId: 'acct-5' }, 100);
+    const withFramework = buildEvidenceRefreshJobId({ provider: 'AWS', accountId: 'acct-4', frameworkId: 'cis' }, 100);
     expect(aws).not.toBe(azure);
     expect(aws).not.toBe(otherAccount);
+    expect(aws).not.toBe(withFramework);
   });
 });

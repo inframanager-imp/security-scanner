@@ -8,6 +8,31 @@ export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Error names/codes that are permanent — retrying them wastes the full
+// backoff window for no chance of success (e.g. S3's PermanentRedirect when
+// a bucket lives in a different region than the client, which used to turn
+// one out-of-region bucket into ~6 checks x multiple retries of dead time;
+// same story for Lambda's GetPolicy on a function with no resource policy —
+// ResourceNotFoundException there just means "none configured", not a
+// transient failure, but a 184-function account still turned that into
+// ~184 x 2 retries x exponential backoff of pure dead time).
+const NON_RETRYABLE_ERROR_NAMES = new Set([
+  'PermanentRedirect',
+  'NoSuchBucket',
+  'NoSuchBucketPolicy',
+  'AccessDenied',
+  'ResourceNotFoundException',
+  'GetPolicyException',
+  'NoSuchEntityException',
+  'NoSuchEntity',
+]);
+
+function isRetryable(error: unknown): boolean {
+  const err = error as { name?: string; Code?: string };
+  const code = err?.name ?? err?.Code;
+  return !code || !NON_RETRYABLE_ERROR_NAMES.has(code);
+}
+
 export async function retry<T>(
   fn: () => Promise<T>,
   maxRetries: number = 3,
@@ -17,12 +42,39 @@ export async function retry<T>(
     try {
       return await fn();
     } catch (error) {
-      if (i === maxRetries - 1) throw error;
+      if (i === maxRetries - 1 || !isRetryable(error)) throw error;
       logger.warn(`Retry ${i + 1}/${maxRetries} after ${delayMs}ms: ${(error as Error).message}`);
       await sleep(delayMs * Math.pow(2, i)); // Exponential backoff
     }
   }
   throw new Error('Retry failed');
+}
+
+/**
+ * Runs `fn` over `items` with at most `concurrency` in flight at once —
+ * for per-resource API calls (one IAM role, one Lambda function, ...) that
+ * would otherwise run one at a time in a `for` loop. A sequential loop over
+ * a few hundred roles/functions, each a real network round-trip, silently
+ * turns into minutes of wall-clock time with zero progress visibility.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
 }
 
 export function formatSize(bytes: number): string {

@@ -279,7 +279,6 @@ function ScheduleCard({
     setRunning(true);
     try {
       await reportSchedulesApi.run(schedule.id);
-      // Open preview in new tab
       window.open(reportSchedulesApi.preview(schedule.id), '_blank');
     } finally {
       setRunning(false);

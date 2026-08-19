@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { CheckMetadata } from '../../types';
 
 // Titles must stay byte-identical to the pre-registry hardcoded titles:
@@ -44,25 +43,5 @@ export const ssmChecks: CheckMetadata[] = [
     description: 'Checks that running EC2 instances are registered with AWS Systems Manager; unmanaged instances cannot use Session Manager (SSH-free access), patch management, or Run Command.',
     remediation: 'Install the SSM Agent on unmanaged instances and attach an IAM role with AmazonSSMManagedInstanceCore policy. Use Session Manager instead of SSH to eliminate the need for inbound port 22.',
     tags: ['ssm', 'ec2', 'access'],
-  },
-  {
-    checkId: 'ssm_document_secrets',
-    provider: 'aws',
-    service: 'ssm',
-    title: 'SSM Document Contains Hardcoded Secrets',
-    severity: 'HIGH',
-    description: 'Checks the content of account-owned SSM documents for hardcoded credentials (AWS keys, private keys, tokens, secret-like assignments) instead of secure references such as {{ssm-secure:/path}}.',
-    remediation: 'Store secrets in Secrets Manager or SecureString parameters and reference them at runtime via {{ssm-secure:/path}}; remove the hardcoded values from the document and rotate any exposed credentials.',
-    tags: ['ssm', 'secrets'],
-  },
-  {
-    checkId: 'ssm_documents_set_as_public',
-    provider: 'aws',
-    service: 'ssm',
-    title: 'SSM Document Publicly Shared',
-    severity: 'HIGH',
-    description: 'Checks that account-owned SSM documents are not shared publicly ("all") and are not shared with AWS accounts outside the trusted list; exposed documents reveal runbooks, parameters and any embedded secrets.',
-    remediation: 'Keep documents private or share only with specific trusted account IDs: aws ssm modify-document-permission --name <name> --permission-type Share --account-ids-to-remove all. Enable account-level block public sharing for documents.',
-    tags: ['ssm', 'public-access'],
   },
 ];

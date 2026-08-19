@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { CheckMetadata } from '../../types';
 
 // Titles must stay byte-identical to the pre-registry hardcoded titles:
@@ -64,35 +63,5 @@ export const elasticacheChecks: CheckMetadata[] = [
     description: 'Checks that Redis replication groups are configured for Multi-AZ failover so a single AZ failure does not cause downtime.',
     remediation: 'Enable Multi-AZ: aws elasticache modify-replication-group --replication-group-id <replication-group-id> --multi-az-enabled --apply-immediately',
     tags: ['elasticache', 'availability'],
-  },
-  {
-    checkId: 'elasticache_cluster_uses_public_subnet',
-    provider: 'aws',
-    service: 'elasticache',
-    title: 'ElastiCache Cluster Using Public Subnets',
-    severity: 'MEDIUM',
-    description: 'Checks that ElastiCache cache subnet groups contain no public subnets (subnets whose route table has a default route to an Internet gateway); caches in public subnets can be exposed to direct Internet access.',
-    remediation: 'Create a cache subnet group with only private subnets and move the cluster to it; for external access use VPC peering, VPN or PrivateLink instead of public subnets.',
-    tags: ['elasticache', 'network', 'public-subnet'],
-  },
-  {
-    checkId: 'elasticache_redis_cluster_auto_minor_version_upgrades',
-    provider: 'aws',
-    service: 'elasticache',
-    title: 'ElastiCache Redis Auto Minor Version Upgrades Disabled',
-    severity: 'HIGH',
-    description: 'Checks that ElastiCache Redis replication groups have automatic minor version upgrades enabled so nodes receive engine security fixes and stability patches automatically.',
-    remediation: 'Enable automatic minor version upgrades: aws elasticache modify-replication-group --replication-group-id <replication-group-id> --auto-minor-version-upgrade --apply-immediately',
-    tags: ['elasticache', 'patching'],
-  },
-  {
-    checkId: 'elasticache_redis_cluster_automatic_failover_enabled',
-    provider: 'aws',
-    service: 'elasticache',
-    title: 'ElastiCache Redis Automatic Failover Disabled',
-    severity: 'MEDIUM',
-    description: 'Checks that ElastiCache Redis replication groups have automatic failover enabled so a replica is promoted automatically when the primary node or its Availability Zone fails.',
-    remediation: 'Enable automatic failover: aws elasticache modify-replication-group --replication-group-id <replication-group-id> --automatic-failover-enabled --apply-immediately. Keep at least one replica per shard in a different AZ.',
-    tags: ['elasticache', 'availability', 'resilience'],
   },
 ];

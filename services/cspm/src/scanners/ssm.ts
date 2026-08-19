@@ -1,12 +1,8 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import {
   DescribeParametersCommand,
   GetParameterCommand,
   DescribeInstancePatchStatesCommand,
   DescribeInstanceInformationCommand,
-  ListDocumentsCommand,
-  DescribeDocumentPermissionCommand,
-  GetDocumentCommand,
 } from '@aws-sdk/client-ssm';
 import {
   DescribeInstancesCommand,
@@ -41,19 +37,6 @@ const CREDENTIAL_VALUE_PREFIXES: { label: string; test: (v: string) => boolean }
 // How many suspicious params we'll actually fetch values for, to bound API/IAM cost
 const MAX_PARAMS_TO_FETCH = 5;
 
-// Confirmed-credential substrings inside SSM document content (Prowler runs a
-// full secret scanner; we match known credential formats plus keyword assignments).
-const DOCUMENT_SECRET_VALUE_PATTERNS: { label: string; pattern: RegExp }[] = [
-  { label: 'AWS access key', pattern: /(?:AKIA|ASIA)[0-9A-Z]{16}/ },
-  { label: 'private key',    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY/ },
-  { label: 'GitHub token',   pattern: /\bgh[pousr]_[A-Za-z0-9]{30,}/ },
-  { label: 'Slack token',    pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/ },
-];
-// secret-like key followed by a hardcoded value (secure {{ssm-secure:...}} and
-// {{resolve:...}} dynamic references are excluded by the lookahead)
-const DOCUMENT_SECRET_ASSIGNMENT_PATTERN =
-  /(password|passwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|private[_-]?key|client[_-]?secret|credential)\w*["']?\s*[:=]\s*["']?(?!\{\{)[^\s"',;]{6,}/i;
-
 export class SSMScanner extends BaseScanner {
   constructor(client: AWSClient) {
     super(client, 'SSM');
@@ -67,7 +50,6 @@ export class SSMScanner extends BaseScanner {
       this.checkPlaintextSecrets().then(f => findings.push(...f)),
       this.checkPatchCompliance().then(f => findings.push(...f)),
       this.checkUnmanagedInstances().then(f => findings.push(...f)),
-      this.checkDocuments().then(f => findings.push(...f)),
     ]);
 
     logger.info(`SSM scan complete. ${findings.length} findings.`);
@@ -137,118 +119,6 @@ export class SSMScanner extends BaseScanner {
       }
     }
     return findings;
-  }
-
-  // ssm_documents_set_as_public / ssm_document_secrets: evaluate documents owned by this account
-  private async checkDocuments(): Promise<ScanningResult[]> {
-    const findings: ScanningResult[] = [];
-
-    let accountId = '';
-    try {
-      accountId = await this.client.getAccountId();
-    } catch { /* account id unavailable; the public-share ("all") case is still detected */ }
-
-    const documents: any[] = [];
-    try {
-      let nextToken: string | undefined;
-      do {
-        const result = await retry(() =>
-          this.client.ssm.send(new ListDocumentsCommand({
-            Filters: [{ Key: 'Owner', Values: ['Self'] }],
-            NextToken: nextToken,
-          }))
-        );
-        documents.push(...(result.DocumentIdentifiers ?? []));
-        nextToken = result.NextToken;
-      } while (nextToken);
-    } catch { return findings; }
-
-    for (const document of documents) {
-      const name: string = document.Name ?? '';
-      if (!name) continue;
-
-      // ssm_documents_set_as_public: shared with "all" or with accounts outside
-      // the trusted list (only the owning account is trusted by default)
-      try {
-        const permissions = await retry(() =>
-          this.client.ssm.send(new DescribeDocumentPermissionCommand({ Name: name, PermissionType: 'Share' }))
-        );
-        const accountIds: string[] = permissions.AccountIds ?? [];
-        if (accountIds.includes('all')) {
-          findings.push(this.emit(
-            'ssm_documents_set_as_public',
-            { resourceId: `ssm::document::${name}`, documentName: name, sharedWith: ['all'] },
-            {
-              message: `SSM document "${name}" is public: it is shared with all AWS accounts. ` +
-                `Anyone can read its content, including scripts, parameters and any embedded secrets.`,
-              remediation: `Remove public sharing: aws ssm modify-document-permission --name ${name} --permission-type Share --account-ids-to-remove all`,
-            }
-          ));
-        } else {
-          const externalAccounts = accountIds.filter(id => id !== accountId);
-          if (externalAccounts.length > 0) {
-            findings.push(this.emit(
-              'ssm_documents_set_as_public',
-              { resourceId: `ssm::document::${name}`, documentName: name, sharedWith: externalAccounts },
-              {
-                message: `SSM document "${name}" is shared with external AWS account(s): ${externalAccounts.join(', ')}. ` +
-                  `Review whether each account is trusted to read this document.`,
-                remediation: `Remove untrusted accounts from the share list: aws ssm modify-document-permission --name ${name} --permission-type Share --account-ids-to-remove <account-id>`,
-              }
-            ));
-          }
-        }
-      } catch (error) {
-        logger.debug(`Failed to describe permissions for SSM document ${name}`, { error: (error as Error).message });
-      }
-
-      // ssm_document_secrets: scan document content for hardcoded credentials
-      try {
-        const result = await retry(() =>
-          this.client.ssm.send(new GetDocumentCommand({ Name: name }))
-        );
-        const content: string = result.Content ?? '';
-        if (content) {
-          const secretsFound = this.findSecretsInDocumentContent(content);
-          if (secretsFound.length > 0) {
-            findings.push(this.emit(
-              'ssm_document_secrets',
-              { resourceId: `ssm::document::${name}::secrets`, documentName: name, secretsFound: secretsFound.slice(0, 10) },
-              {
-                message: `Potential secret(s) found in SSM document "${name}": ` +
-                  `${secretsFound.slice(0, 5).join(', ')}${secretsFound.length > 5 ? '...' : ''}. ` +
-                  `Anyone who can read the document can exfiltrate these credentials.`,
-                remediation: `Remove the hardcoded values from document "${name}", store them in Secrets Manager or SecureString parameters ` +
-                  `referenced via {{ssm-secure:/path}}, and rotate any exposed credentials.`,
-              }
-            ));
-          }
-        }
-      } catch (error) {
-        logger.debug(`Failed to get content of SSM document ${name}`, { error: (error as Error).message });
-      }
-    }
-
-    return findings;
-  }
-
-  private findSecretsInDocumentContent(content: string): string[] {
-    const secretsFound: string[] = [];
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // Secure dynamic references are the recommended pattern, not a leak
-      if (line.includes('{{ssm-secure:') || line.includes('{{resolve:')) continue;
-      for (const { label, pattern } of DOCUMENT_SECRET_VALUE_PATTERNS) {
-        if (pattern.test(line)) {
-          secretsFound.push(`${label} on line ${i + 1}`);
-        }
-      }
-      if (DOCUMENT_SECRET_ASSIGNMENT_PATTERN.test(line)) {
-        secretsFound.push(`secret keyword assignment on line ${i + 1}`);
-      }
-    }
-    return secretsFound;
   }
 
   private async checkPatchCompliance(): Promise<ScanningResult[]> {

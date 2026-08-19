@@ -1,4 +1,3 @@
-// Check logic derived from Prowler (Apache-2.0, https://github.com/prowler-cloud/prowler)
 import { CheckMetadata } from '../../types';
 
 // Titles must stay byte-identical to the pre-registry hardcoded titles:
@@ -24,15 +23,5 @@ export const snsChecks: CheckMetadata[] = [
     description: 'Checks that SNS topics have server-side encryption (SSE) enabled so messages stored in the topic are encrypted at rest.',
     remediation: 'Enable SSE: aws sns set-topic-attributes --topic-arn <topic-arn> --attribute-name KmsMasterKeyId --attribute-value alias/aws/sns',
     tags: ['sns', 'encryption'],
-  },
-  {
-    checkId: 'sns_subscription_not_using_http_endpoints',
-    provider: 'aws',
-    service: 'sns',
-    title: 'SNS Subscription Using HTTP Endpoint',
-    severity: 'HIGH',
-    description: 'Checks that confirmed SNS subscriptions do not deliver to plain HTTP endpoints; unencrypted deliveries can be eavesdropped or tampered with in transit.',
-    remediation: 'Delete the HTTP subscription and re-create it with Protocol=https pointing at an HTTPS endpoint; verify SNS message signatures at the receiver and enforce TLS with aws:SecureTransport conditions.',
-    tags: ['sns', 'encryption', 'in-transit'],
   },
 ];

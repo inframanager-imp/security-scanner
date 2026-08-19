@@ -135,21 +135,19 @@ async function processMonitorJob(job: Job<MonitorJobData>): Promise<void> {
 
       if (existing) {
         const existingFp = `${finding.service}:${finding.title}:${resourceFingerprint(existing.evidence)}`;
-        if (existingFp === fingerprint) continue; // already tracked
+        if (existingFp === fingerprint) continue;
       }
 
       newFindings.push(finding);
     }
 
     if (newFindings.length === 0) {
-      // Emit heartbeat even if no new threats
       emitHeartbeat(accountId, checkEnd, 0);
       await setLastCheck(accountId, checkEnd);
       return;
     }
 
     // ── 5. Get or create a "monitoring scan" record for this account ─────────
-    // We reuse/create a special MONITORING scan so findings have a valid scanId
     let monitorScan = await prisma.scan.findFirst({
       where: { accountId, status: 'MONITORING' },
       orderBy: { createdAt: 'desc' },
@@ -206,7 +204,6 @@ async function processMonitorJob(job: Job<MonitorJobData>): Promise<void> {
         });
       }
 
-      // Also broadcast to anyone watching all accounts
       io.to('threats:all').emit('threat:detected', {
         accountId,
         count: newFindings.length,

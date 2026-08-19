@@ -25,6 +25,9 @@ def _extract_token(request: Request) -> str | None:
 
 def verify_jwt(request: Request) -> dict:
     """FastAPI dependency. Raises 401 unless a valid CSPM access token is present."""
+    if request.url.path == "/api/health":
+        return {"sub": "healthcheck", "role": "SYSTEM", "type": "access"}
+
     if not AUTH_REQUIRED:
         return {"sub": "dev", "role": "ADMIN", "type": "access"}
 

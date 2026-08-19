@@ -92,9 +92,6 @@ async function getCtClient(accountId: string, region: string): Promise<CloudTrai
 }
 
 // ─── Inventory enrichment ─────────────────────────────────────────────────────
-// For each config change, look up the resource in inventory and:
-//   1. Use inventory.configState as the real previousValue
-//   2. After storing, mark inventory as needing a refresh
 
 async function fetchInventoryConfig(
   provider: string,
@@ -187,7 +184,6 @@ export async function syncConfigChanges(
         const previousValue = inventoryPrev ?? classified.previousValue ?? undefined;
 
         // ── newValue: fetch actual resource state from AWS API (post-change snapshot) ──
-        // Fire-and-forget the API call; result stored on isNew only.
         const liveNewValue = await fetchAwsResourceState(
           fetchCtx,
           classified.resourceType,
@@ -297,9 +293,6 @@ export async function syncConfigChanges(
       const previousValue   = inventoryPrev ?? classified.previousValue ?? undefined;
 
       // ── newValue: fetch real ARM resource state (full post-change config) ──
-      // ARM GET returns the complete resource JSON — this is what enables exact
-      // parameter diffs (e.g. "requestTimeout: 30 → 300" on an App Gateway listener).
-      // For DELETE events the resource is gone so ARM returns null — that's correct.
       const opLower = (event.operationName?.value ?? '').toLowerCase();
       const isWrite = opLower.endsWith('/write') || opLower.endsWith('/action');
       const isDelete = opLower.endsWith('/delete');
@@ -465,8 +458,6 @@ export async function syncConfigChanges(
 // ─── Update pipeline timestamps ───────────────────────────────────────────────
 
 export async function markSyncedReady(provider: string, targetId: string): Promise<void> {
-  // After a successful manual sync, promote the account from PENDING/FAILED → READY
-  // and register the BullMQ config sync job so automatic sync starts immediately.
   const now = new Date();
   let wasNotReady = false;
 
@@ -595,15 +586,8 @@ export function triggerInitialPipeline(provider: string, targetId: string): void
  * Called every 30 seconds by app.ts.
  * Runs an incremental config change sync (last 15 min) for every READY account.
  * Uses an overlap guard so a slow run is skipped rather than stacked.
- *
- * Window is 15 minutes (0.25 h) — this is deliberately wider than the 30-second
- * poll interval to account for:
- *   • CloudTrail delivery lag (AWS events can arrive up to 15 min after the fact)
- *   • Clock skew between the API server and cloud provider endpoints
- * Deduplication via @@unique([sourceEventId, provider]) ensures no double-counting.
  */
 // Per-target sync guard — prevents concurrent syncs for the same account/sub/project
-// (replaces global boolean so a slow Azure sub doesn't block all other accounts)
 const _syncingTargets = new Set<string>();
 
 export async function runPeriodicSync(): Promise<void> {
@@ -656,8 +640,6 @@ export async function runPeriodicSync(): Promise<void> {
           if (changesStored > 0) {
             logger.info(`[realtime-sync] ${provider}:${targetId.slice(0, 8)} — ${changesStored} new changes, triggering drift scan`);
           }
-          // Always run drift after every successful sync — ResourceInventory.configState
-          // may have been updated even if no new ConfigChange log entries were stored.
           void runDriftForTarget(provider, targetId);
         } catch (err) {
           await prisma.configSyncRun.update({

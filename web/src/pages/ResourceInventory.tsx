@@ -178,7 +178,6 @@ function TargetDiscoverCard({
 export function ResourceInventory() {
   const navigate = useNavigate();
 
-  // Global filters
   const [provFilter, setProvFilter]  = useState<'ALL' | CloudProvider>('ALL');
   const [typeFilter, setTypeFilter]  = useState('');
   const [stateFilter, setStateFilter] = useState('ACTIVE');
@@ -186,19 +185,16 @@ export function ResourceInventory() {
   const [searchInput, setSearchInput] = useState('');
   const [page,        setPage]       = useState(1);
 
-  // Accounts/subscriptions/projects for discover cards
   const { data: awsPage }   = useQuery({ queryKey: ['accounts'],            queryFn: () => accountsApi.list() });
   const { data: azurePage } = useQuery({ queryKey: ['azure-subscriptions'], queryFn: () => azureApi.listSubscriptions({ limit: 100 }) });
   const { data: gcpPage }   = useQuery({ queryKey: ['gcp-projects'],        queryFn: () => gcpApi.listProjects({ limit: 100 }) });
 
-  // Global stats
   const { data: globalStats } = useQuery({
     queryKey:  ['resource-stats-global'],
     queryFn:   () => resourceInventoryApi.getStats(),
     staleTime: 60_000,
   });
 
-  // Resource list
   const listParams = useMemo(() => ({
     provider:     provFilter !== 'ALL' ? provFilter : undefined,
     resourceType: typeFilter || undefined,
@@ -222,7 +218,6 @@ export function ResourceInventory() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <div className="flex items-center gap-2 mb-0.5">
           <Database size={20} className="text-gray-600" />
@@ -231,7 +226,6 @@ export function ResourceInventory() {
         <p className="text-sm text-gray-500">Auto-discovered cloud resources with versioned configuration history and dependency mapping</p>
       </div>
 
-      {/* Global stats */}
       {globalStats && (
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
@@ -253,7 +247,6 @@ export function ResourceInventory() {
         </div>
       )}
 
-      {/* Per-account discover cards */}
       <div>
         <h3 className="text-sm font-semibold text-gray-700 mb-3">Discovery Controls</h3>
         <div className="grid grid-cols-3 gap-3">
@@ -274,7 +267,6 @@ export function ResourceInventory() {
         </div>
       </div>
 
-      {/* Top resource types breakdown */}
       {globalStats && globalStats.byType.length > 0 && (
         <Card padding={false}>
           <div className="px-4 py-3 border-b border-gray-100">
@@ -301,12 +293,9 @@ export function ResourceInventory() {
         </Card>
       )}
 
-      {/* Resource list */}
       <Card padding={false}>
-        {/* Filters */}
         <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center gap-2">
           <Filter size={14} className="text-gray-400 shrink-0" />
-          {/* Provider tabs */}
           {(['ALL', 'AWS', 'AZURE', 'GCP'] as const).map((p) => (
             <button
               key={p}
@@ -357,7 +346,6 @@ export function ResourceInventory() {
           </div>
         </div>
 
-        {/* Table */}
         {isLoading ? (
           <div className="flex items-center justify-center h-40">
             <div className="animate-spin rounded-full h-7 w-7 border-2 border-blue-600 border-t-transparent" />
@@ -447,7 +435,6 @@ export function ResourceInventory() {
         )}
       </Card>
 
-      {/* Feature legend */}
       <div className="grid grid-cols-4 gap-4">
         {[
           { icon: Database, title: 'Auto-Discovery', desc: 'Continuously scans AWS Config, Azure ARM, and GCP APIs to build a complete resource inventory.' },

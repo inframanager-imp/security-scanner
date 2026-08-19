@@ -7,7 +7,6 @@ import AzureClient from '../../../src/azure/client';
 import { azureScanQueue } from '../workers/azureScanWorker';
 import { AZURE_SERVICES } from '../../../src/azure/engine';
 import { triggerInitialPipeline } from '../services/inventoryPipeline';
-import { getAzureComplianceTags } from '../services/azureComplianceService';
 
 const router = Router();
 router.use(authenticate);
@@ -369,13 +368,12 @@ router.post('/:id/credentials/verify', async (req: Request, res: Response) => {
 
     res.json({ data: result });
 
-    // Re-trigger pipeline if subscription has never been initialized
     if (result.valid) {
       const sub = await prisma.azureSubscription.findUnique({
         where: { id: req.params.id },
         select: { inventoryStatus: true },
       });
-      if (sub && (sub.inventoryStatus === 'PENDING' || sub.inventoryStatus === 'FAILED')) {
+      if (sub && sub.inventoryStatus !== 'READY') {
         triggerInitialPipeline('AZURE', req.params.id);
       }
     }
@@ -491,9 +489,7 @@ router.get('/:id/findings', async (req: Request, res: Response) => {
       prisma.azureFinding.count({ where }),
     ]);
 
-    const mapped = findings.map((f) => ({ ...f, complianceTags: getAzureComplianceTags(f.title) }));
-
-    res.json({ data: mapped, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } });
+    res.json({ data: findings, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } });
   } catch {
     res.status(500).json({ error: 'Internal server error' });
   }

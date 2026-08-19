@@ -43,7 +43,6 @@ function cmpTime(a: string, b: string): number {
  * Is the current moment inside this freeze window for the given provider+targetId?
  */
 function isFrozen(win: FreezeWindow, provider: string, targetId: string): boolean {
-  // Scope check
   if (win.providers.length > 0 && !win.providers.includes(provider)) return false;
   if (win.targetIds.length  > 0 && !win.targetIds.includes(targetId))  return false;
 
