@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Database, RefreshCw, Search, Filter, Server, Shield, Activity,
-  HardDrive, Cloud, Box, ChevronRight, AlertTriangle, CheckCircle2,
+  HardDrive, Cloud, Box, ChevronRight, AlertTriangle, CheckCircle,
   Trash2, GitBranch, GitCommit,
 } from 'lucide-react';
 import { resourceInventoryApi } from '../api/resourceInventory';
@@ -417,7 +417,7 @@ export function ResourceInventory() {
                       <td className="px-4 py-3">
                         {res.state === 'ACTIVE' ? (
                           <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
-                            <CheckCircle2 size={10} /> Active
+                            <CheckCircle size={10} /> Active
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">

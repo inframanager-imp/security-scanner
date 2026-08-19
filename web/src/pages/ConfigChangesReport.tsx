@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import {
   ArrowLeft, RefreshCw, Download, ChevronDown, ChevronUp,
   Shield, Activity, Server, Database, Lock, ScrollText, Cloud,
-  AlertTriangle, CheckCircle2, User, MapPin, Tag, GitCompare,
+  AlertTriangle, CheckCircle, User, MapPin, Tag, GitCompare,
   CheckSquare, Filter, Package, TrendingUp, TrendingDown, Zap, AlertCircle,
   Calendar, Share2, ExternalLink,
 } from 'lucide-react';
@@ -239,7 +239,7 @@ function ExpandedDetail({ change, colSpan }: { change: ConfigChange; colSpan: nu
 
             {change.acknowledgedBy && (
               <div className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
-                <CheckCircle2 size={12} />
+                <CheckCircle size={12} />
                 Acknowledged by <strong>{change.acknowledgedBy}</strong> on {fmt(change.acknowledgedAt)}
               </div>
             )}

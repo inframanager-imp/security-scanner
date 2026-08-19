@@ -58,57 +58,57 @@ const navSections: NavSection[] = [
   {
     id: 'cloud',
     title: 'Cloud Security',
-    icon: <Cloud size={15} className="text-blue-400 shrink-0" />,
+    icon: <Cloud size={15} strokeWidth={2} className="text-blue-400 shrink-0" />,
     items: [
-      { to: '/cloud',          icon: <Layers size={16} />,          label: 'Cloud Subscriptions' },
-      { to: '/compliance',     icon: <ShieldCheck size={16} />,     label: 'Compliance'          },
-      { to: '/config-changes', icon: <GitCommit size={16} />,       label: 'Config Changes'      },
-      { to: '/baselines',      icon: <GitCompareArrows size={16} />,label: 'Baseline & Drift'    },
-      { to: '/posture-score',  icon: <Shield size={16} />,          label: 'Posture Score'       },
-      { to: '/cloudtrail',     icon: <ScrollText size={16} />,      label: 'CloudTrail Logs'     },
-      { to: '/azure-activity', icon: <FileText size={16} />,        label: 'Azure Activity Logs' },
-      { to: '/containers',     icon: <Box size={16} />,             label: 'Container Security'  },
+      { to: '/cloud',          icon: <Layers size={16} strokeWidth={2} />,          label: 'Cloud Subscriptions' },
+      { to: '/compliance',     icon: <ShieldCheck size={16} strokeWidth={2} />,     label: 'Compliance'          },
+      { to: '/config-changes', icon: <GitCommit size={16} strokeWidth={2} />,       label: 'Config Changes'      },
+      { to: '/baselines',      icon: <GitCompareArrows size={16} strokeWidth={2} />,label: 'Baseline & Drift'    },
+      { to: '/posture-score',  icon: <Shield size={16} strokeWidth={2} />,          label: 'Posture Score'       },
+      { to: '/cloudtrail',     icon: <ScrollText size={16} strokeWidth={2} />,      label: 'CloudTrail Logs'     },
+      { to: '/azure-activity', icon: <FileText size={16} strokeWidth={2} />,        label: 'Azure Activity Logs' },
+      { to: '/containers',     icon: <Box size={16} strokeWidth={2} />,             label: 'Container Security'  },
     ],
   },
   {
     id: 'appsec',
     title: 'Application Security',
-    icon: <Code2 size={15} className="text-indigo-400 shrink-0" />,
+    icon: <Code2 size={15} strokeWidth={2} className="text-indigo-400 shrink-0" />,
     items: [
-      { to: '/appsec/targets',  icon: <ClipboardList size={16} />,   label: 'Targets'             },
-      { to: '/appsec/overview', icon: <LayoutDashboard size={16} />, label: 'App Posture'         },
-      { to: '/appsec/web',      icon: <Server size={16} />,          label: 'Web Scan (DAST)'     },
-      { to: '/appsec/api',      icon: <Network size={16} />,         label: 'API Security'        },
-      { to: '/appsec/code',     icon: <FileText size={16} />,        label: 'Code Scan (SAST/SCA)'},
-      { to: '/appsec/pentest',  icon: <Flame size={16} />,           label: 'Pentest (AI)'        },
-      { to: '/appsec/ai-red',   icon: <Bug size={16} />,             label: 'AI Red Team'         },
+      { to: '/appsec/targets',  icon: <ClipboardList size={16} strokeWidth={2} />,   label: 'Targets'             },
+      { to: '/appsec/overview', icon: <LayoutDashboard size={16} strokeWidth={2} />, label: 'App Posture'         },
+      { to: '/appsec/web',      icon: <Server size={16} strokeWidth={2} />,          label: 'Web Scan (DAST)'     },
+      { to: '/appsec/api',      icon: <Network size={16} strokeWidth={2} />,         label: 'API Security'        },
+      { to: '/appsec/code',     icon: <FileText size={16} strokeWidth={2} />,        label: 'Code Scan (SAST/SCA)'},
+      { to: '/appsec/pentest',  icon: <Flame size={16} strokeWidth={2} />,           label: 'Pentest (AI)'        },
+      { to: '/appsec/ai-red',   icon: <Bug size={16} strokeWidth={2} />,             label: 'AI Red Team'         },
     ],
   },
   {
     id: 'risk',
     title: 'Risk & Exposure',
-    icon: <ShieldAlert size={15} className="text-amber-400 shrink-0" />,
+    icon: <ShieldAlert size={15} strokeWidth={2} className="text-amber-400 shrink-0" />,
     items: [
-      { to: '/asset-graph',       icon: <Network size={16} />,      label: 'Asset Graph'             },
-      { to: '/identity-graph',    icon: <Users size={16} />,        label: 'Identity & Attack Paths' },
-      { to: '/threats',           icon: <ShieldAlert size={16} />,  label: 'Threat Detection'        },
-      { to: '/prioritized-risks', icon: <Flame size={16} />,        label: 'Prioritized Risks'       },
-      { to: '/workload-vulns',    icon: <Server size={16} />,       label: 'Workload Vulns'          },
-      { to: '/data-security',     icon: <Database size={16} />,     label: 'Data Security'           },
-      { to: '/iam-escalation',    icon: <ShieldAlert size={16} />,  label: 'IAM Escalation'          },
-      { to: '/risk-register',     icon: <ClipboardList size={16} />,label: 'Risk Register'           },
+      { to: '/asset-graph',       icon: <Network size={16} strokeWidth={2} />,      label: 'Asset Graph'             },
+      { to: '/identity-graph',    icon: <Users size={16} strokeWidth={2} />,        label: 'Identity & Attack Paths' },
+      { to: '/threats',           icon: <ShieldAlert size={16} strokeWidth={2} />,  label: 'Threat Detection'        },
+      { to: '/prioritized-risks', icon: <Flame size={16} strokeWidth={2} />,        label: 'Prioritized Risks'       },
+      { to: '/workload-vulns',    icon: <Server size={16} strokeWidth={2} />,       label: 'Workload Vulns'          },
+      { to: '/data-security',     icon: <Database size={16} strokeWidth={2} />,     label: 'Data Security'           },
+      { to: '/iam-escalation',    icon: <ShieldAlert size={16} strokeWidth={2} />,  label: 'IAM Escalation'          },
+      { to: '/risk-register',     icon: <ClipboardList size={16} strokeWidth={2} />,label: 'Risk Register'           },
     ],
   },
   {
     id: 'ops',
     title: 'Operations',
-    icon: <Activity size={15} className="text-emerald-400 shrink-0" />,
+    icon: <Activity size={15} strokeWidth={2} className="text-emerald-400 shrink-0" />,
     items: [
-      { to: '/reports',           icon: <AlertTriangle size={16} />,label: 'Reports'           },
-      { to: '/integrations',      icon: <Link2 size={16} />,        label: 'Integrations'      },
-      { to: '/alerts',            icon: <Bell size={16} />,         label: 'Alerts'            },
-      { to: '/freeze-windows',    icon: <SnowflakeIcon size={16}/>, label: 'Freeze Windows'    },
-      { to: '/scheduled-reports', icon: <FileText size={16} />,     label: 'Scheduled Reports' },
+      { to: '/reports',           icon: <AlertTriangle size={16} strokeWidth={2} />,label: 'Reports'           },
+      { to: '/integrations',      icon: <Link2 size={16} strokeWidth={2} />,        label: 'Integrations'      },
+      { to: '/alerts',            icon: <Bell size={16} strokeWidth={2} />,         label: 'Alerts'            },
+      { to: '/freeze-windows',    icon: <SnowflakeIcon size={16} strokeWidth={2}/>, label: 'Freeze Windows'    },
+      { to: '/scheduled-reports', icon: <FileText size={16} strokeWidth={2} />,     label: 'Scheduled Reports' },
     ],
   },
 ];
@@ -240,14 +240,17 @@ export function AppLayout() {
   }, [activeSection]);
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
-      {/* Sidebar */}
+    <div className="relative flex h-screen bg-gray-50 overflow-hidden">
+      {/* Fixed width spacer rail to preserve main content width & layout stability */}
+      <div className="w-[68px] shrink-0" />
+
+      {/* Floating Overlay Sidebar */}
       <aside
         onMouseEnter={() => setIsCollapsed(false)}
         onMouseLeave={() => setIsCollapsed(true)}
         className={clsx(
-          'sidebar-cca relative flex flex-col shrink-0 text-slate-800 border-r border-[#E1F0FA] transition-all duration-300 ease-in-out z-30',
-          isCollapsed ? 'w-[68px] is-collapsed' : 'w-[245px]',
+          'sidebar-cca absolute inset-y-0 left-0 flex flex-col text-slate-800 border-r border-[#E1F0FA] bg-white transition-all duration-300 ease-in-out z-40',
+          isCollapsed ? 'w-[68px] is-collapsed shadow-none' : 'w-[245px] shadow-2xl ring-1 ring-black/5',
         )}
       >
         {/* Header & Logo */}

@@ -9,7 +9,7 @@ import {
   Search,
   CheckSquare,
   Trash2,
-  CheckCircle2,
+  CheckCircle,
   AlertCircle,
   FileBarChart,
 } from 'lucide-react';
@@ -397,7 +397,7 @@ export function AzureSubscriptionReport() {
             </Button>
             {cleanupResult && (
               <div className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-full ${cleanupResult.deleted > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                {cleanupResult.deleted > 0 ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                {cleanupResult.deleted > 0 ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
                 {cleanupResult.message}
               </div>
             )}

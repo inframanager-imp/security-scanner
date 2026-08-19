@@ -36,7 +36,6 @@
 .sidebar-cca {
   background: #FFFFFF;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  position: relative;
   overflow: hidden;
   box-sizing: border-box;
 }

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus, Eye, Play, Trash2, CheckCircle, XCircle, ChevronLeft, ChevronRight, ChevronDown, Check,
-  Loader2, AlertCircle, Search, X,
+  Loader2, AlertCircle, Search, X, Layers, Activity, AlertTriangle,
 } from 'lucide-react';
 import { accountsApi } from '../api/accounts';
 import { azureApi } from '../api/azure';
@@ -67,13 +67,8 @@ const PROVIDER_CONFIG: Record<CloudProvider, { label: string; color: string; bg:
   GCP:   { label: 'GCP',   color: 'text-green-700',  bg: 'bg-green-50',   border: 'border-green-200',  dot: 'bg-green-500'  },
 };
 
-function ProviderBadge({ provider }: { provider: CloudProvider }) {
-  const cfg = PROVIDER_CONFIG[provider];
-  return (
-    <div className={`inline-flex items-center justify-center p-1.5 rounded-lg ${cfg.bg} border ${cfg.border}`} title={cfg.label}>
-      <CloudLogo provider={provider} className="w-5 h-5 shrink-0" />
-    </div>
-  );
+function ProviderBadge({ provider, className = "w-4 h-4 object-contain shrink-0" }: { provider: CloudProvider; className?: string }) {
+  return <CloudLogo provider={provider} className={className} />;
 }
 
 function SeverityBar({ summary }: { summary?: CloudRow['summary'] }) {
@@ -165,22 +160,20 @@ function ProviderCard({
   provider, selected, onClick,
 }: { provider: CloudProvider; selected: boolean; onClick: () => void }) {
   const cfg = PROVIDER_CONFIG[provider];
-  const icons: Record<CloudProvider, string> = {
-    AWS:   '🟠',
-    AZURE: '🔵',
-    GCP:   '🟢',
-  };
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 w-full transition-all ${
+      className={`relative flex flex-col items-center justify-center gap-3 p-5 rounded-2xl border-2 w-full transition-all duration-200 ${
         selected
-          ? `${cfg.border} ${cfg.bg} ring-2 ring-offset-1 ring-current ${cfg.color}`
-          : 'border-gray-200 hover:border-gray-300 bg-white'
+          ? `${cfg.border} ${cfg.bg} ring-2 ring-offset-1 ring-blue-500/50 ${cfg.color} shadow-xs`
+          : 'border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50/50'
       }`}
     >
-      <span className="text-3xl">{icons[provider]}</span>
-      <span className="text-sm font-semibold text-gray-800">{cfg.label}</span>
+      <div className="h-10 w-10 flex items-center justify-center shrink-0">
+        <CloudLogo provider={provider} className="w-10 h-10 object-contain shrink-0" />
+      </div>
+      <span className="text-sm font-bold text-gray-900">{cfg.label}</span>
     </button>
   );
 }
@@ -543,27 +536,99 @@ export function CloudSubscriptions() {
         </Button>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary KPI Cards Grid (5 Cards matching Compliance style) */}
       {allRows.length > 0 && (
-        <div className="grid grid-cols-5 gap-4">
-          {[
-            { label: 'Total Subscriptions', value: allRows.length,      cls: 'text-gray-900' },
-            { label: 'Monitored (READY)',    value: totalMonitored,      cls: totalMonitored > 0 ? 'text-emerald-600' : 'text-gray-400',
-              sub: totalInitializing > 0 ? `${totalInitializing} initializing` : null },
-            { label: 'Total Findings',       value: totalFindings,       cls: totalFindings  > 0 ? 'text-gray-900' : 'text-gray-400' },
-            { label: 'Critical',             value: totalCritical,       cls: totalCritical  > 0 ? 'text-red-600'  : 'text-gray-400' },
-            { label: 'High',                 value: totalHigh,           cls: totalHigh      > 0 ? 'text-orange-500' : 'text-gray-400' },
-          ].map(c => (
-            <div key={c.label} className="bg-white rounded-lg border border-gray-200 p-4">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{c.label}</p>
-              <p className={`mt-1 text-2xl font-bold ${c.cls}`}>{c.value}</p>
-              {'sub' in c && c.sub && (
-                <p className="text-[10px] text-blue-500 mt-0.5 flex items-center gap-1">
-                  <Loader2 size={9} className="animate-spin" />{c.sub}
-                </p>
-              )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Total Subscriptions */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-blue-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Subscriptions</span>
+              <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                <Layers size={18} />
+              </div>
             </div>
-          ))}
+            <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums" style={{ fontFamily: 'var(--font-heading)' }}>
+              {allRows.length}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-gray-400">
+              {[
+                awsRows.length > 0 && `AWS: ${awsRows.length}`,
+                azureRows.length > 0 && `Azure: ${azureRows.length}`,
+                gcpRows.length > 0 && `GCP: ${gcpRows.length}`,
+              ].filter(Boolean).join(' | ') || 'No accounts connected'}
+            </p>
+          </div>
+
+          {/* Monitored (READY) */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-emerald-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Monitored (READY)</span>
+              <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                <CheckCircle size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-emerald-600 tabular-nums" style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalMonitored}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-emerald-600/80 flex items-center gap-1">
+              {totalInitializing > 0 ? (
+                <>
+                  <Loader2 size={10} className="animate-spin text-blue-500" />
+                  <span className="text-blue-500">{totalInitializing} initializing</span>
+                </>
+              ) : (
+                `${allRows.length > 0 ? Math.round((totalMonitored / allRows.length) * 100) : 0}% active discovery`
+              )}
+            </p>
+          </div>
+
+          {/* Total Findings */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-purple-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Findings</span>
+              <div className="p-2 rounded-xl bg-purple-50 text-purple-600">
+                <Activity size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums" style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalFindings}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-purple-600/80">
+              Across connected clouds
+            </p>
+          </div>
+
+          {/* Critical Findings */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-red-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Critical</span>
+              <div className="p-2 rounded-xl bg-red-50 text-red-600">
+                <AlertCircle size={18} />
+              </div>
+            </div>
+            <p className={`mt-2 text-2xl font-bold tabular-nums ${totalCritical > 0 ? 'text-red-600' : 'text-gray-400'}`} style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalCritical}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-red-600/80">
+              Requires immediate action
+            </p>
+          </div>
+
+          {/* High Findings */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-orange-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">High</span>
+              <div className="p-2 rounded-xl bg-orange-50 text-orange-600">
+                <AlertTriangle size={18} />
+              </div>
+            </div>
+            <p className={`mt-2 text-2xl font-bold tabular-nums ${totalHigh > 0 ? 'text-orange-500' : 'text-gray-400'}`} style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalHigh}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-orange-600/80">
+              Elevated risk issues
+            </p>
+          </div>
         </div>
       )}
 
@@ -701,20 +766,36 @@ export function CloudSubscriptions() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                {['Cloud', 'Name', 'Account / Project ID', 'Credentials', 'Inventory Pipeline', 'Last Scan', 'Findings', 'Actions'].map(h => (
-                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                {['Subscription', 'Account / Project ID', 'Credentials', 'Inventory Pipeline', 'Last Scan', 'Findings', 'Actions'].map(h => (
+                  <th
+                    key={h}
+                    className={`px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide ${
+                      h === 'Subscription' ? 'border-r border-gray-200/80' : ''
+                    }`}
+                  >
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {rows.map(row => (
-                <tr key={`${row.provider}-${row.id}`} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-4"><ProviderBadge provider={row.provider} /></td>
-                  <td className="px-5 py-4 font-medium text-gray-900">{row.name}</td>
+                <tr key={`${row.provider}-${row.id}`} className="hover:bg-gray-50/80 transition-colors">
+                  <td className="px-5 py-4 border-r border-gray-200/70">
+                    <button
+                      onClick={() => navigate(row.detailPath)}
+                      className="flex items-center gap-2.5 text-left group focus:outline-none"
+                    >
+                      <ProviderBadge provider={row.provider} className="w-4 h-4 object-contain shrink-0" />
+                      <span className="font-semibold text-gray-900 group-hover:text-blue-600 group-hover:underline transition-colors text-sm leading-none">
+                        {row.name}
+                      </span>
+                    </button>
+                  </td>
                   <td className="px-5 py-4 font-mono text-xs text-gray-500 max-w-[200px] truncate">{row.accountId}</td>
                   <td className="px-5 py-4">
                     {row.hasCredentials
-                      ? <span className="inline-flex items-center gap-1 text-xs text-green-700"><CheckCircle size={12} /> Configured</span>
+                      ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700"><CheckCircle size={12} /> Configured</span>
                       : <span className="inline-flex items-center gap-1 text-xs text-gray-400"><XCircle size={12} /> None</span>}
                   </td>
                   <td className="px-5 py-4"><InventoryPipelineBadge row={row} /></td>

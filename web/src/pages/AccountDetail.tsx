@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, CheckCircle, XCircle, Shield, ArrowLeft } from 'lucide-react';
+import { Play, CheckCircle, XCircle, ArrowLeft, Key } from 'lucide-react';
 import { accountsApi } from '../api/accounts';
 import { scansApi } from '../api/scans';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 import { SeverityDonut } from '../components/charts/SeverityDonut';
 import { ScanStatusBadge, SeverityBadge, FindingStatusBadge } from '../components/ui/Badge';
+import { Tooltip } from '../components/ui/Tooltip';
+import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
 import type { AuthMethod, Scan, Finding } from '../types';
 import { ApiRequestError } from '../api/client';
 
-type Tab = 'overview' | 'scans' | 'credentials';
+
 
 const AUTH_METHOD_OPTIONS = [
   { value: 'ACCESS_KEY', label: 'Access Key' },
@@ -74,7 +77,7 @@ export function AccountDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [credModalOpen, setCredModalOpen] = useState(false);
   const [credError, setCredError] = useState<string | null>(null);
   const [credSuccess, setCredSuccess] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -98,10 +101,10 @@ export function AccountDetail() {
   });
   const scans: Scan[] = scansPage?.data ?? [];
 
-  const { data: credentials, isLoading: credLoading } = useQuery({
+  const { data: credentials, isLoading: credsLoading } = useQuery({
     queryKey: ['credentials', id],
     queryFn: () => accountsApi.getCredentials(id!),
-    enabled: !!id && activeTab === 'credentials',
+    enabled: !!id,
   });
 
   // Use the last SUCCESSFUL scan's ID for findings so a failed scan never
@@ -112,41 +115,31 @@ export function AccountDetail() {
     queryKey: ['scan-findings', findingsScanId, 'top5'],
     queryFn: () =>
       scansApi.getFindings(findingsScanId!, { pageSize: 5, page: 1 }),
-    enabled: !!findingsScanId && activeTab === 'overview',
+    enabled: !!findingsScanId,
   });
 
   const triggerScan = useMutation({
     mutationFn: () => scansApi.trigger({ accountId: id! }),
-    onSuccess: (scan: Scan) => {
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['scans', { accountId: id }] });
       void qc.invalidateQueries({ queryKey: ['accounts', id] });
-      navigate(`/scans/${scan.id}`);
+      void qc.invalidateQueries({ queryKey: ['accounts'] });
     },
   });
 
   const saveCreds = useMutation({
     mutationFn: () =>
-      credentials
-        ? accountsApi.updateCredentials(id!, {
-            authMethod,
-            accessKeyId: authMethod === 'ACCESS_KEY' ? accessKeyId : undefined,
-            secretAccessKey:
-              authMethod === 'ACCESS_KEY' ? secretAccessKey : undefined,
-            roleArn: authMethod === 'ASSUME_ROLE' ? roleArn : undefined,
-            externalId:
-              authMethod === 'ASSUME_ROLE' && externalId ? externalId : undefined,
-          })
-        : accountsApi.setCredentials(id!, {
-            authMethod,
-            accessKeyId: authMethod === 'ACCESS_KEY' ? accessKeyId : undefined,
-            secretAccessKey:
-              authMethod === 'ACCESS_KEY' ? secretAccessKey : undefined,
-            roleArn: authMethod === 'ASSUME_ROLE' ? roleArn : undefined,
-            externalId:
-              authMethod === 'ASSUME_ROLE' && externalId ? externalId : undefined,
-          }),
+      accountsApi.updateCredentials(id!, {
+        authMethod,
+        accessKeyId: accessKeyId || undefined,
+        secretAccessKey: secretAccessKey || undefined,
+        roleArn: roleArn || undefined,
+        externalId: externalId || undefined,
+      }),
     onSuccess: () => {
+      setCredSuccess('Credentials updated successfully');
       setCredError(null);
-      setCredSuccess('Credentials saved successfully.');
+      setAccessKeyId('');
       setSecretAccessKey('');
       void qc.invalidateQueries({ queryKey: ['credentials', id] });
       void qc.invalidateQueries({ queryKey: ['accounts', id] });
@@ -196,173 +189,193 @@ export function AccountDetail() {
   // Show summary from last successful scan when latest failed/is running
   const summary = account.latestScan?.summary ?? emptySummary;
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'scans', label: 'Scans' },
-    { key: 'credentials', label: 'Credentials' },
-  ];
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={<ArrowLeft size={16} />}
-            onClick={() => navigate('/cloud')}
-          >
-            Cloud Subscriptions
-          </Button>
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">{account.name}</h2>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+      {/* Redesigned Header Row matching Compliance details consistency */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-1">
+        
+        {/* Left Section: Back Arrow -> Provider Logo -> Title & Subtitle */}
+        <div className="flex items-center gap-3.5">
+          {/* 1. Back Button */}
+          <Tooltip content="Back to Cloud Subscriptions" position="right">
+            <button
+              onClick={() => navigate('/cloud')}
+              className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-all shrink-0 -ml-1"
+              aria-label="Back to Cloud Subscriptions"
+            >
+              <ArrowLeft size={20} strokeWidth={2.2} />
+            </button>
+          </Tooltip>
+
+          {/* Divider */}
+          <div className="h-8 w-px bg-gray-200/80 shrink-0" />
+
+          {/* 2. Provider Logo */}
+          <div className="flex items-center justify-center p-2 rounded-xl bg-slate-50 border border-slate-200/80 shrink-0 shadow-2xs">
+            <CloudProviderLogo provider="AWS" className="w-6 h-6 shrink-0" />
+          </div>
+
+          {/* 3 & 4. Account Name & Account ID Subtitle */}
+          <div className="space-y-0.5">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
+              {account.name}
+            </h1>
+
+            {/* Account Details Row */}
+            <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+              <span className="font-semibold text-gray-400">Account ID:</span>
+              <span className="font-mono font-medium text-gray-700 bg-gray-100/90 border border-gray-200 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">
                 {account.awsAccountId}
               </span>
+              <span className="text-gray-300">•</span>
               {account.hasCredentials ? (
-                <span className="inline-flex items-center gap-1 text-xs text-green-700">
-                  <CheckCircle size={12} />
-                  Credentials configured
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-full">
+                  <CheckCircle size={12} /> Credentials configured
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-xs text-gray-400">
-                  <XCircle size={12} />
-                  No credentials
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                  <XCircle size={12} /> No credentials
                 </span>
               )}
             </div>
           </div>
         </div>
-        <Button
-          variant="primary"
-          leftIcon={<Play size={16} />}
-          loading={triggerScan.isPending}
-          disabled={!account.hasCredentials}
-          onClick={() => triggerScan.mutate()}
-        >
-          Run Scan
-        </Button>
+
+        {/* Right Section: Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          <Button
+            variant="secondary"
+            leftIcon={<Key size={16} />}
+            onClick={() => setCredModalOpen(true)}
+          >
+            Credentials
+          </Button>
+          <Button
+            variant="primary"
+            leftIcon={<Play size={16} />}
+            loading={triggerScan.isPending}
+            disabled={!account.hasCredentials}
+            onClick={() => triggerScan.mutate()}
+          >
+            Run Scan
+          </Button>
+        </div>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.key
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {/* Tab Content */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-
-          {/* Failed scan error banner */}
-          {scanFailed && (
-            <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-4">
-              <XCircle size={18} className="mt-0.5 shrink-0 text-red-500" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-red-800">Last scan failed</p>
-                <p className="text-sm text-red-700 mt-1">
-                  {humanizeScanError(account.latestScan?.errorMessage)}
+      {/* Main Single Page Content */}
+      <div className="space-y-6">
+        {/* Failed scan error banner */}
+        {scanFailed && (
+          <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-4">
+            <XCircle size={18} className="mt-0.5 shrink-0 text-red-500" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-800">Last scan failed</p>
+              <p className="text-sm text-red-700 mt-1">
+                {humanizeScanError(account.latestScan?.errorMessage)}
+              </p>
+              {account.lastSuccessfulScanId && (
+                <p className="text-xs text-red-500 mt-2">
+                  Findings and summary below are from the last successful scan.
                 </p>
-                {account.lastSuccessfulScanId && (
-                  <p className="text-xs text-red-500 mt-2">
-                    Findings and summary below are from the last successful scan.
-                  </p>
-                )}
-              </div>
-              <Button
-                variant="primary"
-                size="sm"
-                leftIcon={<Play size={13} />}
-                loading={triggerScan.isPending}
-                disabled={!account.hasCredentials}
-                onClick={() => triggerScan.mutate()}
-              >
-                Retry Scan
-              </Button>
+              )}
             </div>
-          )}
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<Play size={13} />}
+              loading={triggerScan.isPending}
+              disabled={!account.hasCredentials}
+              onClick={() => triggerScan.mutate()}
+            >
+              Retry Scan
+            </Button>
+          </div>
+        )}
 
-          <div className="grid grid-cols-3 gap-6">
-            {/* Donut — labelled to clarify it may be from a prior scan */}
-            <Card title={scanFailed && account.lastSuccessfulScanId ? 'Last Successful Scan — Findings' : 'Latest Scan Findings'}>
-              <SeverityDonut summary={summary} />
-            </Card>
+        {/* Top Cards Grid: Asymmetric 60/40 Split (col-span-7 / col-span-5) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Findings & Breakdown (60% width = col-span-7) */}
+          <div className="lg:col-span-7 flex flex-col">
+            <Card title={scanFailed && account.lastSuccessfulScanId ? 'Last Successful Scan Findings' : 'Findings & Breakdown'}>
+              <div className="flex items-center gap-6 py-1">
+                {/* Left: Donut Chart with bigger size */}
+                <div className="w-[180px] shrink-0 flex items-center justify-center">
+                  <SeverityDonut summary={summary} showLegend={false} size={180} />
+                </div>
 
-            {/* Finding counts */}
-            <Card title="Severity Breakdown">
-              <div className="space-y-3">
-                {[
-                  { label: 'Critical', count: summary.critical, color: 'bg-red-600' },
-                  { label: 'High', count: summary.high, color: 'bg-orange-500' },
-                  { label: 'Medium', count: summary.medium, color: 'bg-yellow-500' },
-                  { label: 'Low', count: summary.low, color: 'bg-blue-500' },
-                  { label: 'Info', count: summary.info, color: 'bg-gray-400' },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-center gap-3">
-                    <div className={`h-3 w-3 rounded-full ${item.color}`} />
-                    <span className="flex-1 text-sm text-gray-600">{item.label}</span>
-                    <span className="text-sm font-bold text-gray-900">{item.count}</span>
-                  </div>
-                ))}
-                <div className="border-t pt-2 flex justify-between">
-                  <span className="text-sm font-medium text-gray-600">Total</span>
-                  <span className="text-sm font-bold text-gray-900">{summary.total}</span>
+                {/* Right: Severity Breakdown List */}
+                <div className="flex-1 space-y-2 min-w-0 pr-1">
+                  {[
+                    { label: 'Critical', count: summary.critical, color: 'bg-red-600', textCls: 'text-red-600' },
+                    { label: 'High',     count: summary.high,     color: 'bg-orange-500', textCls: 'text-orange-500' },
+                    { label: 'Medium',   count: summary.medium,   color: 'bg-yellow-500', textCls: 'text-amber-500' },
+                    { label: 'Low',      count: summary.low,      color: 'bg-blue-500', textCls: 'text-blue-600' },
+                    { label: 'Info',     count: summary.info,     color: 'bg-gray-400', textCls: 'text-gray-500' },
+                  ].map((item) => {
+                    const pct = summary.total > 0 ? Math.round((item.count / summary.total) * 100) : 0;
+                    return (
+                      <div key={item.label} className="space-y-0.5">
+                        <div className="flex items-center justify-between text-xs font-medium">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className={`h-2 w-2 rounded-full shrink-0 ${item.color}`} />
+                            <span className="text-gray-700 font-semibold truncate text-[11px]">{item.label}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[10px] text-gray-400 font-normal">{pct}%</span>
+                            <span className={`font-bold tabular-nums text-xs ${item.count > 0 ? item.textCls : 'text-gray-400'}`}>{item.count}</span>
+                          </div>
+                        </div>
+                        <div className="h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                          <div className={`h-full ${item.color} transition-all duration-300`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </Card>
+          </div>
 
-            {/* Scan Info */}
+          {/* Scan Info (40% width = col-span-5) */}
+          <div className="lg:col-span-5 flex flex-col">
             <Card title="Latest Scan">
               {account.latestScan ? (
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-500">Status</span>
-                    <ScanStatusBadge status={account.latestScan.status} />
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Started</span>
-                    <span className="text-gray-900">
-                      {formatDate(account.latestScan.startedAt)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Duration</span>
-                    <span className="text-gray-900">
-                      {formatDuration(account.latestScan.durationMs)}
-                    </span>
-                  </div>
-                  {scanFailed && account.latestScan.errorMessage && (
-                    <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2">
-                      <p className="text-xs font-semibold text-red-700 mb-1">Failure reason</p>
-                      <p className="text-xs text-red-600 break-words">
-                        {humanizeScanError(account.latestScan.errorMessage)}
-                      </p>
+                <div className="space-y-3.5 text-sm flex-1 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500 font-medium">Status</span>
+                      <ScanStatusBadge status={account.latestScan.status} />
                     </div>
-                  )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500 font-medium">Started</span>
+                      <span className="text-gray-900 font-semibold">
+                        {formatDate(account.latestScan.startedAt)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500 font-medium">Duration</span>
+                      <span className="text-gray-900 font-semibold">
+                        {formatDuration(account.latestScan.durationMs)}
+                      </span>
+                    </div>
+                    {scanFailed && account.latestScan.errorMessage && (
+                      <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2">
+                        <p className="text-xs font-semibold text-red-700 mb-1">Failure reason</p>
+                        <p className="text-xs text-red-600 break-words">
+                          {humanizeScanError(account.latestScan.errorMessage)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="w-full mt-2"
+                    className="w-full mt-3"
                     onClick={() =>
                       navigate(`/scans/${account.latestScan!.id}`)
                     }
                   >
-                    View Full Scan
+                    View Full Scan Details
                   </Button>
                 </div>
               ) : (
@@ -370,60 +383,59 @@ export function AccountDetail() {
               )}
             </Card>
           </div>
+        </div>
 
-          {/* Recent Findings */}
-          <Card title={scanFailed && account.lastSuccessfulScanId ? 'Recent Findings — Last Successful Scan (Top 5)' : 'Recent Findings (Top 5)'} padding={false}>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+        {/* Recent Findings */}
+        <Card title={scanFailed && account.lastSuccessfulScanId ? 'Recent Findings — Last Successful Scan (Top 5)' : 'Recent Findings (Top 5)'} padding={false}>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  {['Severity', 'Service', 'Title', 'Status'].map((h) => (
+                    <th
+                      key={h}
+                      className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {recentFindings?.data.length === 0 ? (
                   <tr>
-                    {['Severity', 'Service', 'Title', 'Status'].map((h) => (
-                      <th
-                        key={h}
-                        className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
-                      >
-                        {h}
-                      </th>
-                    ))}
+                    <td
+                      colSpan={4}
+                      className="px-4 py-8 text-center text-gray-400 text-sm"
+                    >
+                      No findings in the latest scan.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {recentFindings?.data.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="px-4 py-8 text-center text-gray-400 text-sm"
-                      >
-                        No findings in the latest scan.
+                ) : (
+                  (recentFindings?.data ?? []).map((f: Finding) => (
+                    <tr key={f.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <SeverityBadge severity={f.severity} />
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {f.service}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {f.title}
+                      </td>
+                      <td className="px-4 py-3">
+                        <FindingStatusBadge status={f.findingStatus} />
                       </td>
                     </tr>
-                  ) : (
-                    (recentFindings?.data ?? []).map((f: Finding) => (
-                      <tr key={f.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <SeverityBadge severity={f.severity} />
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">
-                          {f.service}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {f.title}
-                        </td>
-                        <td className="px-4 py-3">
-                          <FindingStatusBadge status={f.findingStatus} />
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-      )}
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
 
-      {activeTab === 'scans' && (
-        <Card padding={false}>
+        {/* Scan History Table */}
+        <Card title="Scan History" padding={false}>
           {scansLoading ? (
             <div className="p-6 space-y-3">
               {[...Array(4)].map((_, i) => (
@@ -508,12 +520,13 @@ export function AccountDetail() {
             </div>
           )}
         </Card>
-      )}
+      </div>
 
-      {activeTab === 'credentials' && (
-        <div className="max-w-2xl space-y-6">
-          {credLoading ? (
-            <div className="animate-pulse space-y-3">
+      {/* Credentials Modal Popup */}
+      <Modal open={credModalOpen} onClose={() => setCredModalOpen(false)} title="Configure AWS Credentials" size="md">
+        <div className="space-y-5">
+          {credsLoading ? (
+            <div className="animate-pulse space-y-3 py-4">
               <div className="h-8 bg-gray-100 rounded" />
               <div className="h-8 bg-gray-100 rounded" />
             </div>
@@ -521,151 +534,128 @@ export function AccountDetail() {
             <>
               {/* Current credential info */}
               {credentials && (
-                <Card title="Current Credentials">
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Method</span>
-                      <span className="text-gray-900 font-medium">
-                        {credentials.authMethod}
-                      </span>
-                    </div>
-                    {credentials.authMethod === 'ACCESS_KEY' && credentials.accessKeyId && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Access Key ID</span>
-                        <span className="font-mono text-gray-900">
-                          {credentials.accessKeyId}
-                        </span>
-                      </div>
-                    )}
-                    {credentials.authMethod === 'ASSUME_ROLE' && credentials.roleArn && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Role ARN</span>
-                        <span className="font-mono text-gray-900 text-xs">
-                          {credentials.roleArn}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Verified</span>
-                      <span>
-                        {credentials.isVerified ? (
-                          <span className="text-green-700 inline-flex items-center gap-1">
-                            <CheckCircle size={12} />
-                            Verified
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">Not verified</span>
-                        )}
-                      </span>
-                    </div>
+                <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3.5 space-y-2 text-xs">
+                  <p className="font-bold text-gray-700 uppercase tracking-wider text-[10px]">Current Status</p>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Auth Method:</span>
+                    <span className="text-gray-900 font-semibold">{credentials.authMethod}</span>
                   </div>
-                </Card>
-              )}
-
-              {/* Update Credentials Form */}
-              <Card title={credentials ? 'Update Credentials' : 'Add Credentials'}>
-                <div className="space-y-4">
-                  {credError && (
-                    <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-                      {credError}
+                  {credentials.authMethod === 'ACCESS_KEY' && credentials.accessKeyId && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Access Key ID:</span>
+                      <span className="font-mono text-gray-900 font-medium">{credentials.accessKeyId}</span>
                     </div>
                   )}
-                  {credSuccess && (
-                    <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
-                      {credSuccess}
-                    </div>
-                  )}
-
-                  <Select
-                    label="Authentication Method"
-                    value={authMethod}
-                    onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
-                    options={AUTH_METHOD_OPTIONS}
-                  />
-
-                  {authMethod === 'ACCESS_KEY' && (
-                    <>
-                      <Input
-                        label="Access Key ID"
-                        value={accessKeyId}
-                        onChange={(e) => setAccessKeyId(e.target.value)}
-                        placeholder="AKIAIOSFODNN7EXAMPLE"
-                      />
-                      <Input
-                        label="Secret Access Key"
-                        type="password"
-                        value={secretAccessKey}
-                        onChange={(e) => setSecretAccessKey(e.target.value)}
-                        placeholder="Enter secret access key"
-                      />
-                    </>
-                  )}
-
-                  {authMethod === 'ASSUME_ROLE' && (
-                    <>
-                      <Input
-                        label="Role ARN"
-                        value={roleArn}
-                        onChange={(e) => setRoleArn(e.target.value)}
-                        placeholder="arn:aws:iam::123456789012:role/ScannerRole"
-                      />
-                      <Input
-                        label="External ID (optional)"
-                        value={externalId}
-                        onChange={(e) => setExternalId(e.target.value)}
-                        placeholder="Optional external ID"
-                      />
-                    </>
-                  )}
-
-                  <div className="flex gap-3 pt-2">
-                    <Button
-                      variant="primary"
-                      loading={saveCreds.isPending}
-                      onClick={() => saveCreds.mutate()}
-                    >
-                      <Shield size={14} />
-                      Save Credentials
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      loading={verifyCreds.isPending}
-                      onClick={() => {
-                        setVerifyResult(null);
-                        verifyCreds.mutate();
-                      }}
-                    >
-                      Verify
-                    </Button>
-                  </div>
-
-                  {verifyResult && (
-                    <div
-                      className={`rounded-lg border px-4 py-3 text-sm ${
-                        verifyResult.success
-                          ? 'bg-green-50 border-green-200 text-green-700'
-                          : 'bg-red-50 border-red-200 text-red-700'
-                      }`}
-                    >
-                      {verifyResult.success ? (
-                        <span className="inline-flex items-center gap-1">
-                          <CheckCircle size={14} />
-                          {verifyResult.message}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1">
-                          <XCircle size={14} />
-                          {verifyResult.message}
-                        </span>
-                      )}
+                  {credentials.authMethod === 'ASSUME_ROLE' && credentials.roleArn && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Role ARN:</span>
+                      <span className="font-mono text-gray-900 font-medium truncate max-w-[240px]">{credentials.roleArn}</span>
                     </div>
                   )}
                 </div>
-              </Card>
+              )}
+
+              {/* Update Credentials Form */}
+              <div className="space-y-4">
+                {credError && (
+                  <div className="rounded-lg bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700">
+                    {credError}
+                  </div>
+                )}
+                {credSuccess && (
+                  <div className="rounded-lg bg-green-50 border border-green-200 px-3.5 py-2.5 text-xs text-green-700">
+                    {credSuccess}
+                  </div>
+                )}
+
+                <Select
+                  label="Authentication Method"
+                  value={authMethod}
+                  onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
+                  options={AUTH_METHOD_OPTIONS}
+                />
+
+                {authMethod === 'ACCESS_KEY' && (
+                  <>
+                    <Input
+                      label="Access Key ID"
+                      value={accessKeyId}
+                      onChange={(e) => setAccessKeyId(e.target.value)}
+                      placeholder="AKIAIOSFODNN7EXAMPLE"
+                    />
+                    <Input
+                      label="Secret Access Key"
+                      type="password"
+                      value={secretAccessKey}
+                      onChange={(e) => setSecretAccessKey(e.target.value)}
+                      placeholder="Enter secret access key"
+                    />
+                  </>
+                )}
+
+                {authMethod === 'ASSUME_ROLE' && (
+                  <>
+                    <Input
+                      label="Role ARN"
+                      value={roleArn}
+                      onChange={(e) => setRoleArn(e.target.value)}
+                      placeholder="arn:aws:iam::123456789012:role/ScannerRole"
+                    />
+                    <Input
+                      label="External ID (optional)"
+                      value={externalId}
+                      onChange={(e) => setExternalId(e.target.value)}
+                      placeholder="Optional external ID"
+                    />
+                  </>
+                )}
+
+                {verifyResult && (
+                  <div
+                    className={`rounded-lg border px-3.5 py-2.5 text-xs ${
+                      verifyResult.success
+                        ? 'bg-green-50 border-green-200 text-green-700'
+                        : 'bg-red-50 border-red-200 text-red-700'
+                    }`}
+                  >
+                    {verifyResult.success ? (
+                      <span className="inline-flex items-center gap-1.5 font-semibold">
+                        <CheckCircle size={14} />
+                        {verifyResult.message}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 font-semibold">
+                        <XCircle size={14} />
+                        {verifyResult.message}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100">
+                  <Button
+                    variant="secondary"
+                    loading={verifyCreds.isPending}
+                    onClick={() => {
+                      setVerifyResult(null);
+                      verifyCreds.mutate();
+                    }}
+                  >
+                    Verify Credentials
+                  </Button>
+                  <Button
+                    variant="primary"
+                    loading={saveCreds.isPending}
+                    onClick={() => saveCreds.mutate()}
+                  >
+                    Save Changes
+                  </Button>
+                </div>
+              </div>
             </>
           )}
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

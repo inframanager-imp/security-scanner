@@ -14,7 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Brain, TrendingUp, AlertOctagon, Globe, Clock, ShieldOff,
   GitBranch, Database, BarChart2, ChevronDown, ChevronRight,
-  RefreshCw, CheckCircle2, XCircle, Flag,
+  RefreshCw, CheckCircle, XCircle, Flag,
 } from 'lucide-react';
 import { anomalyApi, type AnomalyEvent, type AnomalyType, type AnomalySeverity, type AnomalyStatus } from '../api/anomaly';
 import { Card } from './ui/Card';
@@ -170,7 +170,7 @@ function AnomalyRow({ event, onStatusChange }: {
                 onClick={() => onStatusChange(event.id, 'RESOLVED')}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors"
               >
-                <CheckCircle2 size={10} /> Resolve
+                <CheckCircle size={10} /> Resolve
               </button>
             )}
           </div>

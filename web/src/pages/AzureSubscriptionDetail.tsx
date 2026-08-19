@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, CheckCircle, XCircle, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { Play, CheckCircle, XCircle, ArrowLeft, AlertTriangle, Key } from 'lucide-react';
 import { azureApi } from '../api/azure';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
 import { SeverityDonut } from '../components/charts/SeverityDonut';
 import { ScanStatusBadge, SeverityBadge, FindingStatusBadge } from '../components/ui/Badge';
+import { Tooltip } from '../components/ui/Tooltip';
+import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
 import type { AzureAuthMethod, AzureScan, AzureFinding } from '../types';
 import { ApiRequestError } from '../api/client';
 
-type Tab = 'overview' | 'scans' | 'credentials';
+
 
 const AUTH_METHOD_OPTIONS = [
   { value: 'SERVICE_PRINCIPAL', label: 'Service Principal' },
@@ -59,15 +62,14 @@ export function AzureSubscriptionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [activeTab,    setActiveTab]    = useState<Tab>('overview');
-  const [credError,    setCredError]    = useState<string | null>(null);
-  const [credSuccess,  setCredSuccess]  = useState<string | null>(null);
-  const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
-
+  const [credModalOpen, setCredModalOpen] = useState(false);
   const [authMethod,   setAuthMethod]   = useState<AzureAuthMethod>('SERVICE_PRINCIPAL');
   const [tenantId,     setTenantId]     = useState('');
   const [clientId,     setClientId]     = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [credError,    setCredError]    = useState<string | null>(null);
+  const [credSuccess,  setCredSuccess]  = useState<string | null>(null);
+  const [verifyResult, setVerifyResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const { data: sub, isLoading } = useQuery({
     queryKey: ['azure-subscription', id],
@@ -78,7 +80,7 @@ export function AzureSubscriptionDetail() {
   const { data: scansPage, isLoading: scansLoading } = useQuery({
     queryKey: ['azure-scans', { subscriptionId: id }],
     queryFn:  () => azureApi.listScans({ subscriptionId: id, limit: 20 }),
-    enabled:  !!id && activeTab === 'scans',
+    enabled:  !!id,
   });
   const scans: AzureScan[] = scansPage?.data ?? [];
 
@@ -88,7 +90,7 @@ export function AzureSubscriptionDetail() {
   const { data: recentFindings } = useQuery({
     queryKey: ['azure-findings', findingsScanId, 'top5'],
     queryFn:  () => azureApi.getFindings(findingsScanId!, { pageSize: 5, page: 1 }),
-    enabled:  !!findingsScanId && activeTab === 'overview',
+    enabled:  !!findingsScanId,
   });
   const topFindings: AzureFinding[] = recentFindings?.data ?? [];
 
@@ -151,218 +153,232 @@ export function AzureSubscriptionDetail() {
   const realFindings = (summary.critical + summary.high + summary.medium + summary.low);
   const allErrors    = summary.total > 0 && realFindings === 0 && summary.info === summary.total;
 
-  const tabs: { key: Tab; label: string; count?: number }[] = [
-    { key: 'overview',    label: 'Overview' },
-    { key: 'scans',       label: 'Scans' },
-    { key: 'credentials', label: 'Credentials' },
-  ];
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" leftIcon={<ArrowLeft size={16} />} onClick={() => navigate('/cloud')}>
-            Cloud Subscriptions
-          </Button>
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">{sub.name}</h2>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+      {/* Redesigned Header Row matching Compliance details consistency */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-1">
+        
+        {/* Left Section: Back Arrow -> Azure Logo -> Title & Subtitle */}
+        <div className="flex items-center gap-3.5">
+          {/* 1. Back Button */}
+          <Tooltip content="Back to Cloud Subscriptions" position="right">
+            <button
+              onClick={() => navigate('/cloud')}
+              className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-all shrink-0 -ml-1"
+              aria-label="Back to Cloud Subscriptions"
+            >
+              <ArrowLeft size={20} strokeWidth={2.2} />
+            </button>
+          </Tooltip>
+
+          {/* Divider */}
+          <div className="h-8 w-px bg-gray-200/80 shrink-0" />
+
+          {/* 2. Azure Logo */}
+          <div className="flex items-center justify-center p-2 rounded-xl bg-slate-50 border border-slate-200/80 shrink-0 shadow-2xs">
+            <CloudProviderLogo provider="AZURE" className="w-6 h-6 shrink-0" />
+          </div>
+
+          {/* 3 & 4. Subscription Name & Subscription ID Subtitle */}
+          <div className="space-y-0.5">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
+              {sub.name}
+            </h1>
+
+            {/* Subscription Details Row */}
+            <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+              <span className="font-semibold text-gray-400">Subscription ID:</span>
+              <span className="font-mono font-medium text-gray-700 bg-gray-100/90 border border-gray-200 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">
                 {sub.subscriptionId}
               </span>
+              <span className="text-gray-300">•</span>
               {sub.hasCredentials ? (
-                <span className="inline-flex items-center gap-1 text-xs text-green-700">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-full">
                   <CheckCircle size={12} /> Credentials configured
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
                   <XCircle size={12} /> No credentials
                 </span>
               )}
             </div>
           </div>
         </div>
-        <Button
-          variant="primary"
-          leftIcon={<Play size={16} />}
-          loading={triggerScan.isPending}
-          disabled={!sub.hasCredentials}
-          onClick={() => triggerScan.mutate()}
-        >
-          Run Scan
-        </Button>
+
+        {/* Right Section: Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          <Button
+            variant="secondary"
+            leftIcon={<Key size={16} />}
+            onClick={() => setCredModalOpen(true)}
+          >
+            Credentials
+          </Button>
+          <Button
+            variant="primary"
+            leftIcon={<Play size={16} />}
+            loading={triggerScan.isPending}
+            disabled={!sub.hasCredentials}
+            onClick={() => triggerScan.mutate()}
+          >
+            Run Scan
+          </Button>
+        </div>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-6">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.key
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {tab.label}
-              {tab.count != null && tab.count > 0 && (
-                <span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 ${
-                  activeTab === tab.key ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-                }`}>
-                  {tab.count}
-                </span>
+      {/* Main Single Page Layout */}
+      <div className="space-y-6">
+        {/* Failed scan banner */}
+        {scanFailed && (
+          <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-4">
+            <XCircle size={18} className="mt-0.5 shrink-0 text-red-500" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-red-800">Last scan failed</p>
+              <p className="text-sm text-red-700 mt-1">
+                {humanizeAzureError(sub.latestScan?.errorMessage)}
+              </p>
+              {sub.lastSuccessfulScanId && (
+                <p className="text-xs text-red-500 mt-2">
+                  Findings and summary below are from the last successful scan.
+                </p>
               )}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {/* ── Overview tab ── */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Failed scan banner */}
-          {scanFailed && (
-            <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-4">
-              <XCircle size={18} className="mt-0.5 shrink-0 text-red-500" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-red-800">Last scan failed</p>
-                <p className="text-sm text-red-700 mt-1">
-                  {humanizeAzureError(sub.latestScan?.errorMessage)}
-                </p>
-                {sub.lastSuccessfulScanId && (
-                  <p className="text-xs text-red-500 mt-2">
-                    Findings and summary below are from the last successful scan.
-                  </p>
-                )}
-              </div>
-              <Button
-                variant="primary"
-                size="sm"
-                leftIcon={<Play size={13} />}
-                loading={triggerScan.isPending}
-                disabled={!sub.hasCredentials}
-                onClick={() => triggerScan.mutate()}
-              >
-                Retry Scan
-              </Button>
             </div>
-          )}
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<Play size={13} />}
+              loading={triggerScan.isPending}
+              disabled={!sub.hasCredentials}
+              onClick={() => triggerScan.mutate()}
+            >
+              Retry Scan
+            </Button>
+          </div>
+        )}
 
-          {/* All-errors warning banner */}
-          {allErrors && !scanFailed && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4">
-              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-amber-800">Scan completed but no resources were scanned</p>
-                <p className="text-sm text-amber-700 mt-1">
-                  All {summary.total} findings are scanner errors — the service principal likely lacks permission to list resources.
-                  Verify the service principal has the <strong>Reader</strong> role on this subscription.
-                </p>
-              </div>
-              <Button variant="secondary" size="sm" onClick={() => setActiveTab('credentials')}>
-                Check Credentials
-              </Button>
+        {/* All-errors warning banner */}
+        {allErrors && !scanFailed && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-500" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800">Scan completed but no resources were scanned</p>
+              <p className="text-sm text-amber-700 mt-1">
+                All {summary.total} findings are scanner errors — the service principal likely lacks permission to list resources.
+                Verify the service principal has the <strong>Reader</strong> role on this subscription.
+              </p>
             </div>
-          )}
+            <Button variant="secondary" size="sm" onClick={() => setCredModalOpen(true)}>
+              Check Credentials
+            </Button>
+          </div>
+        )}
 
-          <div className="grid grid-cols-3 gap-6">
-            <Card title={scanFailed && sub.lastSuccessfulScanId ? 'Last Successful Scan — Findings' : 'Latest Scan Findings'}>
-              <SeverityDonut summary={summary} />
-            </Card>
+        {/* Top Cards Grid: Asymmetric 60/40 Split (col-span-7 / col-span-5) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Findings & Breakdown (60% width = col-span-7) */}
+          <div className="lg:col-span-7 flex flex-col">
+            <Card title={scanFailed && sub.lastSuccessfulScanId ? 'Last Successful Scan Findings' : 'Findings & Breakdown'}>
+              <div className="flex items-center gap-6 py-1">
+                {/* Left: Donut Chart with bigger size */}
+                <div className="w-[180px] shrink-0 flex items-center justify-center">
+                  <SeverityDonut summary={summary} showLegend={false} size={180} />
+                </div>
 
-            <Card title="Severity Breakdown">
-              <div className="space-y-3">
-                {[
-                  { label: 'Critical', count: summary.critical, color: 'bg-red-600' },
-                  { label: 'High',     count: summary.high,     color: 'bg-orange-500' },
-                  { label: 'Medium',   count: summary.medium,   color: 'bg-yellow-500' },
-                  { label: 'Low',      count: summary.low,      color: 'bg-blue-500'   },
-                  { label: 'Info',     count: summary.info,     color: 'bg-gray-400'   },
-                ].map(item => (
-                  <div key={item.label} className="flex items-center gap-3">
-                    <div className={`h-3 w-3 rounded-full ${item.color}`} />
-                    <span className="flex-1 text-sm text-gray-600">{item.label}</span>
-                    <span className={`text-sm font-bold ${item.count > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
-                      {item.count}
-                    </span>
-                  </div>
-                ))}
-                <div className="border-t pt-2 flex justify-between">
-                  <span className="text-sm font-medium text-gray-600">Total</span>
-                  <span className="text-sm font-bold text-gray-900">{summary.total}</span>
+                {/* Right: Severity Breakdown List */}
+                <div className="flex-1 space-y-2 min-w-0 pr-1">
+                  {[
+                    { label: 'Critical', count: summary.critical, color: 'bg-red-600', textCls: 'text-red-600' },
+                    { label: 'High',     count: summary.high,     color: 'bg-orange-500', textCls: 'text-orange-500' },
+                    { label: 'Medium',   count: summary.medium,   color: 'bg-yellow-500', textCls: 'text-amber-500' },
+                    { label: 'Low',      count: summary.low,      color: 'bg-blue-500', textCls: 'text-blue-600' },
+                    { label: 'Info',     count: summary.info,     color: 'bg-gray-400', textCls: 'text-gray-500' },
+                  ].map((item) => {
+                    const pct = summary.total > 0 ? Math.round((item.count / summary.total) * 100) : 0;
+                    return (
+                      <div key={item.label} className="space-y-0.5">
+                        <div className="flex items-center justify-between text-xs font-medium">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className={`h-2 w-2 rounded-full shrink-0 ${item.color}`} />
+                            <span className="text-gray-700 font-semibold truncate text-[11px]">{item.label}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[10px] text-gray-400 font-normal">{pct}%</span>
+                            <span className={`font-bold tabular-nums text-xs ${item.count > 0 ? item.textCls : 'text-gray-400'}`}>{item.count}</span>
+                          </div>
+                        </div>
+                        <div className="h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                          <div className={`h-full ${item.color} transition-all duration-300`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </Card>
+          </div>
 
+          {/* Scan Info (40% width = col-span-5) */}
+          <div className="lg:col-span-5 flex flex-col">
             <Card title="Latest Scan">
               {sub.latestScan ? (
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-500">Status</span>
-                    <ScanStatusBadge status={sub.latestScan.status} />
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Started</span>
-                    <span className="text-gray-900">{formatDate(sub.latestScan.startedAt)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Duration</span>
-                    <span className={`font-medium ${(sub.latestScan.durationMs ?? 0) < 500 ? 'text-amber-600' : 'text-gray-900'}`}>
-                      {formatDuration(sub.latestScan.durationMs)}
-                    </span>
-                  </div>
-                  {(sub.latestScan.durationMs ?? 0) > 0 && (sub.latestScan.durationMs ?? 0) < 500 && (
-                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                      Very fast scan — likely a permission or credential issue. Check the Credentials tab.
-                    </p>
-                  )}
-                  {scanFailed && sub.latestScan.errorMessage && (
-                    <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2">
-                      <p className="text-xs font-semibold text-red-700 mb-1">Failure reason</p>
-                      <p className="text-xs text-red-600 break-words">
-                        {humanizeAzureError(sub.latestScan.errorMessage)}
-                      </p>
+                <div className="space-y-3.5 text-sm flex-1 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500 font-medium">Status</span>
+                      <ScanStatusBadge status={sub.latestScan.status} />
                     </div>
-                  )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500 font-medium">Started</span>
+                      <span className="text-gray-900 font-semibold">{formatDate(sub.latestScan.startedAt)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500 font-medium">Duration</span>
+                      <span className={`font-semibold ${(sub.latestScan.durationMs ?? 0) < 500 ? 'text-amber-600' : 'text-gray-900'}`}>
+                        {formatDuration(sub.latestScan.durationMs)}
+                      </span>
+                    </div>
+                    {(sub.latestScan.durationMs ?? 0) > 0 && (sub.latestScan.durationMs ?? 0) < 500 && (
+                      <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                        Very fast scan — likely a permission issue.
+                      </p>
+                    )}
+                    {scanFailed && sub.latestScan.errorMessage && (
+                      <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2">
+                        <p className="text-xs font-semibold text-red-700 mb-1">Failure reason</p>
+                        <p className="text-xs text-red-600 break-words">
+                          {humanizeAzureError(sub.latestScan.errorMessage)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <p className="text-sm text-gray-500">No scans yet.</p>
               )}
             </Card>
           </div>
-
-          {/* Recent findings — only show non-INFO in overview */}
-          {topFindings.filter(f => f.severity !== 'INFO').length > 0 && (
-            <Card title="Recent Findings (Top 5)">
-              <div className="divide-y divide-gray-100">
-                {topFindings.filter(f => f.severity !== 'INFO').map(f => (
-                  <div key={f.id} className="py-3 flex items-start gap-3">
-                    <SeverityBadge severity={f.severity} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{f.title}</p>
-                      <p className="text-xs text-gray-500">{f.service} {f.resourceGroup ? `· ${f.resourceGroup}` : ''}</p>
-                    </div>
-                    <FindingStatusBadge status={f.findingStatus} />
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 pt-4 border-t">
-                <Button variant="secondary" size="sm" onClick={() => setActiveTab('scans')}>
-                  View all scans
-                </Button>
-              </div>
-            </Card>
-          )}
-
         </div>
-      )}
 
-      {/* ── Scans tab ── */}
-      {activeTab === 'scans' && (
-        <Card padding={false}>
+        {/* Recent findings */}
+        {topFindings.filter(f => f.severity !== 'INFO').length > 0 && (
+          <Card title="Recent Findings (Top 5)">
+            <div className="divide-y divide-gray-100">
+              {topFindings.filter(f => f.severity !== 'INFO').map(f => (
+                <div key={f.id} className="py-3 flex items-start gap-3">
+                  <SeverityBadge severity={f.severity} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{f.title}</p>
+                    <p className="text-xs text-gray-500">{f.service} {f.resourceGroup ? `· ${f.resourceGroup}` : ''}</p>
+                  </div>
+                  <FindingStatusBadge status={f.findingStatus} />
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Scan History Table */}
+        <Card title="Scan History" padding={false}>
           {scansLoading ? (
             <div className="flex items-center justify-center h-32">
               <div className="animate-spin rounded-full h-7 w-7 border-2 border-blue-600 border-t-transparent" />
@@ -421,97 +437,95 @@ export function AzureSubscriptionDetail() {
             </table>
           )}
         </Card>
-      )}
+      </div>
 
-      {/* ── Credentials tab ── */}
-      {activeTab === 'credentials' && (
-        <Card title="Azure Credentials">
-          <div className="space-y-5 max-w-lg">
-            <div className="rounded-md bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
-              <p className="font-semibold mb-1">Required permissions</p>
-              <p className="text-xs text-blue-700">
-                The service principal needs at minimum the <strong>Reader</strong> role on the subscription.
-                For full security scanning, also assign: <strong>Security Reader</strong>, <strong>Key Vault Reader</strong>.
-              </p>
-            </div>
-
-            {credError && (
-              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-                {credError}
-              </div>
-            )}
-            {credSuccess && (
-              <div className="rounded-md bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">
-                {credSuccess}
-              </div>
-            )}
-            {verifyResult && (
-              <div className={`rounded-md border px-3 py-2 text-sm ${
-                verifyResult.success
-                  ? 'bg-green-50 border-green-200 text-green-700'
-                  : 'bg-red-50 border-red-200 text-red-700'
-              }`}>
-                {verifyResult.message}
-              </div>
-            )}
-
-            <Select
-              label="Authentication Method"
-              value={authMethod}
-              onChange={e => setAuthMethod(e.target.value as AzureAuthMethod)}
-              options={AUTH_METHOD_OPTIONS}
-            />
-
-            {authMethod === 'SERVICE_PRINCIPAL' && (
-              <>
-                <Input
-                  label="Tenant ID"
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={tenantId}
-                  onChange={e => setTenantId(e.target.value)}
-                />
-                <Input
-                  label="Client ID (Application ID)"
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={clientId}
-                  onChange={e => setClientId(e.target.value)}
-                />
-                <Input
-                  label="Client Secret"
-                  type="password"
-                  placeholder="••••••••••••••••"
-                  value={clientSecret}
-                  onChange={e => setClientSecret(e.target.value)}
-                />
-              </>
-            )}
-
-            {authMethod === 'MANAGED_IDENTITY' && (
-              <p className="text-sm text-gray-500 bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
-                Managed Identity uses the identity of the Azure VM or service running this scanner. No additional credentials are needed.
-              </p>
-            )}
-
-            <div className="flex gap-3 pt-2">
-              <Button
-                variant="primary"
-                loading={saveCreds.isPending}
-                onClick={() => saveCreds.mutate()}
-              >
-                Save Credentials
-              </Button>
-              <Button
-                variant="secondary"
-                loading={verifyCreds.isPending}
-                disabled={!sub.hasCredentials}
-                onClick={() => { setVerifyResult(null); verifyCreds.mutate(); }}
-              >
-                Verify
-              </Button>
-            </div>
+      {/* Credentials Modal Popup */}
+      <Modal open={credModalOpen} onClose={() => setCredModalOpen(false)} title="Configure Azure Credentials" size="md">
+        <div className="space-y-5">
+          <div className="rounded-xl bg-blue-50/80 border border-blue-200/90 p-3.5 text-xs text-blue-900">
+            <p className="font-bold mb-1">Required Permissions</p>
+            <p className="text-[11px] text-blue-700 leading-relaxed">
+              The service principal needs at minimum the <strong>Reader</strong> role on the subscription.
+              For full security scanning, also assign: <strong>Security Reader</strong>, <strong>Key Vault Reader</strong>.
+            </p>
           </div>
-        </Card>
-      )}
+
+          {credError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3.5 py-2.5 text-xs text-red-700">
+              {credError}
+            </div>
+          )}
+          {credSuccess && (
+            <div className="rounded-lg bg-green-50 border border-green-200 px-3.5 py-2.5 text-xs text-green-700">
+              {credSuccess}
+            </div>
+          )}
+          {verifyResult && (
+            <div className={`rounded-lg border px-3.5 py-2.5 text-xs ${
+              verifyResult.success
+                ? 'bg-green-50 border-green-200 text-green-700 font-semibold'
+                : 'bg-red-50 border-red-200 text-red-700 font-semibold'
+            }`}>
+              {verifyResult.message}
+            </div>
+          )}
+
+          <Select
+            label="Authentication Method"
+            value={authMethod}
+            onChange={e => setAuthMethod(e.target.value as AzureAuthMethod)}
+            options={AUTH_METHOD_OPTIONS}
+          />
+
+          {authMethod === 'SERVICE_PRINCIPAL' && (
+            <>
+              <Input
+                label="Tenant ID"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                value={tenantId}
+                onChange={e => setTenantId(e.target.value)}
+              />
+              <Input
+                label="Client ID (Application ID)"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                value={clientId}
+                onChange={e => setClientId(e.target.value)}
+              />
+              <Input
+                label="Client Secret"
+                type="password"
+                placeholder="••••••••••••••••"
+                value={clientSecret}
+                onChange={e => setClientSecret(e.target.value)}
+              />
+            </>
+          )}
+
+          {authMethod === 'MANAGED_IDENTITY' && (
+            <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-xl p-3">
+              Managed Identity uses the identity of the Azure VM or service running this scanner. No additional credentials are needed.
+            </p>
+          )}
+
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100">
+            <Button
+              variant="secondary"
+              loading={verifyCreds.isPending}
+              disabled={!sub.hasCredentials}
+              onClick={() => { setVerifyResult(null); verifyCreds.mutate(); }}
+            >
+              Verify Credentials
+            </Button>
+            <Button
+              variant="primary"
+              loading={saveCreds.isPending}
+              onClick={() => saveCreds.mutate()}
+            >
+              Save Changes
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

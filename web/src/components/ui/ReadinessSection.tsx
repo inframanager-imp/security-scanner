@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, XCircle, MinusCircle, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { CheckCircle, AlertCircle, HelpCircle, ChevronDown, ChevronRight, X } from 'lucide-react';
 import {
   complianceApi,
   type FrameworkScore,
@@ -57,10 +57,10 @@ function ControlRow({ ctrl }: { ctrl: ControlResult | AzureControlResult }) {
         onClick={() => setOpen((v) => !v)}
       >
         {ctrl.status === 'PASS'
-          ? <CheckCircle2 size={15} className="text-emerald-500 mt-0.5 shrink-0" />
+          ? <CheckCircle size={15} className="text-emerald-500 mt-0.5 shrink-0" />
           : ctrl.status === 'FAIL'
-          ? <XCircle      size={15} className="text-red-500    mt-0.5 shrink-0" />
-          : <MinusCircle  size={15} className="text-gray-300   mt-0.5 shrink-0" />
+          ? <AlertCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+          : <HelpCircle  size={15} className="text-amber-500 mt-0.5 shrink-0" />
         }
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">

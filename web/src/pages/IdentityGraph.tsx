@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Users, AlertTriangle, Eye, CheckCircle2, Network, Filter } from 'lucide-react';
+import { Users, AlertTriangle, Eye, CheckCircle, Network, Filter } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { accountsApi } from '../api/accounts';
@@ -290,7 +290,7 @@ export function IdentityGraph() {
                             variant="ghost"
                             onClick={() => updateMutation.mutate({ id: p.id, status: 'RESOLVED' })}
                           >
-                            <CheckCircle2 size={12} /> Resolve
+                            <CheckCircle size={12} /> Resolve
                           </Button>
                         )}
                       </div>

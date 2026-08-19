@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   AlertTriangle,
-  CheckCircle2,
+  CheckCircle,
   XCircle,
   ChevronDown,
   ChevronRight,
@@ -229,7 +229,7 @@ function RepoSection({ repoName, findings, onStatusChange, updatingId }: RepoSec
           )}
           {counts.critical === 0 && counts.high === 0 && (
             <span className="flex items-center gap-1 text-xs text-green-600">
-              <CheckCircle2 size={13} /> No Critical/High
+              <CheckCircle size={13} /> No Critical/High
             </span>
           )}
         </div>

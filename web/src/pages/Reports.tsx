@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Eye, FileText, Trash2, CheckCircle2, AlertCircle, FileBarChart } from 'lucide-react';
+import { Eye, FileText, Trash2, CheckCircle, AlertCircle, FileBarChart } from 'lucide-react';
 import { api } from '../api/client';
 import { accountsApi } from '../api/accounts';
 import { azureApi } from '../api/azure';
@@ -197,7 +197,7 @@ export function Reports() {
             </Button>
             {dedupeResult && (
               <div className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-full ${dedupeResult.deleted > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                {dedupeResult.deleted > 0 ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+                {dedupeResult.deleted > 0 ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
                 {dedupeResult.message}
               </div>
             )}
