@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, CheckCircle, XCircle, ArrowLeft, FileBarChart, Key } from 'lucide-react';
+import { Play, CheckCircle, XCircle, ArrowLeft, FileBarChart, Key, ChevronRight } from 'lucide-react';
 import { gcpApi } from '../api/gcp';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -265,12 +265,12 @@ export function GcpProjectDetail() {
           </div>
         )}
 
-        {/* Top Cards Grid: Asymmetric 60/40 Split (col-span-7 / col-span-5) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Top Cards Grid: Asymmetric 60/40 Split (col-span-7 / col-span-5) with 100% Equal Height */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
           {/* Findings & Breakdown (60% width = col-span-7) */}
           <div className="lg:col-span-7 flex flex-col">
-            <Card title={scanFailed && project.lastSuccessfulScanId ? 'Last Successful Scan Findings' : 'Findings & Breakdown'}>
-              <div className="flex items-center gap-6 py-1">
+            <Card title={scanFailed && project.lastSuccessfulScanId ? 'Last Successful Scan Findings' : 'Findings & Breakdown'} className="h-full">
+              <div className="flex items-center gap-6 py-1 my-auto">
                 {/* Left: Donut Chart with bigger size */}
                 <div className="w-[180px] shrink-0 flex items-center justify-center">
                   <SeverityDonut summary={summary} showLegend={false} size={180} />
@@ -311,10 +311,10 @@ export function GcpProjectDetail() {
 
           {/* Scan info (40% width = col-span-5) */}
           <div className="lg:col-span-5 flex flex-col">
-            <Card title="Latest Scan">
+            <Card title="Latest Scan" className="h-full">
               {project.latestScan ? (
                 <div className="space-y-3.5 text-sm flex-1 flex flex-col justify-between">
-                  <div className="space-y-3">
+                  <div className="space-y-3.5 my-auto">
                     <div className="flex justify-between items-center">
                       <span className="text-gray-500 font-medium">Status</span>
                       <ScanStatusBadge status={project.latestScan.status} />
@@ -346,20 +346,40 @@ export function GcpProjectDetail() {
 
         {/* Recent findings */}
         {findings.length > 0 && (
-          <Card title="Recent Findings (Top 5)">
-            <div className="divide-y divide-gray-100">
-              {findings.map(f => (
-                <div key={f.id} className="py-3 flex items-start gap-3">
-                  <SeverityBadge severity={f.severity} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{f.title}</p>
-                    <p className="text-xs text-gray-500">
-                      {f.service}{f.resourceName ? ` · ${f.resourceName}` : ''}{f.region ? ` · ${f.region}` : ''}
-                    </p>
-                  </div>
-                  <FindingStatusBadge status={f.findingStatus} />
-                </div>
-              ))}
+          <Card title="Recent Findings (Top 5)" padding={false}>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200/80">
+                <thead className="bg-slate-50/80">
+                  <tr>
+                    {['Severity', 'Service', 'Title', 'Status'].map((h) => (
+                      <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {findings.map(f => (
+                    <tr key={f.id} className="hover:bg-gray-50/80 transition-colors cursor-pointer" onClick={() => navigate(`/scans/${f.scanId}`)}>
+                      <td className="px-5 py-3.5">
+                        <SeverityBadge severity={f.severity} />
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="font-mono text-xs font-semibold text-gray-700 bg-slate-100/90 border border-slate-200/80 px-2 py-0.5 rounded-md shadow-2xs">
+                          {f.service}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-xs font-semibold text-gray-900 hover:text-blue-600 transition-colors">
+                        {f.title}
+                        {f.resourceName && <span className="ml-2 font-normal text-gray-400">({f.resourceName})</span>}
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <FindingStatusBadge status={f.findingStatus} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </Card>
         )}
@@ -373,36 +393,60 @@ export function GcpProjectDetail() {
           ) : scans.length === 0 ? (
             <div className="py-16 text-center text-gray-500 text-sm">No scans yet.</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Started</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Duration</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Findings</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Services</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {scans.map(scan => (
-                  <tr key={scan.id} className={scan.status === 'FAILED' ? 'bg-red-50' : 'hover:bg-gray-50'}>
-                    <td className="px-6 py-4"><ScanStatusBadge status={scan.status} /></td>
-                    <td className="px-6 py-4 text-gray-700">{formatDate(scan.startedAt ?? scan.createdAt)}</td>
-                    <td className="px-6 py-4 text-gray-700">{formatDuration(scan.durationMs)}</td>
-                    <td className="px-6 py-4">
-                      {scan.status === 'FAILED' ? (
-                        <span className="text-xs text-red-600">{humanizeGcpError(scan.errorMessage)}</span>
-                      ) : scan.summary ? (
-                        <span className="text-gray-700">{scan.summary.total} total</span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-gray-500 text-xs">{scan.services.join(', ')}</td>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200/80">
+                <thead className="bg-slate-50/80">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Started</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Duration</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Findings</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Services</th>
+                    <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide"></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {scans.map(scan => (
+                    <tr
+                      key={scan.id}
+                      className={`cursor-pointer transition-colors ${scan.status === 'FAILED' ? 'bg-red-50/50' : 'hover:bg-gray-50/80'}`}
+                      onClick={() => navigate(`/scans/${scan.id}`)}
+                    >
+                      <td className="px-5 py-3.5"><ScanStatusBadge status={scan.status} /></td>
+                      <td className="px-5 py-3.5 text-xs font-medium text-gray-700 whitespace-nowrap">{formatDate(scan.startedAt ?? scan.createdAt)}</td>
+                      <td className="px-5 py-3.5 text-xs text-gray-600 font-mono whitespace-nowrap">{formatDuration(scan.durationMs)}</td>
+                      <td className="px-5 py-3.5 text-xs">
+                        {scan.status === 'FAILED' ? (
+                          <span className="text-xs text-red-600 font-medium">{humanizeGcpError(scan.errorMessage)}</span>
+                        ) : scan.summary ? (
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold tabular-nums">
+                            <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200/80">C:{scan.summary.critical}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200/80">H:{scan.summary.high}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200/80">M:{scan.summary.medium}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200/80">L:{scan.summary.low}</span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3.5 text-gray-500 text-xs max-w-xs truncate">{scan.services.join(', ')}</td>
+                      <td className="px-5 py-3.5 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/scans/${scan.id}`);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50/90 border border-blue-200/80 rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 shadow-2xs hover:shadow-xs transition-all duration-200 group cursor-pointer"
+                        >
+                          <span>Detail</span>
+                          <ChevronRight size={13} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Card>
       </div>

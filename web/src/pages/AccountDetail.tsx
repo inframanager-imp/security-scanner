@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, CheckCircle, XCircle, ArrowLeft, Key } from 'lucide-react';
+import { Play, CheckCircle, XCircle, ArrowLeft, Key, ChevronRight } from 'lucide-react';
 import { accountsApi } from '../api/accounts';
 import { scansApi } from '../api/scans';
 import { Button } from '../components/ui/Button';
@@ -292,12 +292,12 @@ export function AccountDetail() {
           </div>
         )}
 
-        {/* Top Cards Grid: Asymmetric 60/40 Split (col-span-7 / col-span-5) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Top Cards Grid: Asymmetric 60/40 Split (col-span-7 / col-span-5) with 100% Equal Height */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
           {/* Findings & Breakdown (60% width = col-span-7) */}
           <div className="lg:col-span-7 flex flex-col">
-            <Card title={scanFailed && account.lastSuccessfulScanId ? 'Last Successful Scan Findings' : 'Findings & Breakdown'}>
-              <div className="flex items-center gap-6 py-1">
+            <Card title={scanFailed && account.lastSuccessfulScanId ? 'Last Successful Scan Findings' : 'Findings & Breakdown'} className="h-full">
+              <div className="flex items-center gap-6 py-1 my-auto">
                 {/* Left: Donut Chart with bigger size */}
                 <div className="w-[180px] shrink-0 flex items-center justify-center">
                   <SeverityDonut summary={summary} showLegend={false} size={180} />
@@ -338,10 +338,10 @@ export function AccountDetail() {
 
           {/* Scan Info (40% width = col-span-5) */}
           <div className="lg:col-span-5 flex flex-col">
-            <Card title="Latest Scan">
+            <Card title="Latest Scan" className="h-full">
               {account.latestScan ? (
                 <div className="space-y-3.5 text-sm flex-1 flex flex-col justify-between">
-                  <div className="space-y-3">
+                  <div className="space-y-3.5 my-auto">
                     <div className="flex justify-between items-center">
                       <span className="text-gray-500 font-medium">Status</span>
                       <ScanStatusBadge status={account.latestScan.status} />
@@ -370,7 +370,7 @@ export function AccountDetail() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="w-full mt-3"
+                    className="w-full mt-auto"
                     onClick={() =>
                       navigate(`/scans/${account.latestScan!.id}`)
                     }
@@ -388,42 +388,48 @@ export function AccountDetail() {
         {/* Recent Findings */}
         <Card title={scanFailed && account.lastSuccessfulScanId ? 'Recent Findings — Last Successful Scan (Top 5)' : 'Recent Findings (Top 5)'} padding={false}>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200/80">
+              <thead className="bg-slate-50/80">
                 <tr>
                   {['Severity', 'Service', 'Title', 'Status'].map((h) => (
                     <th
                       key={h}
-                      className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
+                      className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"
                     >
                       {h}
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-gray-100">
                 {recentFindings?.data.length === 0 ? (
                   <tr>
                     <td
                       colSpan={4}
-                      className="px-4 py-8 text-center text-gray-400 text-sm"
+                      className="px-5 py-8 text-center text-gray-400 text-sm font-medium"
                     >
                       No findings in the latest scan.
                     </td>
                   </tr>
                 ) : (
                   (recentFindings?.data ?? []).map((f: Finding) => (
-                    <tr key={f.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
+                    <tr
+                      key={f.id}
+                      className="hover:bg-gray-50/80 transition-colors cursor-pointer"
+                      onClick={() => navigate(`/scans/${f.scanId}`)}
+                    >
+                      <td className="px-5 py-3.5">
                         <SeverityBadge severity={f.severity} />
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">
-                        {f.service}
+                      <td className="px-5 py-3.5">
+                        <span className="font-mono text-xs font-semibold text-gray-700 bg-slate-100/90 border border-slate-200/80 px-2 py-0.5 rounded-md shadow-2xs">
+                          {f.service}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-900">
+                      <td className="px-5 py-3.5 text-xs font-semibold text-gray-900 hover:text-blue-600 transition-colors">
                         {f.title}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-5 py-3.5">
                         <FindingStatusBadge status={f.findingStatus} />
                       </td>
                     </tr>
@@ -448,14 +454,14 @@ export function AccountDetail() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+              <table className="min-w-full divide-y divide-gray-200/80">
+                <thead className="bg-slate-50/80">
                   <tr>
                     {['Scan ID', 'Status', 'Started', 'Duration', 'Findings', ''].map(
                       (h) => (
                         <th
                           key={h}
-                          className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider"
+                          className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"
                         >
                           {h}
                         </th>
@@ -463,55 +469,69 @@ export function AccountDetail() {
                     )}
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-white divide-y divide-gray-100">
                   {scans.map((scan: Scan) => (
                     <tr
                       key={scan.id}
-                      className={`cursor-pointer ${scan.status === 'FAILED' ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}
+                      className={`cursor-pointer transition-colors ${
+                        scan.status === 'FAILED'
+                          ? 'bg-red-50/50 hover:bg-red-100/60'
+                          : 'hover:bg-gray-50/80'
+                      }`}
                       onClick={() => navigate(`/scans/${scan.id}`)}
                     >
-                      <td className="px-4 py-3 text-sm font-mono text-gray-600">
-                        {scan.id.slice(0, 8)}...
+                      <td className="px-5 py-3.5">
+                        <span className="font-mono text-xs font-semibold text-gray-700 bg-gray-100/90 border border-gray-200/80 px-2 py-0.5 rounded-md shadow-2xs">
+                          {scan.id.slice(0, 8)}...
+                        </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-5 py-3.5">
                         <ScanStatusBadge status={scan.status} />
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
+                      <td className="px-5 py-3.5 text-xs font-medium text-gray-700 whitespace-nowrap">
                         {formatDate(scan.startedAt ?? scan.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
+                      <td className="px-5 py-3.5 text-xs text-gray-600 font-mono whitespace-nowrap">
                         {formatDuration(scan.durationMs)}
                       </td>
-                      <td className="px-4 py-3 text-sm">
+                      <td className="px-5 py-3.5 text-xs">
                         {scan.status === 'FAILED' ? (
                           <span
-                            className="text-xs text-red-600 max-w-xs truncate block"
+                            className="text-xs text-red-600 font-medium max-w-xs truncate block"
                             title={humanizeScanError(scan.errorMessage)}
                           >
                             {humanizeScanError(scan.errorMessage)}
                           </span>
                         ) : scan.summary ? (
-                          <div className="flex gap-2 text-xs font-semibold">
-                            <span className="text-red-600">C:{scan.summary.critical}</span>
-                            <span className="text-orange-500">H:{scan.summary.high}</span>
-                            <span className="text-yellow-500">M:{scan.summary.medium}</span>
-                            <span className="text-blue-500">L:{scan.summary.low}</span>
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold tabular-nums">
+                            <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200/80">
+                              C:{scan.summary.critical}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-200/80">
+                              H:{scan.summary.high}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200/80">
+                              M:{scan.summary.medium}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200/80">
+                              L:{scan.summary.low}
+                            </span>
                           </div>
                         ) : (
                           <span className="text-gray-400 text-xs">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
+                      <td className="px-5 py-3.5 text-right">
+                        <button
                           onClick={(e) => {
                             e.stopPropagation();
                             navigate(`/scans/${scan.id}`);
                           }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50/90 border border-blue-200/80 rounded-lg hover:bg-blue-600 hover:text-white hover:border-blue-600 shadow-2xs hover:shadow-xs transition-all duration-200 group cursor-pointer"
                         >
-                          View
-                        </Button>
+                          <span>Detail</span>
+                          <ChevronRight size={13} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+                        </button>
                       </td>
                     </tr>
                   ))}
