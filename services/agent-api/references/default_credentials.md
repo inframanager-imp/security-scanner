@@ -240,7 +240,7 @@ The `default_credentials` tag is reserved for reachable username/password login 
 **VULN (Python)** — hardcoded API key and DB password:
 
 ```python
-API_KEY = "sk-EXAMPLEFAKEKEY1234567890ABCDEF"
+API_KEY = "sk-<REDACTED_EXAMPLE_KEY>"
 db_url = "postgresql://admin:SuperSecret123@db.internal/app"
 ```
 
