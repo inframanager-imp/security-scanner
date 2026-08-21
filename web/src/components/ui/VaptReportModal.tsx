@@ -5,6 +5,28 @@ import { reportsApi, type ReportProvider } from '../../api/reports';
 import { Modal } from './Modal';
 import { Button } from './Button';
 import { MultiSelect } from './MultiSelect';
+import { Select } from './Select';
+
+const AWS_FRAMEWORKS = [
+  { value: '', label: 'All Frameworks (Full Report)' },
+  { value: 'PCI_DSS', label: 'PCI DSS' },
+  { value: 'SOC2', label: 'SOC 2' },
+  { value: 'ISO27001', label: 'ISO 27001' },
+  { value: 'HIPAA', label: 'HIPAA' },
+  { value: 'CIS_AWS', label: 'CIS AWS Foundations' },
+  { value: 'NIST_800_53', label: 'NIST 800-53' },
+  { value: 'GDPR', label: 'GDPR' },
+  { value: 'FEDRAMP', label: 'FedRAMP' },
+];
+
+const AZURE_FRAMEWORKS = [
+  { value: '', label: 'All Frameworks (Full Report)' },
+  { value: 'CIS_AZURE', label: 'CIS Microsoft Azure Foundations' },
+  { value: 'NIST', label: 'NIST' },
+  { value: 'ISO27001', label: 'ISO 27001' },
+  { value: 'SOC2', label: 'SOC 2' },
+  { value: 'HIPAA', label: 'HIPAA' },
+];
 
 interface VaptReportModalProps {
   open:       boolean;
@@ -25,6 +47,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
   const [tags, setTags]                     = useState<string[]>([]);
   const [regions, setRegions]               = useState<string[]>([]);
   const [resourceGroups, setResourceGroups] = useState<string[]>([]);
+  const [framework, setFramework]           = useState<string>('');
   const [generating, setGenerating]         = useState(false);
   const [error, setError]                   = useState<string | null>(null);
 
@@ -34,6 +57,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
       setTags([]);
       setRegions([]);
       setResourceGroups([]);
+      setFramework('');
       setError(null);
     }
   }, [open, targetId]);
@@ -56,6 +80,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
         tags:          tags.length ? tags : undefined,
         region:        regions.length ? regions : undefined,
         resourceGroup: resourceGroups.length ? resourceGroups : undefined,
+        framework:     framework ? framework : undefined,
       });
       onClose();
     } catch (err) {
@@ -65,7 +90,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
     }
   };
 
-  const activeFilterCount = tags.length + regions.length + resourceGroups.length;
+  const activeFilterCount = tags.length + regions.length + resourceGroups.length + (framework ? 1 : 0);
 
   return (
     <Modal
@@ -73,6 +98,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
       onClose={onClose}
       title="Generate VAPT Report"
       size="sm"
+      contentClassName="!overflow-visible"
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
@@ -88,50 +114,62 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
         </>
       }
     >
-      <div className="space-y-4">
-        <p className="text-sm text-gray-500">
-          <span className="font-medium text-gray-700">{targetName}</span> — optionally narrow the
+      <div className="space-y-5">
+        <p className="text-sm text-slate-600 leading-relaxed">
+          <span className="font-semibold text-slate-900">{targetName}</span> — optionally narrow the
           report to specific tags{provider === 'AWS' && ', regions'}{provider === 'AZURE' && ', resource groups'}.
           Leave everything unselected for the full report.
         </p>
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-6 text-sm text-gray-400">Loading filter options…</div>
+          <div className="flex items-center justify-center py-8 text-sm text-slate-400 font-medium bg-slate-50 rounded-xl border border-slate-100/50">Loading filter options…</div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+            {provider !== 'GCP' && (
+              <div>
+                <label className="block text-xs font-semibold tracking-wide text-slate-700 uppercase mb-1.5">Compliance Framework</label>
+                <Select
+                  value={framework}
+                  onChange={(e) => setFramework(e.target.value)}
+                  options={provider === 'AWS' ? AWS_FRAMEWORKS : AZURE_FRAMEWORKS}
+                  className="w-full text-sm"
+                />
+              </div>
+            )}
+            
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Tags</label>
+              <label className="block text-xs font-semibold tracking-wide text-slate-700 uppercase mb-1.5">Tags</label>
               <MultiSelect
                 options={tagOptions}
                 value={tags}
                 onChange={setTags}
-                placeholder={tagOptions.length ? 'All tags' : 'No tagged findings'}
+                placeholder={tagOptions.length ? 'Select tags...' : 'No tagged findings'}
               />
             </div>
 
             {provider === 'AWS' && (
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
+                <label className="block text-xs font-semibold tracking-wide text-slate-700 uppercase mb-1.5 flex items-baseline gap-1.5">
                   Region
-                  <span className="ml-1 font-normal text-gray-400">(best-effort — not every finding records a region)</span>
+                  <span className="font-medium text-slate-400 normal-case tracking-normal">(not all findings have regions)</span>
                 </label>
                 <MultiSelect
                   options={regionOptions}
                   value={regions}
                   onChange={setRegions}
-                  placeholder={regionOptions.length ? 'All regions' : 'No region data recorded'}
+                  placeholder={regionOptions.length ? 'Select regions...' : 'No region data recorded'}
                 />
               </div>
             )}
 
             {provider === 'AZURE' && (
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Resource Group</label>
+                <label className="block text-xs font-semibold tracking-wide text-slate-700 uppercase mb-1.5">Resource Group</label>
                 <MultiSelect
                   options={rgOptions}
                   value={resourceGroups}
                   onChange={setResourceGroups}
-                  placeholder={rgOptions.length ? 'All resource groups' : 'No resource group data recorded'}
+                  placeholder={rgOptions.length ? 'Select resource groups...' : 'No resource group data recorded'}
                 />
               </div>
             )}
@@ -139,7 +177,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
         )}
 
         {error && (
-          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
+          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3 shadow-sm">{error}</p>
         )}
       </div>
     </Modal>

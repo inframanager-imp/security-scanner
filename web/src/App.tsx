@@ -6,7 +6,6 @@ import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { AccountDetail } from './pages/AccountDetail';
 import { ScanDetail } from './pages/ScanDetail';
-import { Reports } from './pages/Reports';
 import { AccountReport } from './pages/AccountReport';
 import { CloudTrailLogs } from './pages/CloudTrailLogs';
 import { Compliance } from './pages/Compliance';

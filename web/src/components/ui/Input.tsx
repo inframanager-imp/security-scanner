@@ -38,8 +38,8 @@ export function Input({
         <input
           id={inputId}
           className={clsx(
-            'block w-full rounded-md border-gray-300 shadow-sm',
-            'focus:border-blue-500 focus:ring-blue-500 sm:text-sm',
+            'block w-full rounded-lg border-gray-300/90 bg-white text-xs sm:text-sm text-gray-700 shadow-2xs py-2 px-3',
+            'hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all',
             error && 'border-red-300 focus:border-red-500 focus:ring-red-500',
             props.disabled && 'bg-gray-50 text-gray-500 cursor-not-allowed',
             leftIcon && 'pl-9',

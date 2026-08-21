@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle, AlertCircle, HelpCircle, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { CheckCircle, AlertCircle, HelpCircle, ChevronDown, ChevronRight, X, ShieldCheck } from 'lucide-react';
+import clsx from 'clsx';
 import {
   complianceApi,
   type FrameworkScore,
@@ -13,8 +14,8 @@ import {
 
 // ─── Circular SVG gauge ───────────────────────────────────────────────────────
 
-const SIZE   = 110;
-const RADIUS = 44;
+const SIZE   = 68;
+const RADIUS = 26;
 const CIRC   = 2 * Math.PI * RADIUS;
 
 function gaugeColor(score: number): string {
@@ -30,16 +31,17 @@ function CircularGauge({ score }: { score: number }) {
     <div className="relative inline-flex items-center justify-center">
       <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
         {/* track */}
-        <circle cx={SIZE/2} cy={SIZE/2} r={RADIUS} fill="none" stroke="#e5e7eb" strokeWidth={9} />
+        <circle cx={SIZE/2} cy={SIZE/2} r={RADIUS} fill="none" stroke="#f1f5f9" strokeWidth={6} />
         {/* progress */}
         <circle
           cx={SIZE/2} cy={SIZE/2} r={RADIUS} fill="none"
-          stroke={color} strokeWidth={9}
+          stroke={color} strokeWidth={6}
           strokeDasharray={CIRC} strokeDashoffset={offset}
           strokeLinecap="round" transform={`rotate(-90 ${SIZE/2} ${SIZE/2})`}
+          className="transition-all duration-500 ease-out"
         />
       </svg>
-      <span className="absolute text-base font-bold tabular-nums" style={{ color }}>
+      <span className="absolute text-xs font-extrabold tabular-nums tracking-tight" style={{ color }}>
         {score}%
       </span>
     </div>
@@ -50,52 +52,70 @@ function CircularGauge({ score }: { score: number }) {
 
 function ControlRow({ ctrl }: { ctrl: ControlResult | AzureControlResult }) {
   const [open, setOpen] = useState(false);
+  const isPass = ctrl.status === 'PASS';
+  const isFail = ctrl.status === 'FAIL';
+
   return (
-    <div className="border border-gray-100 rounded-lg overflow-hidden">
+    <div className="border border-gray-200/80 rounded-xl overflow-hidden bg-white hover:border-gray-300 transition-all shadow-2xs">
       <button
-        className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/70 transition-colors"
         onClick={() => setOpen((v) => !v)}
       >
-        {ctrl.status === 'PASS'
-          ? <CheckCircle size={15} className="text-emerald-500 mt-0.5 shrink-0" />
-          : ctrl.status === 'FAIL'
-          ? <AlertCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
-          : <HelpCircle  size={15} className="text-amber-500 mt-0.5 shrink-0" />
-        }
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-mono text-gray-400">{ctrl.id}</span>
-            <span className="text-sm font-medium text-gray-800">{ctrl.name}</span>
-            {ctrl.status === 'FAIL' && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200">
-                {ctrl.failingFindings} finding{ctrl.failingFindings !== 1 ? 's' : ''}
-              </span>
-            )}
-            {ctrl.status === 'NOT_EVALUATED' && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-50 text-gray-400 ring-1 ring-gray-200">
-                not evaluated
-              </span>
+        {/* Left: Icon + ID Badge + Control Name */}
+        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+          {isPass ? (
+            <CheckCircle size={16} className="text-emerald-500 mt-0.5 shrink-0" />
+          ) : isFail ? (
+            <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />
+          ) : (
+            <HelpCircle size={16} className="text-amber-500 mt-0.5 shrink-0" />
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <span className="font-mono text-xs font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
+              {ctrl.id}
+            </span>
+            <span className="text-xs sm:text-sm font-semibold text-gray-900 leading-snug">
+              {ctrl.name}
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Findings Badge & Chevron */}
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          {isFail && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-red-50 text-red-700 border border-red-200/80 shadow-2xs whitespace-nowrap">
+              {ctrl.failingFindings} finding{ctrl.failingFindings !== 1 ? 's' : ''}
+            </span>
+          )}
+          {ctrl.status === 'NOT_EVALUATED' && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200/80 whitespace-nowrap">
+              not evaluated
+            </span>
+          )}
+          <div className="p-1 rounded-lg text-gray-400 hover:text-gray-600">
+            {open ? (
+              <ChevronDown size={14} className="text-blue-600" />
+            ) : (
+              <ChevronRight size={14} />
             )}
           </div>
         </div>
-        {open
-          ? <ChevronDown  size={13} className="text-gray-400 shrink-0 mt-0.5" />
-          : <ChevronRight size={13} className="text-gray-400 shrink-0 mt-0.5" />
-        }
       </button>
+
       {open && (
-        <div className="px-4 pb-4 pt-1 border-t border-gray-100 bg-gray-50/60 space-y-2">
-          <p className="text-xs text-gray-600">{ctrl.description}</p>
+        <div className="px-4 pb-4 pt-3 border-t border-gray-100 bg-slate-50/70 space-y-3">
+          <p className="text-xs text-gray-700 leading-relaxed font-normal">{ctrl.description}</p>
           {ctrl.findingTitles.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                 Mapped Findings
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {ctrl.findingTitles.map((t) => (
                   <span
                     key={t}
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-white ring-1 ring-gray-200 text-gray-700"
+                    className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-white border border-gray-200 text-gray-800 shadow-2xs"
                   >
                     {t}
                   </span>
@@ -111,19 +131,6 @@ function ControlRow({ ctrl }: { ctrl: ControlResult | AzureControlResult }) {
 
 // ─── Framework detail modal ───────────────────────────────────────────────────
 
-const FW_COLORS: Record<string, { bar: string; header: string }> = {
-  PCI_DSS:     { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
-  SOC2:        { bar: 'bg-violet-500',  header: 'bg-violet-600'  },
-  ISO27001:    { bar: 'bg-emerald-500', header: 'bg-emerald-600' },
-  HIPAA:       { bar: 'bg-orange-500',  header: 'bg-orange-600'  },
-  CIS_AWS:     { bar: 'bg-cyan-500',    header: 'bg-cyan-600'    },
-  CIS_AZURE:   { bar: 'bg-blue-500',    header: 'bg-blue-600'    },
-  NIST:        { bar: 'bg-slate-500',   header: 'bg-slate-600'   },
-  NIST_800_53: { bar: 'bg-slate-600',   header: 'bg-slate-700'   },
-  GDPR:        { bar: 'bg-purple-500',  header: 'bg-purple-600'  },
-  FEDRAMP:     { bar: 'bg-rose-500',    header: 'bg-rose-600'    },
-};
-
 function FrameworkModal({
   fw,
   onClose,
@@ -131,61 +138,166 @@ function FrameworkModal({
   fw: FrameworkScore | AzureFrameworkScore;
   onClose: () => void;
 }) {
-  const c    = FW_COLORS[fw.frameworkId] ?? { bar: 'bg-gray-500', header: 'bg-gray-600' };
+  const [filterStatus, setFilterStatus] = useState<'ALL' | 'PASS' | 'FAIL' | 'NOT_EVALUATED'>('ALL');
+
   const fail = fw.controls.filter((x) => x.status === 'FAIL');
   const pass = fw.controls.filter((x) => x.status === 'PASS');
   const na   = fw.controls.filter((x) => x.status === 'NOT_EVALUATED');
 
+  const showFail = (filterStatus === 'ALL' || filterStatus === 'FAIL') && fail.length > 0;
+  const showPass = (filterStatus === 'ALL' || filterStatus === 'PASS') && pass.length > 0;
+  const showNa   = (filterStatus === 'ALL' || filterStatus === 'NOT_EVALUATED') && na.length > 0;
+
+  const toggleFilter = (status: 'PASS' | 'FAIL' | 'NOT_EVALUATED') => {
+    setFilterStatus((prev) => (prev === status ? 'ALL' : status));
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      {/* Backdrop with blur */}
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity" onClick={onClose} />
 
-        {/* header */}
-        <div className={`${c.header} px-6 py-4 flex items-center justify-between shrink-0`}>
-          <div>
-            <p className="text-white text-xs font-medium opacity-75">{fw.frameworkName}</p>
-            <p className="text-white text-xl font-bold">{fw.shortName}</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-white text-3xl font-bold">{fw.score}%</p>
-              <div className="mt-1 w-24 h-1.5 bg-white/30 rounded-full overflow-hidden">
-                <div className={`h-full ${c.bar} rounded-full`} style={{ width: `${fw.score}%` }} />
-              </div>
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-gray-200/90 animate-in fade-in-50 zoom-in-95 duration-150">
+
+        {/* Clean White Header */}
+        <div className="px-6 py-4 border-b border-gray-200/80 flex items-center justify-between bg-white shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-blue-50 border border-blue-200/80 text-blue-600 shadow-2xs">
+              <ShieldCheck size={20} />
             </div>
-            <button onClick={onClose} className="text-white/80 hover:text-white transition-colors ml-2">
-              <X size={20} />
+            <div>
+              <h2 className="text-lg font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
+                {fw.shortName}
+              </h2>
+              <p className="text-xs text-gray-500 font-medium">
+                {fw.frameworkName}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl shadow-2xs">
+              <span className="text-xs font-semibold text-gray-500">Readiness Score:</span>
+              <span className={`text-base font-extrabold tabular-nums ${
+                fw.score >= 80 ? 'text-emerald-600' : fw.score >= 60 ? 'text-amber-500' : 'text-red-600'
+              }`}>
+                {fw.score}%
+              </span>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-all"
+              aria-label="Close modal"
+            >
+              <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* stats strip */}
-        <div className="px-6 py-3 border-b border-gray-100 flex gap-6 text-xs bg-gray-50 shrink-0">
-          <span><strong className="text-emerald-600">{fw.passingControls}</strong><span className="text-gray-500"> passing</span></span>
-          <span><strong className="text-red-500">{fw.failingControls}</strong><span className="text-gray-500"> failing</span></span>
+        {/* Interactive Stats Pill Strip */}
+        <div className="px-6 py-2.5 border-b border-gray-100 flex items-center gap-2 text-xs bg-slate-50/80 shrink-0 flex-wrap select-none">
+          <button
+            type="button"
+            onClick={() => toggleFilter('PASS')}
+            className={clsx(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-2xs',
+              filterStatus === 'PASS'
+                ? 'bg-emerald-600 text-white ring-2 ring-emerald-500/40 shadow-sm scale-[1.02]'
+                : 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 hover:bg-emerald-100/80'
+            )}
+          >
+            <CheckCircle size={13} className={filterStatus === 'PASS' ? 'text-white' : 'text-emerald-500'} />
+            {fw.passingControls} Passing
+          </button>
+
+          <button
+            type="button"
+            onClick={() => toggleFilter('FAIL')}
+            className={clsx(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-2xs',
+              filterStatus === 'FAIL'
+                ? 'bg-red-600 text-white ring-2 ring-red-500/40 shadow-sm scale-[1.02]'
+                : 'bg-red-50 text-red-700 border border-red-200/80 hover:bg-red-100/80'
+            )}
+          >
+            <AlertCircle size={13} className={filterStatus === 'FAIL' ? 'text-white' : 'text-red-500'} />
+            {fw.failingControls} Failing
+          </button>
+
           {fw.notEvaluatedControls > 0 && (
-            <span><strong className="text-gray-400">{fw.notEvaluatedControls}</strong><span className="text-gray-400"> not evaluated</span></span>
+            <button
+              type="button"
+              onClick={() => toggleFilter('NOT_EVALUATED')}
+              className={clsx(
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer shadow-2xs',
+                filterStatus === 'NOT_EVALUATED'
+                  ? 'bg-gray-700 text-white ring-2 ring-gray-400/40 shadow-sm scale-[1.02]'
+                  : 'bg-gray-100 text-gray-600 border border-gray-200/80 hover:bg-gray-200/80'
+              )}
+            >
+              <HelpCircle size={13} className={filterStatus === 'NOT_EVALUATED' ? 'text-white' : 'text-gray-400'} />
+              {fw.notEvaluatedControls} Not Evaluated
+            </button>
           )}
-          <span><strong className="text-gray-700">{fw.totalControls}</strong><span className="text-gray-500"> total</span></span>
+
+          <button
+            type="button"
+            onClick={() => setFilterStatus('ALL')}
+            className={clsx(
+              'ml-auto text-xs font-semibold px-2.5 py-1 rounded-lg transition-all cursor-pointer',
+              filterStatus === 'ALL'
+                ? 'text-blue-700 font-bold bg-blue-50 border border-blue-200/80'
+                : 'text-gray-500 hover:text-gray-800 hover:bg-gray-200/60'
+            )}
+          >
+            {filterStatus !== 'ALL' ? 'Show All Controls' : `${fw.totalControls} Total Controls`}
+          </button>
         </div>
 
-        {/* controls */}
-        <div className="overflow-y-auto flex-1 p-4 space-y-2">
-          {fail.length > 0 && (
-            <p className="text-xs font-semibold text-red-500 uppercase tracking-wide mb-1">Failing Controls</p>
+        {/* Controls Scrollable List */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-4 bg-gray-50/30">
+          {!showFail && !showPass && !showNa && (
+            <div className="text-center py-8 text-xs text-gray-400">
+              No controls match the selected status filter.
+            </div>
           )}
-          {fail.map((ctrl) => <ControlRow key={ctrl.id} ctrl={ctrl} />)}
 
-          {pass.length > 0 && (
-            <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mt-4 mb-1">Passing Controls</p>
+          {showFail && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-extrabold text-red-600 uppercase tracking-wider px-1">
+                <AlertCircle size={13} />
+                <span>Failing Controls ({fail.length})</span>
+              </div>
+              <div className="space-y-2">
+                {fail.map((ctrl) => <ControlRow key={ctrl.id} ctrl={ctrl} />)}
+              </div>
+            </div>
           )}
-          {pass.map((ctrl) => <ControlRow key={ctrl.id} ctrl={ctrl} />)}
 
-          {na.length > 0 && (
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-4 mb-1">Not Evaluated</p>
+          {showPass && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-600 uppercase tracking-wider px-1 pt-2">
+                <CheckCircle size={13} />
+                <span>Passing Controls ({pass.length})</span>
+              </div>
+              <div className="space-y-2">
+                {pass.map((ctrl) => <ControlRow key={ctrl.id} ctrl={ctrl} />)}
+              </div>
+            </div>
           )}
-          {na.map((ctrl) => <ControlRow key={ctrl.id} ctrl={ctrl} />)}
+
+          {showNa && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-extrabold text-gray-400 uppercase tracking-wider px-1 pt-2">
+                <HelpCircle size={13} />
+                <span>Not Evaluated ({na.length})</span>
+              </div>
+              <div className="space-y-2">
+                {na.map((ctrl) => <ControlRow key={ctrl.id} ctrl={ctrl} />)}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -202,17 +314,31 @@ function GaugeCard({
   onClick: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-2 w-36">
+    <div
+      onClick={onClick}
+      className="bg-white rounded-xl border border-gray-200/90 p-3.5 flex flex-col items-center justify-between text-center hover:border-blue-400 hover:shadow-md hover:bg-blue-50/20 transition-all duration-200 cursor-pointer group space-y-2.5 h-full"
+    >
       <CircularGauge score={fw.score} />
-      <p className="text-sm text-gray-500 text-center font-medium tracking-wide">
-        {fw.shortName}
-      </p>
-      <p className="text-xl font-bold text-gray-900">{fw.score}%</p>
+
+      <div className="space-y-0.5 w-full">
+        <p className="text-xs font-bold text-gray-900 truncate tracking-tight group-hover:text-blue-600 transition-colors">
+          {fw.shortName}
+        </p>
+        <p className="text-[10px] text-gray-400 font-medium whitespace-nowrap">
+          {fw.passingControls}/{fw.totalControls} passed
+        </p>
+      </div>
+
       <button
-        onClick={onClick}
-        className="text-xs text-blue-600 border border-blue-300 rounded-full px-4 py-1 hover:bg-blue-50 transition-colors whitespace-nowrap"
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        className="w-full inline-flex items-center justify-center gap-0.5 text-[11px] font-semibold text-blue-600 group-hover:text-blue-700 bg-blue-50/80 group-hover:bg-blue-100/90 border border-blue-200/80 rounded-md py-1 transition-all shadow-2xs mt-auto"
       >
-        View Readiness
+        <span>View</span>
+        <ChevronRight size={11} className="transition-transform duration-200 group-hover:translate-x-0.5" />
       </button>
     </div>
   );
@@ -220,18 +346,13 @@ function GaugeCard({
 
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 
-function ReadinessSkeleton({ count = 5 }: { count?: number }) {
+function ReadinessSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-8">
-      <div className="h-4 w-52 bg-gray-100 rounded animate-pulse mb-8 mx-auto" />
-      <div className="flex justify-center gap-10 flex-wrap">
+    <div className="bg-white rounded-xl border border-gray-200/90 p-4 space-y-4 shadow-2xs">
+      <div className="h-5 w-56 bg-gray-100 rounded animate-pulse" />
+      <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
         {[...Array(count)].map((_, i) => (
-          <div key={i} className="flex flex-col items-center gap-2 w-36">
-            <div className="rounded-full bg-gray-100 animate-pulse" style={{ width: SIZE, height: SIZE }} />
-            <div className="h-3 w-16 bg-gray-100 rounded animate-pulse" />
-            <div className="h-6 w-12 bg-gray-100 rounded animate-pulse" />
-            <div className="h-6 w-28 bg-gray-100 rounded-full animate-pulse" />
-          </div>
+          <div key={i} className="h-40 bg-gray-100/80 rounded-xl animate-pulse" />
         ))}
       </div>
     </div>
@@ -251,13 +372,13 @@ export function AwsReadinessSection({ accountId }: { accountId: string }) {
     enabled:  !!accountId,
   });
 
-  if (isLoading) return <ReadinessSkeleton count={5} />;
+  if (isLoading) return <ReadinessSkeleton count={8} />;
 
   if (isError || !frameworks || frameworks.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-        <p className="text-sm font-semibold text-gray-700 mb-2">Readiness for Other Audits</p>
-        <p className="text-sm text-gray-400">Run a scan to generate compliance readiness scores.</p>
+      <div className="bg-white rounded-xl border border-gray-200/90 p-6 text-center shadow-2xs">
+        <p className="text-sm font-semibold text-gray-700 mb-1">Readiness for Other Audits</p>
+        <p className="text-xs text-gray-400">Run a scan to generate compliance readiness scores.</p>
       </div>
     );
   }
@@ -268,9 +389,24 @@ export function AwsReadinessSection({ accountId }: { accountId: string }) {
 
   return (
     <>
-      <div className="bg-white rounded-xl border border-gray-200 p-8">
-        <p className="text-base font-semibold text-gray-800 mb-8 text-center">Readiness for Other Audits</p>
-        <div className="flex justify-center flex-wrap gap-10">
+      <div className="bg-white rounded-xl border border-gray-200/90 p-4 space-y-3.5 shadow-2xs">
+        <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-blue-50 border border-blue-200/80 text-blue-600 shadow-2xs">
+              <ShieldCheck size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
+                Readiness for Other Audits
+              </h3>
+            </div>
+          </div>
+          <span className="text-xs text-gray-400 font-medium">
+            {ordered.length} Frameworks Mapped
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
           {ordered.map((fw) => (
             <GaugeCard key={fw.frameworkId} fw={fw} onClick={() => setActive(fw)} />
           ))}
@@ -298,9 +434,9 @@ export function AzureReadinessSection({ subscriptionId }: { subscriptionId: stri
 
   if (isError || !frameworks || frameworks.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
-        <p className="text-sm font-semibold text-gray-700 mb-2">Readiness for Other Audits</p>
-        <p className="text-sm text-gray-400">Run a scan to generate compliance readiness scores.</p>
+      <div className="bg-white rounded-xl border border-gray-200/90 p-6 text-center shadow-2xs">
+        <p className="text-sm font-semibold text-gray-700 mb-1">Readiness for Other Audits</p>
+        <p className="text-xs text-gray-400">Run a scan to generate compliance readiness scores.</p>
       </div>
     );
   }
@@ -311,9 +447,24 @@ export function AzureReadinessSection({ subscriptionId }: { subscriptionId: stri
 
   return (
     <>
-      <div className="bg-white rounded-xl border border-gray-200 p-8">
-        <p className="text-base font-semibold text-gray-800 mb-8 text-center">Readiness for Other Audits</p>
-        <div className="flex justify-center flex-wrap gap-10">
+      <div className="bg-white rounded-xl border border-gray-200/90 p-4 space-y-3.5 shadow-2xs">
+        <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-blue-50 border border-blue-200/80 text-blue-600 shadow-2xs">
+              <ShieldCheck size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
+                Readiness for Other Audits
+              </h3>
+            </div>
+          </div>
+          <span className="text-xs text-gray-400 font-medium">
+            {ordered.length} Frameworks Mapped
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
           {ordered.map((fw) => (
             <GaugeCard key={fw.frameworkId} fw={fw} onClick={() => setActive(fw)} />
           ))}

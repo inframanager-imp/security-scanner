@@ -56,6 +56,7 @@ router.get('/vapt', async (req: Request, res: Response) => {
       tags:          parseCsv(req.query.tags),
       region:        parseCsv(req.query.region),
       resourceGroup: parseCsv(req.query.resourceGroup),
+      framework:     typeof req.query.framework === 'string' ? req.query.framework : undefined,
     };
 
     const model = await buildVaptReportModel(provider, targetId, filters);

@@ -114,6 +114,7 @@ export function computeFrameworkGauges(
     }
   }
   return Array.from(map.entries())
+    .filter(([name]) => !['CIS Azure', 'NIST', 'CIS GCP'].includes(name))
     .map(([name, { total, count }]) => ({ name, avg: Math.round(total / count), count }))
     .sort((a, b) => b.avg - a.avg);
 }
@@ -153,7 +154,7 @@ export function FrameworkScoreOverview({ awsAccounts, azureSubs, onSelectFramewo
           {frameworkGauges.length} Frameworks
         </span>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-3">
+      <div className="flex w-full overflow-x-auto gap-3 pb-2 snap-x">
         {frameworkGauges.map(({ name, avg, count }) => {
           const fwId = FRAMEWORK_NAME_TO_ID[name] ?? name;
           return (

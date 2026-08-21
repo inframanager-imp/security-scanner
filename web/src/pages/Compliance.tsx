@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ShieldCheck, Shield, ShieldAlert, ChevronRight, AlertTriangle, Search, X, ChevronDown, Check } from 'lucide-react';
+import { ShieldCheck, Shield, ShieldAlert, ChevronRight, AlertTriangle, Search, X, ChevronDown, Check, FileBarChart } from 'lucide-react';
 import { gcpApi } from '../api/gcp';
 import {
   complianceApi,
@@ -15,6 +15,7 @@ import { Input } from '../components/ui/Input';
 import { Tooltip } from '../components/ui/Tooltip';
 import { FrameworkScoreOverview } from '../components/ui/FrameworkScoreOverview';
 import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
+import { VaptReportModal } from '../components/ui/VaptReportModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,7 @@ function FrameworkCell({
 
 // ─── AWS Row ──────────────────────────────────────────────────────────────────
 
-function AwsRow({ acct, headers, onView }: { acct: AccountComplianceSummary; headers: { id: string; name: string }[]; onView: () => void }) {
+function AwsRow({ acct, headers, onView, onVaptReport }: { acct: AccountComplianceSummary; headers: { id: string; name: string }[]; onView: () => void; onVaptReport: () => void; }) {
   return (
     <tr className="hover:bg-blue-50/20 transition-colors group">
       {/* Sticky Combined Account & Cloud Column */}
@@ -120,14 +121,24 @@ function AwsRow({ acct, headers, onView }: { acct: AccountComplianceSummary; hea
         );
       })}
       <td className="px-4 py-3.5 whitespace-nowrap text-right">
-        <Tooltip content="View Account Compliance Details" position="top-right">
-          <button
-            onClick={onView}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-lg transition-colors"
-          >
-            Details <ChevronRight size={14} />
-          </button>
-        </Tooltip>
+        <div className="flex items-center justify-end gap-2">
+          <Tooltip content="Generate VAPT Report" position="top-right">
+            <button
+              onClick={(e) => { e.stopPropagation(); onVaptReport(); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg transition-colors shadow-2xs"
+            >
+              <FileBarChart size={14} className="text-gray-500" /> VAPT Report
+            </button>
+          </Tooltip>
+          <Tooltip content="View Account Compliance Details" position="top-right">
+            <button
+              onClick={(e) => { e.stopPropagation(); onView(); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-lg transition-colors"
+            >
+              Details <ChevronRight size={14} />
+            </button>
+          </Tooltip>
+        </div>
       </td>
     </tr>
   );
@@ -135,7 +146,7 @@ function AwsRow({ acct, headers, onView }: { acct: AccountComplianceSummary; hea
 
 // ─── Azure Row ────────────────────────────────────────────────────────────────
 
-function AzureRow({ sub, headers, onView }: { sub: AzureSubscriptionComplianceSummary; headers: { id: string; name: string }[]; onView: () => void }) {
+function AzureRow({ sub, headers, onView, onVaptReport }: { sub: AzureSubscriptionComplianceSummary; headers: { id: string; name: string }[]; onView: () => void; onVaptReport: () => void; }) {
   return (
     <tr className="hover:bg-blue-50/20 transition-colors group">
       {/* Sticky Combined Account & Cloud Column */}
@@ -165,14 +176,24 @@ function AzureRow({ sub, headers, onView }: { sub: AzureSubscriptionComplianceSu
         );
       })}
       <td className="px-4 py-3.5 whitespace-nowrap text-right">
-        <Tooltip content="View Subscription Compliance Details" position="top-right">
-          <button
-            onClick={onView}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-lg transition-colors"
-          >
-            Details <ChevronRight size={14} />
-          </button>
-        </Tooltip>
+        <div className="flex items-center justify-end gap-2">
+          <Tooltip content="Generate VAPT Report" position="top-right">
+            <button
+              onClick={(e) => { e.stopPropagation(); onVaptReport(); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg transition-colors shadow-2xs"
+            >
+              <FileBarChart size={14} className="text-gray-500" /> VAPT Report
+            </button>
+          </Tooltip>
+          <Tooltip content="View Subscription Compliance Details" position="top-right">
+            <button
+              onClick={(e) => { e.stopPropagation(); onView(); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-lg transition-colors"
+            >
+              Details <ChevronRight size={14} />
+            </button>
+          </Tooltip>
+        </div>
       </td>
     </tr>
   );
@@ -180,7 +201,7 @@ function AzureRow({ sub, headers, onView }: { sub: AzureSubscriptionComplianceSu
 
 // ─── GCP Row ──────────────────────────────────────────────────────────────────
 
-function GcpRow({ project, headers, onView }: { project: { projectId: string; name: string; gcpProjectId: string; scores: any[] }; headers: { id: string; name: string }[]; onView: () => void }) {
+function GcpRow({ project, headers, onView, onVaptReport }: { project: { projectId: string; name: string; gcpProjectId: string; scores: any[] }; headers: { id: string; name: string }[]; onView: () => void; onVaptReport: () => void; }) {
   return (
     <tr className="hover:bg-blue-50/20 transition-colors group">
       {/* Sticky Combined Account & Cloud Column */}
@@ -210,14 +231,24 @@ function GcpRow({ project, headers, onView }: { project: { projectId: string; na
         );
       })}
       <td className="px-4 py-3.5 whitespace-nowrap text-right">
-        <Tooltip content="View GCP Project Compliance Details" position="top-right">
-          <button
-            onClick={onView}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-lg transition-colors"
-          >
-            Details <ChevronRight size={14} />
-          </button>
-        </Tooltip>
+        <div className="flex items-center justify-end gap-2">
+          <Tooltip content="Generate VAPT Report" position="top-right">
+            <button
+              onClick={(e) => { e.stopPropagation(); onVaptReport(); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 border border-gray-300 rounded-lg transition-colors shadow-2xs"
+            >
+              <FileBarChart size={14} className="text-gray-500" /> VAPT Report
+            </button>
+          </Tooltip>
+          <Tooltip content="View GCP Project Compliance Details" position="top-right">
+            <button
+              onClick={(e) => { e.stopPropagation(); onView(); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-lg transition-colors"
+            >
+              Details <ChevronRight size={14} />
+            </button>
+          </Tooltip>
+        </div>
       </td>
     </tr>
   );
@@ -232,6 +263,7 @@ export function Compliance() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [frameworkDropdownOpen, setFrameworkDropdownOpen] = useState(false);
+  const [vaptModalRow, setVaptModalRow] = useState<{ id: string; name: string; provider: CloudProvider } | null>(null);
   
   const dropdownRef = useRef<HTMLDivElement>(null);
   const frameworkDropdownRef = useRef<HTMLDivElement>(null);
@@ -326,7 +358,7 @@ export function Compliance() {
     { id: 'SOC2',     name: 'SOC 2' },   { id: 'HIPAA',    name: 'HIPAA' }, { id: 'NIST', name: 'NIST' },
   ];
 
-  const legendHeaders = provFilter === 'AZURE' ? azureFrameworkHeaders
+  const rawLegendHeaders = provFilter === 'AZURE' ? azureFrameworkHeaders
     : provFilter === 'AWS' ? awsFrameworkHeaders
     : provFilter === 'GCP' ? gcpFrameworkHeaders
     : [
@@ -334,6 +366,9 @@ export function Compliance() {
         ...azureFrameworkHeaders.filter(ah => !awsFrameworkHeaders.some(wh => wh.id === ah.id)),
         ...gcpFrameworkHeaders.filter(gh => !awsFrameworkHeaders.some(wh => wh.id === gh.id) && !azureFrameworkHeaders.some(ah => ah.id === gh.id)),
       ];
+
+  const BLOCKED_FRAMEWORKS = ['CIS_AZURE', 'NIST', 'CIS_GCP'];
+  const legendHeaders = rawLegendHeaders.filter(fw => !BLOCKED_FRAMEWORKS.includes(fw.id));
 
   const frameworkAccountCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -638,7 +673,7 @@ export function Compliance() {
                     {fw.name}
                   </th>
                 ))}
-                <th className="px-4 py-3.5 text-right text-[11px] font-bold text-gray-500 uppercase tracking-wider">Actions</th>
+                <th className="px-4 py-3.5 text-center text-[11px] font-bold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -664,6 +699,7 @@ export function Compliance() {
                       acct={acct}
                       headers={legendHeaders}
                       onView={() => navigate(`/compliance/${acct.accountId}`)}
+                      onVaptReport={() => setVaptModalRow({ id: acct.accountId, name: acct.accountName, provider: 'AWS' })}
                     />
                   ))}
                   {(provFilter === 'ALL' || provFilter === 'AZURE') && displayAzure.map(sub => (
@@ -672,6 +708,7 @@ export function Compliance() {
                       sub={sub}
                       headers={legendHeaders}
                       onView={() => navigate(`/compliance/azure/${sub.subscriptionId}`)}
+                      onVaptReport={() => setVaptModalRow({ id: sub.subscriptionId, name: sub.subscriptionName, provider: 'AZURE' })}
                     />
                   ))}
                   {(provFilter === 'ALL' || provFilter === 'GCP') && displayGcp.map(proj => (
@@ -680,6 +717,7 @@ export function Compliance() {
                       project={proj}
                       headers={legendHeaders}
                       onView={() => navigate(`/compliance/${proj.gcpProjectId}?provider=GCP`)}
+                      onVaptReport={() => setVaptModalRow({ id: proj.projectId, name: proj.name, provider: 'GCP' })}
                     />
                   ))}
                 </>
@@ -688,6 +726,16 @@ export function Compliance() {
           </table>
         </div>
       </Card>
+
+      {vaptModalRow && (
+        <VaptReportModal
+          open={!!vaptModalRow}
+          onClose={() => setVaptModalRow(null)}
+          provider={vaptModalRow.provider}
+          targetId={vaptModalRow.id}
+          targetName={vaptModalRow.name}
+        />
+      )}
     </div>
   </div>
 );

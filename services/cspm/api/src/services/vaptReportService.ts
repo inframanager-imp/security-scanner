@@ -32,6 +32,7 @@ export interface VaptReportFilters {
   tags?:           string[]; // all providers — OR-match (finding has ANY of these tags)
   region?:         string[]; // AWS only — best-effort, matched against evidence.region
   resourceGroup?:  string[]; // Azure only
+  framework?:      string;   // AWS/Azure only
 }
 
 export interface VaptFilterOptions {
@@ -123,6 +124,7 @@ function normalizeFilters(filters?: VaptReportFilters): Required<VaptReportFilte
     tags:          filters?.tags ?? [],
     region:        filters?.region ?? [],
     resourceGroup: filters?.resourceGroup ?? [],
+    framework:     filters?.framework ?? '',
   };
 }
 
@@ -146,6 +148,34 @@ function extraFilterConditions(filters: Required<VaptReportFilters>, kind: 'aws'
   }
   if (kind === 'azure' && filters.resourceGroup.length > 0) {
     conditions.push({ resourceGroup: { in: filters.resourceGroup } });
+  }
+  if (filters.framework) {
+    if (kind === 'aws') {
+      const fw = FRAMEWORKS.find(f => f.id === filters.framework);
+      if (fw) {
+        const checkIds = new Set<string>();
+        const titles = new Set<string>();
+        for (const c of fw.controls) {
+           for (const id of c.checkIds) checkIds.add(id);
+           for (const t of c.findingTitles) titles.add(t);
+        }
+        conditions.push({
+          OR: [
+            { checkId: { in: [...checkIds] } },
+            { title: { in: [...titles] } }
+          ]
+        });
+      }
+    } else if (kind === 'azure') {
+      const fw = AZURE_FRAMEWORKS.find(f => f.id === filters.framework);
+      if (fw) {
+        const titles = new Set<string>();
+        for (const c of fw.controls) {
+           for (const t of c.findingTitles) titles.add(t);
+        }
+        conditions.push({ title: { in: [...titles] } });
+      }
+    }
   }
   return conditions;
 }

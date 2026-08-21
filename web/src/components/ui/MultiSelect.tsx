@@ -61,9 +61,9 @@ export function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen((p) => !p)}
-        className="flex items-center justify-between w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="flex items-center justify-between w-full rounded-lg border border-gray-300/90 bg-white px-3 py-2 text-xs sm:text-sm text-gray-700 shadow-2xs hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all cursor-pointer"
       >
-        <span className={value.length === 0 ? 'text-gray-400' : ''}>{label}</span>
+        <span className={value.length === 0 ? 'text-gray-400 font-normal' : 'font-medium'}>{label}</span>
         <span className="flex items-center gap-1 ml-2 shrink-0">
           {value.length > 0 && (
             <X
@@ -74,14 +74,14 @@ export function MultiSelect({
           )}
           <ChevronDown
             size={14}
-            className={clsx('text-gray-400 transition-transform', open && 'rotate-180')}
+            className={clsx('text-gray-400 transition-transform duration-200', open && 'rotate-180')}
           />
         </span>
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full min-w-max rounded-md border border-gray-200 bg-white shadow-lg">
-          <div className="max-h-52 overflow-y-auto py-1">
+        <div className="absolute z-50 mt-1.5 w-full min-w-max rounded-xl border border-gray-200/90 bg-white shadow-xl py-1 overflow-hidden">
+          <div className="max-h-40 overflow-y-auto py-1">
             {options.length === 0 && (
               <div className="px-3 py-2 text-xs text-gray-400">No options</div>
             )}
@@ -100,17 +100,28 @@ export function MultiSelect({
               </label>
             ))}
           </div>
-          {value.length > 0 && (
-            <div className="border-t border-gray-100 px-3 py-1.5">
-              <button
-                type="button"
-                onClick={() => onChange([])}
-                className="text-xs text-blue-600 hover:text-blue-800"
-              >
-                Clear all
-              </button>
-            </div>
-          )}
+          <div className="flex items-center justify-between border-t border-slate-100 px-3 py-2 bg-slate-50/50">
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              disabled={value.length === 0}
+              className={clsx(
+                "text-xs font-medium transition-colors",
+                value.length === 0
+                  ? "text-slate-400 cursor-not-allowed opacity-60"
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Clear all
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md"
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
     </div>

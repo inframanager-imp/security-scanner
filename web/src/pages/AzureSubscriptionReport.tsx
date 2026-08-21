@@ -27,6 +27,9 @@ import { SeverityBadge, FindingStatusBadge } from '../components/ui/Badge';
 import { Pagination } from '../components/ui/Table';
 import type { AzureFinding, FindingStatus } from '../types';
 
+import { Tooltip } from '../components/ui/Tooltip';
+import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SEVERITY_OPTIONS = [
@@ -296,48 +299,68 @@ export function AzureSubscriptionReport() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={<ArrowLeft size={16} />}
-            onClick={() => navigate('/reports')}
-          >
-            Reports
-          </Button>
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-1">
+        
+        {/* Left Section: Back Arrow -> Provider Logo -> Title & Subtitle */}
+        <div className="flex items-center gap-3.5">
+          {/* 1. Back Button */}
+          <Tooltip content="Back to Reports" position="right">
+            <button
+              onClick={() => navigate('/reports')}
+              className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-all shrink-0 -ml-1"
+              aria-label="Back to Reports"
+            >
+              <ArrowLeft size={20} strokeWidth={2.2} />
+            </button>
+          </Tooltip>
+
+          {/* Divider */}
+          <div className="h-8 w-px bg-gray-200/80 shrink-0" />
+
+          {/* 2. Provider Logo */}
+          <div className="flex items-center justify-center p-2 rounded-xl bg-slate-50 border border-slate-200/80 shrink-0 shadow-2xs">
+            <CloudProviderLogo provider="AZURE" className="w-6 h-6 shrink-0" />
+          </div>
+
+          {/* 3 & 4. Subscription Name & Subscription ID Subtitle */}
+          <div className="space-y-0.5">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
               {sub?.name ?? 'Azure Subscription Report'}
-            </h2>
+            </h1>
+
+            {/* Details Row */}
             {sub && (
-              <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded mt-1 inline-block">
-                {sub.subscriptionId}
-              </span>
+              <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+                <span className="font-semibold text-gray-400">Subscription ID:</span>
+                <span className="font-mono font-medium text-gray-700 bg-gray-100/90 border border-gray-200 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">
+                  {sub.subscriptionId}
+                </span>
+              </div>
             )}
           </div>
         </div>
 
+        {/* Right Section: Action Buttons & Counters */}
         <div className="flex items-center gap-3 flex-wrap">
           {summary && (
             <div className="flex items-center gap-2">
               {summary.critical > 0 && (
-                <span className="bg-red-50 text-red-700 border border-red-200 rounded px-2 py-1 text-xs font-bold">
+                <span className="bg-red-50 text-red-700 border border-red-200/80 rounded-lg px-2.5 py-1 text-xs font-bold shadow-2xs">
                   {summary.critical} Critical
                 </span>
               )}
               {summary.high > 0 && (
-                <span className="bg-orange-50 text-orange-700 border border-orange-200 rounded px-2 py-1 text-xs font-bold">
+                <span className="bg-orange-50 text-orange-700 border border-orange-200/80 rounded-lg px-2.5 py-1 text-xs font-bold shadow-2xs">
                   {summary.high} High
                 </span>
               )}
               {summary.medium > 0 && (
-                <span className="bg-yellow-50 text-yellow-700 border border-yellow-200 rounded px-2 py-1 text-xs font-bold">
+                <span className="bg-yellow-50 text-yellow-700 border border-yellow-200/80 rounded-lg px-2.5 py-1 text-xs font-bold shadow-2xs">
                   {summary.medium} Medium
                 </span>
               )}
               {summary.low > 0 && (
-                <span className="bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-1 text-xs font-bold">
+                <span className="bg-blue-50 text-blue-700 border border-blue-200/80 rounded-lg px-2.5 py-1 text-xs font-bold shadow-2xs">
                   {summary.low} Low
                 </span>
               )}
@@ -379,7 +402,7 @@ export function AzureSubscriptionReport() {
             <a
               href={azureApi.exportFindings(sub?.lastSuccessfulScanId ?? sub?.latestScan?.id ?? '')}
               download
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 shadow-2xs transition-all"
             >
               Export CSV
             </a>
@@ -411,45 +434,54 @@ export function AzureSubscriptionReport() {
       {/* Findings Table */}
       <Card padding={false}>
         {/* Filter Bar */}
-        <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-end gap-3">
-          <Select
-            value={severity}
-            onChange={(e) => handleFilterChange(setSeverity, e.target.value)}
-            options={SEVERITY_OPTIONS}
-            className="w-36"
-          />
-
-          <MultiSelect
-            options={serviceOptions}
-            value={selectedServices}
-            onChange={(v) => handleFilterChange(setSelectedServices, v)}
-            placeholder="All Services"
-            className="w-44"
-          />
-
-          <Select
-            value={findingStatus}
-            onChange={(e) => handleFilterChange(setFindingStatus, e.target.value)}
-            options={STATUS_OPTIONS}
-            className="w-40"
-          />
-
-          <div className="flex gap-2 flex-1 min-w-48">
+        <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
+          {/* Left: Search Bar with Icon Inside */}
+          <div className="w-72 max-w-full">
             <Input
               value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearchInput(val);
+                if (val === '') {
+                  setSearch('');
+                  setPage(1);
+                }
+              }}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="Search title, description, resource..."
-              className="flex-1"
+              leftIcon={<Search size={15} className="text-gray-400" />}
+              className="w-full"
             />
-            <Button variant="secondary" size="sm" onClick={handleSearch}>
-              <Search size={14} />
-            </Button>
           </div>
 
-          <span className="text-xs text-gray-500 whitespace-nowrap">
-            {findingsPage?.total ?? 0} findings
-          </span>
+          {/* Right: Filters & Findings Count */}
+          <div className="flex items-center gap-3 flex-wrap ml-auto">
+            <Select
+              value={severity}
+              onChange={(e) => handleFilterChange(setSeverity, e.target.value)}
+              options={SEVERITY_OPTIONS}
+              className="w-36"
+            />
+
+            <MultiSelect
+              options={serviceOptions}
+              value={selectedServices}
+              onChange={(v) => handleFilterChange(setSelectedServices, v)}
+              placeholder="All Services"
+              className="w-44"
+            />
+
+            <Select
+              value={findingStatus}
+              onChange={(e) => handleFilterChange(setFindingStatus, e.target.value)}
+              options={STATUS_OPTIONS}
+              className="w-40"
+            />
+
+            <span className="text-xs text-gray-500 font-medium whitespace-nowrap pl-1">
+              {findingsPage?.total ?? 0} findings
+            </span>
+          </div>
         </div>
 
         {/* Table */}
@@ -558,7 +590,7 @@ export function AzureSubscriptionReport() {
                         </td>
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <select
-                            className="text-xs border border-gray-300 rounded px-2 py-1 text-gray-600"
+                            className="text-xs font-medium border border-gray-300/90 rounded-lg px-2.5 py-1 text-gray-700 bg-white shadow-2xs hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition-all cursor-pointer"
                             value={finding.findingStatus}
                             onChange={(e) =>
                               updateStatus.mutate({ findingId: finding.id, status: e.target.value })

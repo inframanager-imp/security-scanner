@@ -9,6 +9,7 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  contentClassName?: string;
 }
 
 const sizeClasses = {
@@ -25,6 +26,7 @@ export function Modal({
   children,
   footer,
   size = 'md',
+  contentClassName,
 }: ModalProps) {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -76,7 +78,7 @@ export function Modal({
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>
+        <div className={clsx("flex-1 overflow-y-auto px-6 py-4", contentClassName)}>{children}</div>
 
         {/* Footer */}
         {footer && (
