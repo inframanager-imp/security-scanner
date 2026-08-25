@@ -271,8 +271,8 @@ function transformReportHtml(html: string, provider: ReportProvider, filters?: V
 
   /* Cover overrides */
   .cover { position: relative !important; }
-  .watermark-top-right { position: absolute !important; top: 24px !important; right: 32px !important; display: flex !important; align-items: center !important; }
-  .watermark-logo-img { height: 44px !important; max-width: 190px !important; object-fit: contain !important; filter: invert(52%) sepia(76%) saturate(628%) hue-rotate(167deg) brightness(91%) contrast(92%) !important; }
+  .watermark-top-right { position: absolute !important; top: 24px !important; right: 60px !important; display: flex !important; align-items: center !important; }
+  .watermark-logo-img { height: 53px !important; max-width: 230px !important; object-fit: contain !important; }
   .cover-title { font-size: 34px !important; margin-bottom: 16px !important; }
   .cover-target { font-size: 24px !important; font-weight: 700 !important; margin-bottom: 8px !important; }
   .cover-id { margin-bottom: 48px !important; }

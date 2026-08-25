@@ -253,15 +253,14 @@ export function AppLayout() {
         )}
       >
         {/* Header & Logo */}
-        <div className="relative z-10 flex items-center justify-between px-3 py-3 border-b border-[#E1F0FA]">
-          <div className="flex items-center justify-center w-full overflow-hidden">
+        <div className="relative z-10 flex items-center justify-center px-1 py-1 border-b border-[#E1F0FA] h-[68px] shrink-0">
+          <div className="flex items-center justify-center w-full h-full overflow-hidden">
             <img
               src="/img/logo.png"
               alt="Logo"
-              style={{ filter: 'invert(52%) sepia(76%) saturate(628%) hue-rotate(167deg) brightness(91%) contrast(92%)' }}
               className={clsx(
                 'object-contain transition-all duration-200',
-                isCollapsed ? 'h-9 w-9 object-left' : 'h-11 w-full max-w-[215px]'
+                isCollapsed ? 'h-[44px] w-[44px] object-left' : 'h-full w-full max-w-full scale-[1.45] origin-center'
               )}
             />
           </div>
@@ -343,7 +342,7 @@ export function AppLayout() {
       {/* Main Content */}
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Top Bar */}
-        <header className="flex items-center gap-2 px-6 py-4 bg-white border-b border-gray-200 shrink-0">
+        <header className="flex items-center gap-2 px-6 h-[68px] bg-white border-b border-gray-200 shrink-0">
           {crumb.section && (
             <div className="flex items-center gap-1 text-gray-400 text-sm font-medium">
               <span>{crumb.section}</span>
