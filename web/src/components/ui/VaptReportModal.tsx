@@ -5,7 +5,6 @@ import { reportsApi, type ReportProvider } from '../../api/reports';
 import { Modal } from './Modal';
 import { Button } from './Button';
 import { MultiSelect } from './MultiSelect';
-import { Select } from './Select';
 
 const AWS_FRAMEWORKS = [
   { value: '', label: 'All Frameworks (Full Report)' },
@@ -47,7 +46,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
   const [tags, setTags]                     = useState<string[]>([]);
   const [regions, setRegions]               = useState<string[]>([]);
   const [resourceGroups, setResourceGroups] = useState<string[]>([]);
-  const [framework, setFramework]           = useState<string>('');
+  const [frameworks, setFrameworks]         = useState<string[]>([]);
   const [generating, setGenerating]         = useState(false);
   const [error, setError]                   = useState<string | null>(null);
 
@@ -57,7 +56,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
       setTags([]);
       setRegions([]);
       setResourceGroups([]);
-      setFramework('');
+      setFrameworks([]);
       setError(null);
     }
   }, [open, targetId]);
@@ -72,6 +71,10 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
   const regionOptions   = (options?.regions ?? []).map(r => ({ value: r, label: r }));
   const rgOptions       = (options?.resourceGroups ?? []).map(rg => ({ value: rg, label: rg }));
 
+  const dynamicFrameworks = options?.frameworks?.map(f => ({ value: f.id, label: f.name }));
+  const fallbackFrameworks = (provider === 'AWS' ? AWS_FRAMEWORKS : AZURE_FRAMEWORKS).slice(1);
+  const frameworkOptions = dynamicFrameworks ?? fallbackFrameworks;
+
   const handleGenerate = async () => {
     setGenerating(true);
     setError(null);
@@ -80,7 +83,8 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
         tags:          tags.length ? tags : undefined,
         region:        regions.length ? regions : undefined,
         resourceGroup: resourceGroups.length ? resourceGroups : undefined,
-        framework:     framework ? framework : undefined,
+        frameworks:    frameworks.length ? frameworks : undefined,
+        framework:     frameworks.length === 1 ? frameworks[0] : undefined,
       });
       onClose();
     } catch (err) {
@@ -90,7 +94,7 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
     }
   };
 
-  const activeFilterCount = tags.length + regions.length + resourceGroups.length + (framework ? 1 : 0);
+  const activeFilterCount = tags.length + regions.length + resourceGroups.length + frameworks.length;
 
   return (
     <Modal
@@ -127,12 +131,12 @@ export function VaptReportModal({ open, onClose, provider, targetId, targetName 
           <div className="space-y-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
             {provider !== 'GCP' && (
               <div>
-                <label className="block text-xs font-semibold tracking-wide text-slate-700 uppercase mb-1.5">Compliance Framework</label>
-                <Select
-                  value={framework}
-                  onChange={(e) => setFramework(e.target.value)}
-                  options={provider === 'AWS' ? AWS_FRAMEWORKS : AZURE_FRAMEWORKS}
-                  className="w-full text-sm"
+                <label className="block text-xs font-semibold tracking-wide text-slate-700 uppercase mb-1.5">Compliance Frameworks</label>
+                <MultiSelect
+                  options={frameworkOptions}
+                  value={frameworks}
+                  onChange={setFrameworks}
+                  placeholder={frameworkOptions.length ? 'Select frameworks...' : 'All Frameworks (Full Report)'}
                 />
               </div>
             )}

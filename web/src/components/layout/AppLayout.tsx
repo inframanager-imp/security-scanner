@@ -24,7 +24,6 @@ import {
   Server,
   Database,
   Bug,
-  Hexagon,
   Cloud,
   Code2,
   Activity,
@@ -254,17 +253,17 @@ export function AppLayout() {
         )}
       >
         {/* Header & Logo */}
-        <div className="relative z-10 flex items-center justify-between px-3.5 py-4 border-b border-[#E1F0FA]">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-gradient-to-tr from-blue-600 to-sky-400 text-white shrink-0">
-              <Hexagon size={20} className="text-white fill-white/20" />
-            </div>
-            {!isCollapsed && (
-              <div className="flex flex-col truncate">
-                <span className="text-[14px] font-medium text-[#4b9cd3] leading-[1.2] -tracking-[0.01em] block truncate">Cloud Scanner</span>
-                <span className="text-[14px] font-medium text-[#4b9cd3] leading-[1.2] -tracking-[0.01em] block truncate">Security Platform</span>
-              </div>
-            )}
+        <div className="relative z-10 flex items-center justify-between px-3 py-3 border-b border-[#E1F0FA]">
+          <div className="flex items-center justify-center w-full overflow-hidden">
+            <img
+              src="/img/logo.png"
+              alt="Logo"
+              style={{ filter: 'invert(52%) sepia(76%) saturate(628%) hue-rotate(167deg) brightness(91%) contrast(92%)' }}
+              className={clsx(
+                'object-contain transition-all duration-200',
+                isCollapsed ? 'h-9 w-9 object-left' : 'h-11 w-full max-w-[215px]'
+              )}
+            />
           </div>
         </div>
 

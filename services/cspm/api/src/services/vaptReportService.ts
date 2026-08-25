@@ -33,12 +33,19 @@ export interface VaptReportFilters {
   region?:         string[]; // AWS only — best-effort, matched against evidence.region
   resourceGroup?:  string[]; // Azure only
   framework?:      string;   // AWS/Azure only
+  frameworks?:     string[]; // AWS/Azure only (multi-select)
+}
+
+export interface VaptFilterOptionItem {
+  id:   string;
+  name: string;
 }
 
 export interface VaptFilterOptions {
   tags:            string[];
   regions?:        string[]; // AWS only
   resourceGroups?: string[]; // Azure only
+  frameworks?:     VaptFilterOptionItem[];
 }
 
 export interface VaptFinding {
@@ -120,11 +127,15 @@ const FILTER_OPTIONS_SCAN_CAP = 3000; // best-effort sample size when deriving d
 const OPEN_STATUSES: FindingStatus[] = ['OPEN', 'ACKNOWLEDGED'];
 
 function normalizeFilters(filters?: VaptReportFilters): Required<VaptReportFilters> {
+  const fwList = filters?.frameworks?.length
+    ? filters.frameworks
+    : filters?.framework ? [filters.framework] : [];
   return {
     tags:          filters?.tags ?? [],
     region:        filters?.region ?? [],
     resourceGroup: filters?.resourceGroup ?? [],
-    framework:     filters?.framework ?? '',
+    framework:     fwList.join(','),
+    frameworks:    fwList,
   };
 }
 
@@ -149,16 +160,21 @@ function extraFilterConditions(filters: Required<VaptReportFilters>, kind: 'aws'
   if (kind === 'azure' && filters.resourceGroup.length > 0) {
     conditions.push({ resourceGroup: { in: filters.resourceGroup } });
   }
-  if (filters.framework) {
+  if (filters.frameworks.length > 0) {
+    const checkIds = new Set<string>();
+    const titles = new Set<string>();
+
     if (kind === 'aws') {
-      const fw = FRAMEWORKS.find(f => f.id === filters.framework);
-      if (fw) {
-        const checkIds = new Set<string>();
-        const titles = new Set<string>();
-        for (const c of fw.controls) {
-           for (const id of c.checkIds) checkIds.add(id);
-           for (const t of c.findingTitles) titles.add(t);
+      for (const fwId of filters.frameworks) {
+        const fw = FRAMEWORKS.find(f => f.id === fwId);
+        if (fw) {
+          for (const c of fw.controls) {
+            for (const id of c.checkIds) checkIds.add(id);
+            for (const t of c.findingTitles) titles.add(t);
+          }
         }
+      }
+      if (checkIds.size > 0 || titles.size > 0) {
         conditions.push({
           OR: [
             { checkId: { in: [...checkIds] } },
@@ -167,12 +183,15 @@ function extraFilterConditions(filters: Required<VaptReportFilters>, kind: 'aws'
         });
       }
     } else if (kind === 'azure') {
-      const fw = AZURE_FRAMEWORKS.find(f => f.id === filters.framework);
-      if (fw) {
-        const titles = new Set<string>();
-        for (const c of fw.controls) {
-           for (const t of c.findingTitles) titles.add(t);
+      for (const fwId of filters.frameworks) {
+        const fw = AZURE_FRAMEWORKS.find(f => f.id === fwId);
+        if (fw) {
+          for (const c of fw.controls) {
+            for (const t of c.findingTitles) titles.add(t);
+          }
         }
+      }
+      if (titles.size > 0) {
         conditions.push({ title: { in: [...titles] } });
       }
     }
@@ -313,6 +332,12 @@ async function buildAwsModel(targetId: string, filters: Required<VaptReportFilte
     return issues(b) - issues(a);
   });
 
+  const rawFrameworkScores = frameworkScores.map(({ controls: _c, ...rest }) => rest);
+  const selectedFwSet = new Set(filters.frameworks);
+  const finalFrameworkScores = selectedFwSet.size > 0
+    ? rawFrameworkScores.filter(f => selectedFwSet.has(f.frameworkId))
+    : rawFrameworkScores;
+
   return {
     provider:          'AWS',
     targetName:        account.name,
@@ -323,13 +348,22 @@ async function buildAwsModel(targetId: string, filters: Required<VaptReportFilte
     summary:           toSummary(summaryCounts),
     riskScore:         risk,
     riskRating:        riskRating(risk),
-    frameworkScores:   frameworkScores.map(({ controls: _c, ...rest }) => rest),
+    frameworkScores:   finalFrameworkScores,
     iamUsers,
-    findings: findings.map(f => ({
-      severity: f.severity, service: f.service, title: f.title, description: f.description,
-      remediation: f.remediation, resourceName: null, discoveredAt: f.discoveredAt,
-      complianceTags: uniqueFrameworkNames(getComplianceTags(f.title, f.checkId)),
-    })),
+    findings: (() => {
+      let list = findings.map(f => ({
+        severity: f.severity, service: f.service, title: f.title, description: f.description,
+        remediation: f.remediation, resourceName: null, discoveredAt: f.discoveredAt,
+        complianceTags: uniqueFrameworkNames(getComplianceTags(f.title, f.checkId)),
+      }));
+      if (filters.frameworks.length > 0) {
+        const selectedShortNames = new Set(
+          filters.frameworks.map(id => FRAMEWORKS.find(fw => fw.id === id)?.shortName).filter(Boolean)
+        );
+        list = list.filter(f => f.complianceTags.some(tag => selectedShortNames.has(tag)));
+      }
+      return list;
+    })(),
     findingsTruncated:  findingsTotalCount > FINDINGS_CAP,
     findingsTotalCount,
   };
@@ -375,6 +409,12 @@ async function buildAzureModel(targetId: string, filters: Required<VaptReportFil
   const summaryCounts = tallyBySeverity(severityRows);
   const risk = computeRisk(summaryCounts.critical, summaryCounts.high, summaryCounts.medium, summaryCounts.low);
 
+  const rawFrameworkScores = frameworkScores.map(({ controls: _c, ...rest }) => rest);
+  const selectedFwSet = new Set(filters.frameworks);
+  const finalFrameworkScores = selectedFwSet.size > 0
+    ? rawFrameworkScores.filter(f => selectedFwSet.has(f.frameworkId))
+    : rawFrameworkScores;
+
   return {
     provider:          'AZURE',
     targetName:        sub.name,
@@ -385,13 +425,22 @@ async function buildAzureModel(targetId: string, filters: Required<VaptReportFil
     summary:           toSummary(summaryCounts),
     riskScore:         risk,
     riskRating:        riskRating(risk),
-    frameworkScores:   frameworkScores.map(({ controls: _c, ...rest }) => rest),
+    frameworkScores:   finalFrameworkScores,
     iamUsers: null, // Azure user/role inventory isn't built yet — see the AWS block for the pattern to extend
-    findings: findings.map(f => ({
-      severity: f.severity, service: f.service, title: f.title, description: f.description,
-      remediation: f.remediation, resourceName: f.resourceId ?? f.resourceGroup ?? null, discoveredAt: f.discoveredAt,
-      complianceTags: uniqueFrameworkNames(getAzureComplianceTags(f.title)),
-    })),
+    findings: (() => {
+      let list = findings.map(f => ({
+        severity: f.severity, service: f.service, title: f.title, description: f.description,
+        remediation: f.remediation, resourceName: f.resourceId ?? f.resourceGroup ?? null, discoveredAt: f.discoveredAt,
+        complianceTags: uniqueFrameworkNames(getAzureComplianceTags(f.title)),
+      }));
+      if (filters.frameworks.length > 0) {
+        const selectedShortNames = new Set(
+          filters.frameworks.map(id => AZURE_FRAMEWORKS.find(fw => fw.id === id)?.shortName).filter(Boolean)
+        );
+        list = list.filter(f => f.complianceTags.some(tag => selectedShortNames.has(tag)));
+      }
+      return list;
+    })(),
     findingsTruncated:  findingsTotalCount > FINDINGS_CAP,
     findingsTotalCount,
   };
@@ -467,6 +516,25 @@ export async function buildVaptReportModel(
 
 // ─── Filter option discovery (populates the filter UI with real values) ─────
 
+const AWS_FRAMEWORK_DISPLAY_NAMES: Record<string, string> = {
+  PCI_DSS:     'PCI DSS',
+  SOC2:        'SOC 2',
+  ISO27001:    'ISO 27001',
+  HIPAA:       'HIPAA',
+  CIS_AWS:     'CIS AWS Foundations',
+  NIST_800_53: 'NIST 800-53',
+  GDPR:        'GDPR',
+  FEDRAMP:     'FedRAMP',
+};
+
+const AZURE_FRAMEWORK_DISPLAY_NAMES: Record<string, string> = {
+  CIS_AZURE: 'CIS Microsoft Azure Foundations',
+  NIST:      'NIST',
+  ISO27001:  'ISO 27001',
+  SOC2:      'SOC 2',
+  HIPAA:     'HIPAA',
+};
+
 export async function getVaptFilterOptions(provider: ReportProvider, targetId: string): Promise<VaptFilterOptions> {
   if (provider === 'AWS') {
     const account = await prisma.account.findUnique({ where: { id: targetId }, select: { id: true } });
@@ -474,27 +542,45 @@ export async function getVaptFilterOptions(provider: ReportProvider, targetId: s
 
     const rows = await prisma.finding.findMany({
       where:  { scan: { accountId: targetId }, findingStatus: { in: OPEN_STATUSES } },
-      select: { tags: true, evidence: true },
+      select: { title: true, checkId: true, tags: true, evidence: true },
       take:   FILTER_OPTIONS_SCAN_CAP,
     });
     const tags = new Set<string>();
     const regions = new Set<string>();
+    const usedFrameworkIds = new Set<string>();
+
     for (const r of rows) {
       for (const t of r.tags) tags.add(t);
       const region = (r.evidence as { region?: unknown } | null)?.region;
       if (typeof region === 'string' && region) regions.add(region);
+
+      const cTags = getComplianceTags(r.title, r.checkId);
+      for (const ct of cTags) {
+        const fw = FRAMEWORKS.find(f => f.shortName === ct.frameworkShortName);
+        if (fw) usedFrameworkIds.add(fw.id);
+      }
     }
-    return { tags: [...tags].sort(), regions: [...regions].sort() };
+
+    const frameworksToReturn = usedFrameworkIds.size > 0
+      ? FRAMEWORKS.filter(f => usedFrameworkIds.has(f.id))
+      : FRAMEWORKS;
+
+    const frameworks = frameworksToReturn.map(f => ({
+      id: f.id,
+      name: AWS_FRAMEWORK_DISPLAY_NAMES[f.id] ?? f.shortName,
+    }));
+
+    return { tags: [...tags].sort(), regions: [...regions].sort(), frameworks };
   }
 
   if (provider === 'AZURE') {
     const sub = await prisma.azureSubscription.findUnique({ where: { id: targetId }, select: { id: true } });
     if (!sub) throw new Error('Azure subscription not found');
 
-    const [tagRows, rgRows] = await Promise.all([
+    const [findingsRows, rgRows] = await Promise.all([
       prisma.azureFinding.findMany({
         where:  { scan: { subscriptionId: targetId }, findingStatus: { in: OPEN_STATUSES } },
-        select: { tags: true },
+        select: { title: true, tags: true },
         take:   FILTER_OPTIONS_SCAN_CAP,
       }),
       prisma.azureFinding.findMany({
@@ -504,9 +590,28 @@ export async function getVaptFilterOptions(provider: ReportProvider, targetId: s
       }),
     ]);
     const tags = new Set<string>();
-    for (const r of tagRows) for (const t of r.tags) tags.add(t);
+    const usedFrameworkIds = new Set<string>();
+
+    for (const r of findingsRows) {
+      for (const t of r.tags) tags.add(t);
+      const cTags = getAzureComplianceTags(r.title);
+      for (const ct of cTags) {
+        const fw = AZURE_FRAMEWORKS.find(f => f.shortName === ct.frameworkShortName);
+        if (fw) usedFrameworkIds.add(fw.id);
+      }
+    }
+
+    const frameworksToReturn = usedFrameworkIds.size > 0
+      ? AZURE_FRAMEWORKS.filter(f => usedFrameworkIds.has(f.id))
+      : AZURE_FRAMEWORKS;
+
+    const frameworks = frameworksToReturn.map(f => ({
+      id: f.id,
+      name: AZURE_FRAMEWORK_DISPLAY_NAMES[f.id] ?? f.shortName,
+    }));
+
     const resourceGroups = rgRows.map(r => r.resourceGroup).filter((x): x is string => !!x).sort();
-    return { tags: [...tags].sort(), resourceGroups };
+    return { tags: [...tags].sort(), resourceGroups, frameworks };
   }
 
   // GCP

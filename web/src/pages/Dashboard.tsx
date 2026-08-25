@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Cloud, Activity, AlertTriangle, Zap, CheckCircle, XCircle, Bug } from 'lucide-react';
 import { dashboardApi } from '../api/dashboard';
 import { aspmFetch } from '../aspm/aspmClient';
-import { StatCard, Card } from '../components/ui/Card';
+import { Card } from '../components/ui/Card';
 import { SeverityDonut } from '../components/charts/SeverityDonut';
 import { TrendLine } from '../components/charts/TrendLine';
 import { ScanStatusBadge } from '../components/ui/Badge';
@@ -363,27 +363,6 @@ export function Dashboard() {
         )}
       </Card>
 
-      {/* ── Critical & High Findings Summary ────────────────────────────────── */}
-      {!summaryLoading && ((summary?.findingsBySeverity?.critical ?? 0) + (summary?.findingsBySeverity?.high ?? 0)) > 0 && (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-4">
-            <XCircle size={28} className="text-red-500 shrink-0" />
-            <div>
-              <p className="text-xs font-medium text-red-600 uppercase tracking-wide">Critical Findings</p>
-              <p className="text-2xl font-bold text-red-700">{summary?.findingsBySeverity?.critical ?? 0}</p>
-              <p className="text-xs text-red-500 mt-0.5">Require immediate attention</p>
-            </div>
-          </div>
-          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 flex items-center gap-4">
-            <AlertTriangle size={28} className="text-orange-500 shrink-0" />
-            <div>
-              <p className="text-xs font-medium text-orange-600 uppercase tracking-wide">High Findings</p>
-              <p className="text-2xl font-bold text-orange-700">{summary?.findingsBySeverity?.high ?? 0}</p>
-              <p className="text-xs text-orange-500 mt-0.5">Should be addressed soon</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Clean state ──────────────────────────────────────────────────────── */}
       {!summaryLoading && totalFindings === 0 && allRows.length > 0 && (

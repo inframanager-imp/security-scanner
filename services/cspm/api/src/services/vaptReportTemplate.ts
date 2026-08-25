@@ -77,9 +77,17 @@ function svgGauge(score: number, label: string, sublabel: string): string {
 function filtersBanner(model: VaptReportModel): string {
   const f = model.appliedFilters;
   const parts: string[] = [];
-  if (f.tags.length)          parts.push(`Tags: ${f.tags.map(esc).join(', ')}`);
-  if (f.region.length)        parts.push(`Region: ${f.region.map(esc).join(', ')}`);
-  if (f.resourceGroup.length) parts.push(`Resource Group: ${f.resourceGroup.map(esc).join(', ')}`);
+  const fwList = f.frameworks?.length ? f.frameworks : f.framework ? [f.framework] : [];
+  if (fwList.length > 0) {
+    const names = fwList.map(fwId => {
+      const match = model.frameworkScores?.find(x => x.frameworkId === fwId);
+      return match ? match.frameworkName : fwId;
+    });
+    parts.push(`Framework${names.length > 1 ? 's' : ''}: ${names.map(esc).join(', ')}`);
+  }
+  if (f.tags?.length)          parts.push(`Tags: ${f.tags.map(esc).join(', ')}`);
+  if (f.region?.length)        parts.push(`Region: ${f.region.map(esc).join(', ')}`);
+  if (f.resourceGroup?.length) parts.push(`Resource Group: ${f.resourceGroup.map(esc).join(', ')}`);
   if (parts.length === 0) return '';
   return `
   <div class="cover-filters">
@@ -402,8 +410,8 @@ export function generateVaptReportHtml(model: VaptReportModel): string {
   .stat-lbl{font-size:10.5px;color:#64748b;margin-top:6px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
 
   /* ── Gauges & Tables ── */
-  .gauge-grid{display:flex;flex-wrap:nowrap;justify-content:space-between;gap:12px;margin-bottom:24px;overflow:hidden}
-  .gauge{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;max-width:96px}
+  .gauge-grid{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:24px;margin-bottom:24px}
+  .gauge{display:flex;flex-direction:column;align-items:center;gap:3px;flex:0 0 auto;width:96px}
   .gauge-label{font-size:11.5px;font-weight:700;color:#0f172a;text-align:center;line-height:1.2}
   .gauge-sublabel{font-size:10px;color:#94a3b8;font-weight:500}
 
