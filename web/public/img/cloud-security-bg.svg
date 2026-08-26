@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%">
+  <defs>
+    <!-- Light Background Gradient -->
+    <linearGradient id="bgGradLight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="50%" stop-color="#f1f5f9"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+
+    <!-- Cyan Soft Glow Filter -->
+    <filter id="cyanGlowLight" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="15" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Blue Soft Glow Filter -->
+    <filter id="blueGlowLight" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="25" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Light Grid Pattern -->
+    <pattern id="cyberGridLight" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#cbd5e1" stroke-width="1" stroke-opacity="0.6"/>
+    </pattern>
+  </defs>
+
+  <!-- Base Background -->
+  <rect width="1920" height="1080" fill="url(#bgGradLight)"/>
+  <rect width="1920" height="1080" fill="url(#cyberGridLight)"/>
+
+  <!-- Ambient Light Orbs (Positioned safely away from corners) -->
+  <circle cx="500" cy="480" r="320" fill="#38bdf8" opacity="0.12" filter="url(#cyanGlowLight)"/>
+  <circle cx="1420" cy="520" r="350" fill="#60a5fa" opacity="0.1" filter="url(#blueGlowLight)"/>
+
+  <!-- SYMBOL 1 (Top-Left): MULTI-CLOUD CLUSTER & TRUST VERIFIED SHIELD (Moved lower down to y=220) -->
+  <g transform="translate(240, 220) scale(0.72)" opacity="0.85">
+    <!-- Cloud Cluster Vector -->
+    <path d="M 120 200 
+             C 80 200, 50 160, 60 110 
+             C 20 100, 0 50, 30 10 
+             C 40 -40, 90 -70, 140 -60 
+             C 170 -110, 250 -120, 300 -80 
+             C 340 -110, 420 -90, 440 -40 
+             C 480 -20, 500 30, 470 70 
+             C 500 120, 460 180, 410 190 
+             C 390 200, 130 200, 120 200 Z" 
+          fill="none" stroke="#0284c7" stroke-width="2.5" stroke-dasharray="10 5"/>
+
+    <!-- Trust Verified Badge Symbol (Checkmark Shield) -->
+    <g transform="translate(180, 20)">
+      <path d="M 60 0 L 120 30 V 90 C 120 140, 60 170, 60 170 C 60 170, 0 140, 0 90 V 30 Z" 
+            fill="none" stroke="#0284c7" stroke-width="3.5"/>
+      <path d="M 60 20 L 100 45 V 85 C 100 120, 60 145, 60 145 C 60 145, 20 120, 20 85 V 45 Z" 
+            fill="#0369a1" opacity="0.1"/>
+      <!-- Checkmark -->
+      <path d="M 40 85 L 55 100 L 85 65" fill="none" stroke="#0284c7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <text x="140" y="240" font-family="sans-serif" font-size="13" font-weight="bold" fill="#0369a1" letter-spacing="3">TRUST_VERIFIED • MULTI_CLOUD</text>
+  </g>
+
+  <!-- SYMBOL 2 (Bottom-Left): DEFENSE FORTRESS & PROTECTION FIREWALL (Moved to y=620) -->
+  <g transform="translate(240, 620) scale(0.70)" opacity="0.8">
+    <!-- Defense Fortress Castle/Shield Symbol -->
+    <path d="M 40 20 L 120 20 L 120 50 L 180 50 L 180 20 L 260 20 L 260 120 C 260 200, 150 250, 150 250 C 150 250, 40 200, 40 120 Z" 
+          fill="none" stroke="#2563eb" stroke-width="3"/>
+    <path d="M 150 70 L 150 170 M 90 120 L 210 120" stroke="#0284c7" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="40" y="280" font-family="sans-serif" font-size="13" font-weight="bold" fill="#1d4ed8" letter-spacing="3">DEFENSE_FIREWALL • PROTECTION_ACTIVE</text>
+  </g>
+
+  <!-- SYMBOL 3 (Top-Right): AI THREAT RADAR & ZERO-TRUST GUARD (Moved lower down to y=220) -->
+  <g transform="translate(1240, 220) scale(0.70)" opacity="0.85">
+    <!-- Radar Reticle & Sonar Wave Vector -->
+    <circle cx="200" cy="120" r="110" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="8 4"/>
+    <circle cx="200" cy="120" r="70" fill="none" stroke="#0284c7" stroke-width="2.5"/>
+    <line x1="200" y1="0" x2="200" y2="240" stroke="#0284c7" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <line x1="80" y1="120" x2="320" y2="120" stroke="#0284c7" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <line x1="200" y1="120" x2="280" y2="40" stroke="#0284c7" stroke-width="3"/>
+    <circle cx="280" cy="40" r="6" fill="#059669"/>
+    <text x="60" y="270" font-family="sans-serif" font-size="13" font-weight="bold" fill="#0284c7" letter-spacing="3">AI_THREAT_RADAR • ZERO_TRUST</text>
+  </g>
+
+  <!-- SYMBOL 4 (Bottom-Right): PRIVACY VAULT & DATA ENCRYPTION SYMBOL (Moved to y=610) -->
+  <g transform="translate(1260, 610) scale(0.70)" opacity="0.8">
+    <!-- Key Vault & Data Encryption Shield -->
+    <path d="M 80 40 L 220 40 L 220 180 L 80 180 Z" fill="none" stroke="#0284c7" stroke-width="2.5"/>
+    <!-- Lock Shackle -->
+    <path d="M 110 40 V 10 C 110 -15, 190 -15, 190 10 V 40" fill="none" stroke="#0369a1" stroke-width="3"/>
+    <!-- Keyhole -->
+    <circle cx="150" cy="100" r="14" fill="#0369a1"/>
+    <path d="M 145 105 L 155 105 L 158 140 L 142 140 Z" fill="#0369a1"/>
+    <text x="30" y="220" font-family="sans-serif" font-size="13" font-weight="bold" fill="#0369a1" letter-spacing="3">PRIVACY_VAULT • AES_256_ENCRYPTED</text>
+  </g>
+
+  <!-- Technical Reticles & Corner Brackets -->
+  <g stroke="#94a3b8" stroke-width="2" opacity="0.5">
+    <path d="M 50 70 L 50 40 L 80 40"/>
+    <path d="M 1870 70 L 1870 40 L 1840 40"/>
+    <path d="M 50 1010 L 50 1040 L 80 1040"/>
+    <path d="M 1870 1010 L 1870 1040 L 1840 1040"/>
+  </g>
+</svg>

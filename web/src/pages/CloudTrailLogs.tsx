@@ -1,3 +1,4 @@
+import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -910,7 +911,8 @@ export function CloudTrailLogs() {
   };
 
   return (
-    <div className="space-y-6">
+    <ComingSoonPopup moduleName="CLOUD SECURITY (CLOUDTRAIL LOGS)">
+      <div className="space-y-6">
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -1279,5 +1281,6 @@ export function CloudTrailLogs() {
         </Card>
       )}
     </div>
+    </ComingSoonPopup>
   );
 }

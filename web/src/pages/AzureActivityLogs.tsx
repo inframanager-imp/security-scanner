@@ -1,3 +1,4 @@
+import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -201,7 +202,8 @@ export function AzureActivityLogs() {
   if (subOptions.length === 0) subOptions.push({ value: '', label: 'No subscriptions' });
 
   return (
-    <div className="space-y-5">
+    <ComingSoonPopup moduleName="CLOUD SECURITY (AZURE ACTIVITY LOGS)">
+      <div className="space-y-5">
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
@@ -394,5 +396,6 @@ export function AzureActivityLogs() {
         )}
       </Card>
     </div>
+    </ComingSoonPopup>
   );
 }

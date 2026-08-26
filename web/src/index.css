@@ -222,3 +222,78 @@
 .cca-nav-item.active svg {
   color: #4b9cd3;
 }
+
+/* ── Cybersecurity Login Styles ────────────────────────────────────────── */
+.cyber-grid-bg {
+  background-color: #060913;
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.15), transparent 70%),
+    linear-gradient(to right, rgba(14, 165, 233, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(14, 165, 233, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 40px 40px, 40px 40px;
+}
+
+@keyframes cyber-scan {
+  0% { transform: translateY(-100%); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(800px); opacity: 0; }
+}
+
+.cyber-scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent 0%, rgba(6, 182, 212, 0.1) 15%, rgba(6, 182, 212, 0.8) 50%, rgba(6, 182, 212, 0.1) 85%, transparent 100%);
+  animation: cyber-scan 6s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes cyber-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(1.08); }
+}
+
+.cyber-glow-blue {
+  animation: cyber-pulse 5s ease-in-out infinite;
+}
+
+@keyframes btn-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+.animate-btn-shimmer {
+  animation: btn-shimmer 1.5s infinite linear;
+}
+
+@keyframes btn-ripple {
+  0% { transform: scale(0.95); opacity: 0.9; }
+  50% { transform: scale(1.03); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-btn-press {
+  animation: btn-ripple 0.3s ease-out;
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-10px) rotate(2deg); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-float-slow {
+  animation: float-slow 4s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 20s linear infinite;
+}

@@ -1,3 +1,4 @@
+import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -1290,7 +1291,8 @@ export default function BaselineDrift() {
   const pendingApprovals = (pendingCount?.count ?? 0);
 
   return (
-    <div className="h-full flex flex-col">
+    <ComingSoonPopup moduleName="CLOUD SECURITY (BASELINE & DRIFT)">
+      <div className="h-full flex flex-col">
       {/* Top bar */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
@@ -1415,5 +1417,6 @@ export default function BaselineDrift() {
       {showCreate    && <CreateBaselineModal onClose={() => setShowCreate(false)} />}
       {showApprovals && <ApprovalQueueModal  onClose={() => setShowApprovals(false)} />}
     </div>
+    </ComingSoonPopup>
   );
 }
