@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Plus, Eye, Play, Trash2, CheckCircle, XCircle, ChevronLeft, ChevronRight,
-  Loader2, AlertCircle, Database,
+  Plus, Eye, Play, Trash2, CheckCircle, XCircle, ChevronLeft, ChevronRight, ChevronDown, Check,
+  Loader2, AlertCircle, Search, X, Layers, Activity, AlertTriangle,
 } from 'lucide-react';
 import { accountsApi } from '../api/accounts';
 import { azureApi } from '../api/azure';
@@ -14,6 +14,7 @@ import { Card } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { ScanStatusBadge } from '../components/ui/Badge';
+import { Tooltip } from '../components/ui/Tooltip';
 import type { Account, AzureSubscription, GcpProject, ScanStatus, InventoryStatus } from '../types';
 import { ApiRequestError } from '../api/client';
 
@@ -38,6 +39,26 @@ interface CloudRow {
   scanFn?:         () => void;
 }
 
+// ─── Cloud Provider Logos ───────────────────────────────────────────────────
+
+function CloudLogo({ provider, className = "w-4 h-4" }: { provider: CloudProvider | 'ALL'; className?: string }) {
+  if (provider === 'AWS') {
+    return <img src="/img/aws-logo.svg" alt="AWS" className={`${className} object-contain`} />;
+  }
+  if (provider === 'AZURE') {
+    return <img src="/img/azure-logo.svg" alt="Azure" className={`${className} object-contain`} />;
+  }
+  if (provider === 'GCP') {
+    return <img src="/img/gcp-logo.svg" alt="GCP" className={`${className} object-contain`} />;
+  }
+  // ALL
+  return (
+    <svg className={`${className} text-blue-600`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+    </svg>
+  );
+}
+
 // ─── Provider Config ──────────────────────────────────────────────────────────
 
 const PROVIDER_CONFIG: Record<CloudProvider, { label: string; color: string; bg: string; border: string; dot: string }> = {
@@ -46,14 +67,8 @@ const PROVIDER_CONFIG: Record<CloudProvider, { label: string; color: string; bg:
   GCP:   { label: 'GCP',   color: 'text-green-700',  bg: 'bg-green-50',   border: 'border-green-200',  dot: 'bg-green-500'  },
 };
 
-function ProviderBadge({ provider }: { provider: CloudProvider }) {
-  const cfg = PROVIDER_CONFIG[provider];
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${cfg.bg} ${cfg.color} border ${cfg.border}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-      {cfg.label}
-    </span>
-  );
+function ProviderBadge({ provider, className = "w-4 h-4 object-contain shrink-0" }: { provider: CloudProvider; className?: string }) {
+  return <CloudLogo provider={provider} className={className} />;
 }
 
 function SeverityBar({ summary }: { summary?: CloudRow['summary'] }) {
@@ -94,13 +109,12 @@ function InventoryPipelineBadge({ row }: { row: CloudRow }) {
 
   if (status === 'READY') {
     return (
-      <div className="flex flex-col gap-0.5">
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 font-medium">
-          <Database size={11} className="text-emerald-600" />
+      <div className="flex flex-col gap-1 items-start">
+        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
           Monitoring
         </span>
         {(row.lastConfigSyncAt ?? row.lastDiscoveryAt) && (
-          <span className="text-[10px] text-gray-400">
+          <span className="text-[11px] text-gray-400 whitespace-nowrap">
             Config synced {formatRelative(row.lastConfigSyncAt ?? row.lastDiscoveryAt!)}
           </span>
         )}
@@ -110,30 +124,33 @@ function InventoryPipelineBadge({ row }: { row: CloudRow }) {
 
   if (status === 'INITIALIZING') {
     return (
-      <div className="flex flex-col gap-0.5">
-        <span className="inline-flex items-center gap-1 text-xs text-blue-600 font-medium">
+      <div className="flex flex-col gap-1 items-start">
+        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
           <Loader2 size={11} className="animate-spin" />
           Initializing
         </span>
-        <span className="text-[10px] text-gray-400">Discovering resources…</span>
+        <span className="text-[11px] text-gray-400 whitespace-nowrap">Discovering resources…</span>
       </div>
     );
   }
 
   if (status === 'FAILED') {
     return (
-      <div className="flex flex-col gap-0.5" title={row.pipelineError ?? undefined}>
-        <span className="inline-flex items-center gap-1 text-xs text-red-600 font-medium">
+      <div className="flex flex-col gap-1 items-start" title={row.pipelineError ?? undefined}>
+        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold bg-red-50 text-red-700 border border-red-200">
           <AlertCircle size={11} />
           Failed
         </span>
-        <span className="text-[10px] text-gray-400 max-w-[120px] truncate">{row.pipelineError ?? 'Pipeline error'}</span>
+        <span className="text-[11px] text-gray-400 max-w-[150px] truncate">{row.pipelineError ?? 'Pipeline error'}</span>
       </div>
     );
   }
 
+  // PENDING
   return (
-    <span className="text-xs text-gray-400">Pending</span>
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">
+      Pending
+    </span>
   );
 }
 
@@ -145,15 +162,18 @@ function ProviderCard({
   const cfg = PROVIDER_CONFIG[provider];
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 w-full transition-all ${
+      className={`relative flex flex-col items-center justify-center gap-3 p-5 rounded-2xl border-2 w-full transition-all duration-200 ${
         selected
-          ? `${cfg.border} ${cfg.bg} ring-2 ring-offset-1 ring-current ${cfg.color}`
-          : 'border-gray-200 hover:border-gray-300 bg-white'
+          ? `${cfg.border} ${cfg.bg} ring-2 ring-offset-1 ring-blue-500/50 ${cfg.color} shadow-xs`
+          : 'border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50/50'
       }`}
     >
-      <span className={`h-3 w-3 rounded-full ${cfg.dot}`} />
-      <span className="text-sm font-semibold text-gray-800">{cfg.label}</span>
+      <div className="h-10 w-10 flex items-center justify-center shrink-0">
+        <CloudLogo provider={provider} className="w-10 h-10 object-contain shrink-0" />
+      </div>
+      <span className="text-sm font-bold text-gray-900">{cfg.label}</span>
     </button>
   );
 }
@@ -257,6 +277,19 @@ export function CloudSubscriptions() {
   const [deleteTarget, setDeleteTarget] = useState<CloudRow | null>(null);
   const [scanningId,   setScanningId]   = useState<string | null>(null);
   const [provFilter,   setProvFilter]   = useState<CloudProvider | 'ALL'>('ALL');
+  const [search,       setSearch]       = useState('');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef                     = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // ── Data fetching ──────────────────────────────────────────────────────────
 
@@ -328,8 +361,20 @@ export function CloudSubscriptions() {
   }));
 
   const allRows = [...awsRows, ...azureRows, ...gcpRows].sort((a, b) => a.name.localeCompare(b.name));
-  const rows    = provFilter === 'ALL' ? allRows : allRows.filter(r => r.provider === provFilter);
+  const rows    = allRows.filter(r => {
+    if (provFilter !== 'ALL' && r.provider !== provFilter) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      return (
+        r.name.toLowerCase().includes(q) ||
+        r.accountId.toLowerCase().includes(q) ||
+        r.provider.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
+  // Summary counts
   const totalCritical  = allRows.reduce((s, r) => s + (r.summary?.critical ?? 0), 0);
   const totalHigh      = allRows.reduce((s, r) => s + (r.summary?.high     ?? 0), 0);
   const totalFindings  = allRows.reduce((s, r) => s + (r.summary?.total    ?? 0), 0);
@@ -480,6 +525,7 @@ export function CloudSubscriptions() {
   return (
     <div className="space-y-6">
 
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Cloud Subscriptions</h2>
@@ -490,104 +536,315 @@ export function CloudSubscriptions() {
         </Button>
       </div>
 
+      {/* Summary KPI Cards Grid (5 Cards matching Compliance style) */}
       {allRows.length > 0 && (
-        <div className="grid grid-cols-5 gap-4">
-          {[
-            { label: 'Total Subscriptions', value: allRows.length,      cls: 'text-gray-900' },
-            { label: 'Monitored (READY)',    value: totalMonitored,      cls: totalMonitored > 0 ? 'text-emerald-600' : 'text-gray-400',
-              sub: totalInitializing > 0 ? `${totalInitializing} initializing` : null },
-            { label: 'Total Findings',       value: totalFindings,       cls: totalFindings  > 0 ? 'text-gray-900' : 'text-gray-400' },
-            { label: 'Critical',             value: totalCritical,       cls: totalCritical  > 0 ? 'text-red-600'  : 'text-gray-400' },
-            { label: 'High',                 value: totalHigh,           cls: totalHigh      > 0 ? 'text-orange-500' : 'text-gray-400' },
-          ].map(c => (
-            <div key={c.label} className="bg-white rounded-lg border border-gray-200 p-4">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{c.label}</p>
-              <p className={`mt-1 text-2xl font-bold ${c.cls}`}>{c.value}</p>
-              {'sub' in c && c.sub && (
-                <p className="text-[10px] text-blue-500 mt-0.5 flex items-center gap-1">
-                  <Loader2 size={9} className="animate-spin" />{c.sub}
-                </p>
-              )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Total Subscriptions */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-blue-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Subscriptions</span>
+              <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                <Layers size={18} />
+              </div>
             </div>
-          ))}
+            <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums" style={{ fontFamily: 'var(--font-heading)' }}>
+              {allRows.length}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-gray-400">
+              {[
+                awsRows.length > 0 && `AWS: ${awsRows.length}`,
+                azureRows.length > 0 && `Azure: ${azureRows.length}`,
+                gcpRows.length > 0 && `GCP: ${gcpRows.length}`,
+              ].filter(Boolean).join(' | ') || 'No accounts connected'}
+            </p>
+          </div>
+
+          {/* Monitored (READY) */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-emerald-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Monitored (READY)</span>
+              <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                <CheckCircle size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-emerald-600 tabular-nums" style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalMonitored}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-emerald-600/80 flex items-center gap-1">
+              {totalInitializing > 0 ? (
+                <>
+                  <Loader2 size={10} className="animate-spin text-blue-500" />
+                  <span className="text-blue-500">{totalInitializing} initializing</span>
+                </>
+              ) : (
+                `${allRows.length > 0 ? Math.round((totalMonitored / allRows.length) * 100) : 0}% active discovery`
+              )}
+            </p>
+          </div>
+
+          {/* Total Findings */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-purple-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Findings</span>
+              <div className="p-2 rounded-xl bg-purple-50 text-purple-600">
+                <Activity size={18} />
+              </div>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums" style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalFindings}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-purple-600/80">
+              Across connected clouds
+            </p>
+          </div>
+
+          {/* Critical Findings */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-red-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Critical</span>
+              <div className="p-2 rounded-xl bg-red-50 text-red-600">
+                <AlertCircle size={18} />
+              </div>
+            </div>
+            <p className={`mt-2 text-2xl font-bold tabular-nums ${totalCritical > 0 ? 'text-red-600' : 'text-gray-400'}`} style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalCritical}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-red-600/80">
+              Requires immediate action
+            </p>
+          </div>
+
+          {/* High Findings */}
+          <div className="bg-white rounded-2xl border border-gray-200/90 border-t-4 border-t-orange-500 p-4 shadow-xs hover:-translate-y-0.5 hover:shadow-md transition-all duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">High</span>
+              <div className="p-2 rounded-xl bg-orange-50 text-orange-600">
+                <AlertTriangle size={18} />
+              </div>
+            </div>
+            <p className={`mt-2 text-2xl font-bold tabular-nums ${totalHigh > 0 ? 'text-orange-500' : 'text-gray-400'}`} style={{ fontFamily: 'var(--font-heading)' }}>
+              {totalHigh}
+            </p>
+            <p className="mt-1 text-[11px] font-medium text-orange-600/80">
+              Elevated risk issues
+            </p>
+          </div>
         </div>
       )}
 
-      <div className="flex items-center gap-1 border-b border-gray-200">
-        {(['ALL', 'AWS', 'AZURE', 'GCP'] as const).map(p => (
-          <button
-            key={p}
-            onClick={() => setProvFilter(p)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              provFilter === p
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {p === 'ALL' ? 'All Clouds' : p}
-            {p !== 'ALL' && (
-              <span className="ml-1.5 text-xs text-gray-400">
-                ({p === 'AWS' ? awsRows.length : p === 'AZURE' ? azureRows.length : gcpRows.length})
+      {/* Toolbar above table: Search bar on Left, Styled Dropdown on Right (No card outline) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+        {/* Left Side: Search Bar */}
+        <div className="relative w-full sm:w-96">
+          <Input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search subscriptions by name, ID..."
+            leftIcon={<Search size={15} className="text-gray-400" />}
+            className="pr-8 text-xs sm:text-sm h-10 w-full bg-white border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition-colors"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Right Side: Custom Styled Dropdown Menu */}
+        <div className="flex items-center gap-3">
+          {(provFilter !== 'ALL' || search) && (
+            <button
+              onClick={() => { setProvFilter('ALL'); setSearch(''); }}
+              className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+
+          <div className="relative" ref={dropdownRef}>
+            <button
+              type="button"
+              onClick={() => setDropdownOpen(prev => !prev)}
+              className="h-10 px-3.5 flex items-center gap-2.5 text-xs sm:text-sm font-semibold bg-white text-gray-700 border border-gray-300 rounded-lg shadow-sm hover:border-gray-400 hover:bg-gray-50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all outline-none"
+            >
+              <CloudLogo provider={provFilter} className="w-4 h-4 shrink-0" />
+              <span>
+                {provFilter === 'ALL' ? `All Clouds (${allRows.length})` :
+                 provFilter === 'AWS' ? `AWS (${awsRows.length})` :
+                 provFilter === 'AZURE' ? `Azure (${azureRows.length})` :
+                 `GCP (${gcpRows.length})`}
               </span>
+              <ChevronDown
+                size={15}
+                className={`text-gray-400 transition-transform duration-200 ${dropdownOpen ? 'rotate-180 text-blue-600' : ''}`}
+              />
+            </button>
+
+            {/* Expanded Dropdown Card */}
+            {dropdownOpen && (
+              <div className="absolute right-0 top-full mt-1.5 w-52 bg-white border border-gray-200 rounded-xl shadow-xl z-50 py-1.5 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="px-3.5 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                  Select Provider
+                </div>
+                {[
+                  { id: 'ALL',   label: 'All Clouds', count: allRows.length },
+                  { id: 'AWS',   label: 'AWS',        count: awsRows.length },
+                  { id: 'AZURE', label: 'Azure',      count: azureRows.length },
+                  { id: 'GCP',   label: 'GCP',        count: gcpRows.length },
+                ].map((opt) => {
+                  const isSelected = provFilter === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setProvFilter(opt.id as CloudProvider | 'ALL');
+                        setDropdownOpen(false);
+                      }}
+                      className={`w-full px-3.5 py-2.5 flex items-center justify-between text-xs transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50/80 text-blue-700 font-semibold'
+                          : 'text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <CloudLogo provider={opt.id as CloudProvider | 'ALL'} className="w-4 h-4 shrink-0" />
+                        <span>{opt.label}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          isSelected ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {opt.count}
+                        </span>
+                        {isSelected && <Check size={14} className="text-blue-600 ml-0.5" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             )}
-          </button>
-        ))}
+          </div>
+        </div>
       </div>
 
+      {/* Table */}
       <Card padding={false}>
         {isLoading ? (
           <div className="flex items-center justify-center h-40">
             <div className="animate-spin rounded-full h-7 w-7 border-2 border-blue-600 border-t-transparent" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-            <div className="text-5xl">☁️</div>
-            <p className="text-gray-600 font-medium">No cloud subscriptions yet</p>
-            <p className="text-sm text-gray-400">Add an AWS, Azure or GCP account to start scanning</p>
-            <Button variant="primary" size="sm" leftIcon={<Plus size={14} />} onClick={() => setModalOpen(true)}>
-              Add Subscription
-            </Button>
-          </div>
+          allRows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+              <div className="text-5xl">☁️</div>
+              <p className="text-gray-600 font-medium">No cloud subscriptions yet</p>
+              <p className="text-sm text-gray-400">Add an AWS, Azure or GCP account to start scanning</p>
+              <Button variant="primary" size="sm" leftIcon={<Plus size={14} />} onClick={() => setModalOpen(true)}>
+                Add Subscription
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+              <div className="text-4xl">🔍</div>
+              <p className="text-gray-600 font-medium">No subscriptions match your filter or search</p>
+              <p className="text-sm text-gray-400">Try clearing your filters or search query</p>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => { setProvFilter('ALL'); setSearch(''); }}
+              >
+                Clear Filters & Search
+              </Button>
+            </div>
+          )
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                {['Cloud', 'Name', 'Account / Project ID', 'Credentials', 'Inventory Pipeline', 'Last Scan', 'Findings', 'Actions'].map(h => (
-                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                {['Subscription', 'Account / Project ID', 'Credentials', 'Inventory Pipeline', 'Last Scan', 'Findings', 'Actions'].map(h => (
+                  <th
+                    key={h}
+                    className={`px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide ${
+                      h === 'Subscription' ? 'border-r border-gray-200/80' : ''
+                    }`}
+                  >
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {rows.map(row => (
-                <tr key={`${row.provider}-${row.id}`} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-4"><ProviderBadge provider={row.provider} /></td>
-                  <td className="px-5 py-4 font-medium text-gray-900">{row.name}</td>
+                <tr key={`${row.provider}-${row.id}`} className="hover:bg-gray-50/80 transition-colors">
+                  <td className="px-5 py-4 border-r border-gray-200/70">
+                    <button
+                      onClick={() => navigate(row.detailPath)}
+                      className="flex items-center gap-2.5 text-left group focus:outline-none"
+                    >
+                      <ProviderBadge provider={row.provider} className="w-4 h-4 object-contain shrink-0" />
+                      <span className="font-semibold text-gray-900 group-hover:text-blue-600 group-hover:underline transition-colors text-sm leading-none">
+                        {row.name}
+                      </span>
+                    </button>
+                  </td>
                   <td className="px-5 py-4 font-mono text-xs text-gray-500 max-w-[200px] truncate">{row.accountId}</td>
                   <td className="px-5 py-4">
                     {row.hasCredentials
-                      ? <span className="inline-flex items-center gap-1 text-xs text-green-700"><CheckCircle size={12} /> Configured</span>
+                      ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700"><CheckCircle size={12} /> Configured</span>
                       : <span className="inline-flex items-center gap-1 text-xs text-gray-400"><XCircle size={12} /> None</span>}
                   </td>
                   <td className="px-5 py-4"><InventoryPipelineBadge row={row} /></td>
                   <td className="px-5 py-4">
                     {row.latestScan ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-1 items-start">
                         <ScanStatusBadge status={row.latestScan.status} />
-                        <span className="text-xs text-gray-400">{formatDate(row.latestScan.createdAt)}</span>
+                        <span className="text-[11px] text-gray-400 whitespace-nowrap">{formatDate(row.latestScan.createdAt)}</span>
                       </div>
                     ) : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-5 py-4"><SeverityBar summary={row.summary} /></td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <Button variant="ghost" size="sm" leftIcon={<Eye size={13} />}
-                        onClick={() => navigate(row.detailPath)}>View</Button>
-                      <Button variant="secondary" size="sm" leftIcon={<Play size={13} />}
-                        loading={scanningId === row.id} disabled={!row.hasCredentials}
-                        onClick={() => handleScan(row)}>Scan</Button>
-                      <Button variant="ghost" size="sm" leftIcon={<Trash2 size={13} />}
-                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                        onClick={() => setDeleteTarget(row)}>Delete</Button>
+                    <div className="flex items-center gap-1">
+                      <Tooltip content="View Details" position="top">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50"
+                          aria-label="View Details"
+                          onClick={() => navigate(row.detailPath)}
+                        >
+                          <Eye size={15} />
+                        </Button>
+                      </Tooltip>
+                      <Tooltip content="Trigger Scan" position="top">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50"
+                          aria-label="Trigger Scan"
+                          loading={scanningId === row.id}
+                          disabled={!row.hasCredentials}
+                          onClick={() => handleScan(row)}
+                        >
+                          {scanningId !== row.id && <Play size={15} />}
+                        </Button>
+                      </Tooltip>
+                      <Tooltip content="Delete Subscription" position="top">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50"
+                          aria-label="Delete Subscription"
+                          onClick={() => setDeleteTarget(row)}
+                        >
+                          <Trash2 size={15} />
+                        </Button>
+                      </Tooltip>
                     </div>
                   </td>
                 </tr>
@@ -617,6 +874,7 @@ export function CloudSubscriptions() {
           </div>
         ) : (
           <div className="space-y-5">
+            {/* Step header */}
             <div className="flex items-center gap-2">
               <button onClick={() => { setStep('pick-provider'); setAddError(null); }}
                 className="text-gray-400 hover:text-gray-600">
@@ -626,6 +884,7 @@ export function CloudSubscriptions() {
               <span className="text-sm text-gray-500">{formLabel}</span>
             </div>
 
+            {/* Provider-specific form */}
             {provider === 'AWS' && (
               <AWSAddForm form={awsForm} onChange={setAwsForm} error={addError} />
             )}
@@ -647,17 +906,32 @@ export function CloudSubscriptions() {
       </Modal>
 
       {/* ── Delete Confirm Modal ── */}
-      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Subscription" size="sm">
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?{' '}
-            All scans and findings will be permanently removed.
-          </p>
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-            <Button variant="primary" className="bg-red-600 hover:bg-red-700"
-              loading={deletePending} onClick={handleDelete}>
-              Delete
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Confirm Deletion" size="sm">
+        <div className="space-y-4 pt-1">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-red-50 text-red-600 rounded-full shrink-0 mt-0.5 border border-red-100">
+              <Trash2 size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Delete "{deleteTarget?.name}"?</h3>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                Are you sure you want to delete this {deleteTarget?.provider} subscription (ID: <code className="font-mono text-gray-700 bg-gray-100 px-1 py-0.5 rounded">{deleteTarget?.accountId}</code>)? All historical scans, assets, and security findings will be permanently removed.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100">
+            <Button variant="secondary" size="sm" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              className="bg-red-600 hover:bg-red-700 text-white"
+              loading={deletePending}
+              onClick={handleDelete}
+            >
+              Delete Subscription
             </Button>
           </div>
         </div>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  ArrowLeft, Database, GitBranch, Clock, CheckCircle2, Trash2,
+  ArrowLeft, Database, GitBranch, Clock, CheckCircle, Trash2,
   ChevronDown, ChevronUp, Server, Tag, MapPin, GitCompare, Network,
   Share2,
 } from 'lucide-react';
@@ -28,7 +28,7 @@ const DEP_TYPE_CONFIG: Record<DependencyType, { color: string; label: string }> 
 };
 
 const CHANGE_TYPE_CONFIG = {
-  CREATED:  { color: 'text-green-700 bg-green-50 border-green-200', icon: CheckCircle2 },
+  CREATED:  { color: 'text-green-700 bg-green-50 border-green-200', icon: CheckCircle },
   MODIFIED: { color: 'text-blue-700 bg-blue-50 border-blue-200',    icon: GitCompare   },
   DELETED:  { color: 'text-red-700 bg-red-50 border-red-200',       icon: Trash2       },
 };
@@ -408,7 +408,7 @@ export function ResourceDetail() {
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
-                <CheckCircle2 size={10} /> Active
+                <CheckCircle size={10} /> Active
               </span>
             )}
           </div>

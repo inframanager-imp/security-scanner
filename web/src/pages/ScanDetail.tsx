@@ -20,6 +20,7 @@ import { ScanProgress } from '../components/ScanProgress';
 import { Pagination } from '../components/ui/Table';
 import type { Finding, Severity, FindingStatus } from '../types';
 import { getResourceName } from '../utils/resourceName';
+import { CloudProviderLogo } from '../components/ui/CloudProviderLogo';
 
 const SEVERITY_OPTIONS = [
   { value: '', label: 'All Severities' },
@@ -196,51 +197,73 @@ export function ScanDetail() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
+      {/* Redesigned Header Row matching Account & Compliance details consistency */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-1 border-b border-gray-200/80">
+        {/* Left Section: Back Arrow + Divider + Provider Logo + Title & Metadata */}
+        <div className="flex items-center gap-3.5 min-w-0">
+          {/* 1. Back Arrow Button */}
           <Button
             variant="ghost"
             size="sm"
-            leftIcon={<ArrowLeft size={16} />}
+            className="p-2.5 rounded-xl text-gray-500 hover:text-gray-900 hover:bg-slate-100 shrink-0 border border-transparent hover:border-slate-200 transition-all"
             onClick={() => navigate(-1)}
+            aria-label="Go back"
+            title="Go back"
           >
-            Back
+            <ArrowLeft size={18} />
           </Button>
-          <div>
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-bold text-gray-900">Scan #{shortId}</h2>
+
+          {/* Divider Line */}
+          <div className="h-8 w-px bg-gray-200/80 shrink-0" />
+
+          {/* 2. Provider Logo / Scan Badge Tile */}
+          <div className="flex items-center justify-center p-2 rounded-xl bg-slate-50 border border-slate-200/80 shrink-0 shadow-2xs">
+            <CloudProviderLogo provider={(scan.account as any)?.provider ?? 'AWS'} className="w-6 h-6 shrink-0 object-contain" />
+          </div>
+
+          {/* 3 & 4. Title & Details Subtitle */}
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight" style={{ fontFamily: 'var(--font-heading)' }}>
+                Scan #{shortId}
+              </h1>
               <ScanStatusBadge status={scan.status} />
             </div>
-            <div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
+
+            {/* Scan Subtitle Details Row */}
+            <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
               {scan.account && (
-                <span className="font-mono bg-gray-100 px-2 py-0.5 rounded text-xs">
-                  {scan.account.awsAccountId}
-                </span>
+                <>
+                  <span className="font-semibold text-gray-400">Account ID:</span>
+                  <span className="font-mono font-medium text-gray-700 bg-gray-100/90 border border-gray-200 px-2 py-0.5 rounded-md text-[11px] shadow-2xs">
+                    {scan.account.awsAccountId}
+                  </span>
+                  <span className="text-gray-300">•</span>
+                  <span className="font-semibold text-gray-700">{scan.account.name}</span>
+                  <span className="text-gray-300">•</span>
+                </>
               )}
-              {scan.account && <span>{scan.account.name}</span>}
-              <span>•</span>
-              <span>{formatDate(scan.startedAt ?? scan.createdAt)}</span>
+              <span className="text-gray-600">{formatDate(scan.startedAt ?? scan.createdAt)}</span>
               {scan.durationMs && (
                 <>
-                  <span>•</span>
-                  <span>{formatDuration(scan.durationMs)}</span>
+                  <span className="text-gray-300">•</span>
+                  <span className="font-mono text-gray-600 font-medium">{formatDuration(scan.durationMs)}</span>
                 </>
               )}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Button
-              variant="secondary"
-              size="sm"
-              leftIcon={<Download size={14} />}
-              onClick={() => handleExport('json')}
-            >
-              Export JSON
-            </Button>
-          </div>
+
+        {/* Right Section: Action Buttons */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Download size={14} />}
+            onClick={() => handleExport('json')}
+          >
+            Export JSON
+          </Button>
           <Button
             variant="secondary"
             size="sm"

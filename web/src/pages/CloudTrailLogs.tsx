@@ -1,3 +1,4 @@
+import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -16,7 +17,7 @@ import {
   FileText,
   Code2,
   XCircle,
-  CheckCircle2,
+  CheckCircle,
 } from 'lucide-react';
 import { cloudtrailApi, type CloudTrailEvent } from '../api/cloudtrail';
 import { accountsApi } from '../api/accounts';
@@ -901,7 +902,8 @@ export function CloudTrailLogs() {
   };
 
   return (
-    <div className="space-y-6">
+    <ComingSoonPopup moduleName="CLOUD SECURITY (CLOUDTRAIL LOGS)">
+      <div className="space-y-6">
 
       <div className="flex items-center justify-between">
         <div>
@@ -1230,7 +1232,7 @@ export function CloudTrailLogs() {
                           <td className="px-3 py-3">
                             {event.errorCode
                               ? <span className="flex items-center gap-1 text-xs text-red-600 font-medium"><XCircle size={11} />Failed</span>
-                              : <span className="flex items-center gap-1 text-xs text-green-600 font-medium"><CheckCircle2 size={11} />Success</span>}
+                              : <span className="flex items-center gap-1 text-xs text-green-600 font-medium"><CheckCircle size={11} />Success</span>}
                           </td>
                         </tr>
                         {isExp && <ExpandedEvent event={event} />}
@@ -1257,5 +1259,6 @@ export function CloudTrailLogs() {
         </Card>
       )}
     </div>
+    </ComingSoonPopup>
   );
 }

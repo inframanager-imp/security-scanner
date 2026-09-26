@@ -1,9 +1,10 @@
+import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   AlertTriangle,
-  CheckCircle2,
+  CheckCircle,
   XCircle,
   ChevronDown,
   ChevronRight,
@@ -229,7 +230,7 @@ function RepoSection({ repoName, findings, onStatusChange, updatingId }: RepoSec
           )}
           {counts.critical === 0 && counts.high === 0 && (
             <span className="flex items-center gap-1 text-xs text-green-600">
-              <CheckCircle2 size={13} /> No Critical/High
+              <CheckCircle size={13} /> No Critical/High
             </span>
           )}
         </div>
@@ -368,9 +369,11 @@ export function ContainerSecurity() {
 
   const allFindings: Finding[] = (data as any)?.data ?? [];
 
+  // Separate CVE findings from config findings
   const cveFindings    = allFindings.filter((f) => CVE_FINDING_TITLES.has(f.title));
   const configFindings = allFindings.filter((f) => CONFIG_FINDING_TITLES.has(f.title));
 
+  // Apply search filter to CVE findings only
   const filtered = search.trim()
     ? cveFindings.filter(
         (f) =>
@@ -381,6 +384,7 @@ export function ContainerSecurity() {
       )
     : cveFindings;
 
+  // Group by repo
   const byRepo = new Map<string, Finding[]>();
   for (const f of filtered) {
     const key = getRepoName(f);
@@ -398,6 +402,7 @@ export function ContainerSecurity() {
 
   const totals = summarise(filtered);
 
+  // Update status mutation
   const updateStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: FindingStatus }) =>
       findingsApi.updateStatus(id, status),
@@ -426,7 +431,9 @@ export function ContainerSecurity() {
   });
 
   return (
-    <div className="space-y-6">
+    <ComingSoonPopup moduleName="CLOUD SECURITY (CONTAINER SECURITY)">
+      <div className="space-y-6">
+      {/* Scan modal */}
       {showScanModal && (
         <ScanModal
           accounts={accounts}
@@ -436,6 +443,7 @@ export function ContainerSecurity() {
         />
       )}
 
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -469,6 +477,7 @@ export function ContainerSecurity() {
         </div>
       </div>
 
+      {/* Feedback message */}
       {scanMessage && (
         <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 flex items-center gap-2">
           <Info size={14} className="shrink-0" />
@@ -494,6 +503,7 @@ export function ContainerSecurity() {
         </div>
       )}
 
+      {/* Filters */}
       <Card>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-48">
@@ -536,6 +546,7 @@ export function ContainerSecurity() {
         </div>
       </Card>
 
+      {/* Content */}
       {isLoading ? (
         <Card>
           <div className="space-y-3 p-2">
@@ -558,6 +569,7 @@ export function ContainerSecurity() {
         </Card>
       ) : (
         <div>
+          {/* Stats strip */}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <Card>
               <div className="flex items-center gap-3">
@@ -594,6 +606,7 @@ export function ContainerSecurity() {
             </Card>
           </div>
 
+          {/* Repository accordion list */}
           {sortedRepos.map(([repoName, repoFindings]) => (
             <RepoSection
               key={repoName}
@@ -606,6 +619,7 @@ export function ContainerSecurity() {
         </div>
       )}
     </div>
+    </ComingSoonPopup>
   );
 }
 

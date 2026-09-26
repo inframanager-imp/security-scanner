@@ -24,7 +24,11 @@ import {
   Server,
   Database,
   Bug,
-  Hexagon,
+  Cloud,
+  Code2,
+  Activity,
+  PanelLeftClose,
+  PanelLeftOpen,
   Waypoints,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -41,69 +45,74 @@ interface NavLeaf {
 interface NavSection {
   id: string;
   title: string;
+  icon: ReactNode;
   items: NavLeaf[];
 }
 
 // ─── Nav definition ───────────────────────────────────────────────────────────
 
 // Standalone landing item (always visible, above the grouped sections).
-const dashboardItem: NavLeaf = { to: '/dashboard', icon: <LayoutDashboard size={18} />, label: 'Dashboard' };
+const dashboardItem: NavLeaf = { to: '/dashboard', icon: <LayoutDashboard size={20} strokeWidth={2} />, label: 'Dashboard' };
 
 const navSections: NavSection[] = [
   {
     id: 'cloud',
     title: 'Cloud Security',
+    icon: <Cloud size={15} strokeWidth={2} className="text-blue-400 shrink-0" />,
     items: [
-      { to: '/cloud',          icon: <Layers size={16} />,          label: 'Cloud Subscriptions' },
-      { to: '/compliance',     icon: <ShieldCheck size={16} />,     label: 'Compliance'          },
-      { to: '/threats',        icon: <ShieldAlert size={16} />,     label: 'Threat Detection'    },
-      { to: '/config-changes', icon: <GitCommit size={16} />,       label: 'Config Changes'      },
-      { to: '/baselines',      icon: <GitCompareArrows size={16} />,label: 'Baseline & Drift'    },
-      { to: '/posture-score',  icon: <Shield size={16} />,          label: 'Posture Score'       },
-      { to: '/cloudtrail',     icon: <ScrollText size={16} />,      label: 'CloudTrail Logs'     },
-      { to: '/azure-activity', icon: <FileText size={16} />,        label: 'Azure Activity Logs' },
-      { to: '/containers',     icon: <Box size={16} />,             label: 'Container Security'  },
+      { to: '/cloud',          icon: <Layers size={16} strokeWidth={2} />,          label: 'Cloud Subscriptions' },
+      { to: '/compliance',     icon: <ShieldCheck size={16} strokeWidth={2} />,     label: 'Compliance'          },
+      { to: '/threats',        icon: <ShieldAlert size={16} strokeWidth={2} />,     label: 'Threat Detection'    },
+      { to: '/config-changes', icon: <GitCommit size={16} strokeWidth={2} />,       label: 'Config Changes'      },
+      { to: '/baselines',      icon: <GitCompareArrows size={16} strokeWidth={2} />,label: 'Baseline & Drift'    },
+      { to: '/posture-score',  icon: <Shield size={16} strokeWidth={2} />,          label: 'Posture Score'       },
+      { to: '/cloudtrail',     icon: <ScrollText size={16} strokeWidth={2} />,      label: 'CloudTrail Logs'     },
+      { to: '/azure-activity', icon: <FileText size={16} strokeWidth={2} />,        label: 'Azure Activity Logs' },
+      { to: '/containers',     icon: <Box size={16} strokeWidth={2} />,             label: 'Container Security'  },
     ],
   },
   {
     id: 'appsec',
     title: 'Application Security',
+    icon: <Code2 size={15} strokeWidth={2} className="text-indigo-400 shrink-0" />,
     items: [
-      { to: '/appsec/targets',  icon: <ClipboardList size={16} />,   label: 'Targets'             },
-      { to: '/appsec/overview', icon: <LayoutDashboard size={16} />, label: 'App Posture'         },
-      { to: '/appsec/web',      icon: <Server size={16} />,          label: 'Web Scan (DAST)'     },
-      { to: '/appsec/api',      icon: <Network size={16} />,         label: 'API Security'        },
-      { to: '/appsec/code',     icon: <FileText size={16} />,        label: 'Code Scan (SAST/SCA)'},
-      { to: '/appsec/vulnerabilities', icon: <ShieldAlert size={16} />, label: 'Vulnerabilities' },
-      { to: '/appsec/pipeline', icon: <GitCompareArrows size={16} />, label: 'Vuln Pipeline' },
-      { to: '/appsec/rag-index', icon: <Database size={16} />,       label: 'RAG Index'           },
-      { to: '/appsec/taint-report', icon: <Waypoints size={16} />,   label: 'Taint Analysis'      },
-      { to: '/appsec/pentest',  icon: <Flame size={16} />,           label: 'Pentest (AI)'        },
-      { to: '/appsec/ai-red',   icon: <Bug size={16} />,             label: 'AI Red Team'         },
+      { to: '/appsec/targets',  icon: <ClipboardList size={16} strokeWidth={2} />,   label: 'Targets'             },
+      { to: '/appsec/overview', icon: <LayoutDashboard size={16} strokeWidth={2} />, label: 'App Posture'         },
+      { to: '/appsec/web',      icon: <Server size={16} strokeWidth={2} />,          label: 'Web Scan (DAST)'     },
+      { to: '/appsec/api',      icon: <Network size={16} strokeWidth={2} />,         label: 'API Security'        },
+      { to: '/appsec/code',     icon: <FileText size={16} strokeWidth={2} />,        label: 'Code Scan (SAST/SCA)'},
+      { to: '/appsec/vulnerabilities', icon: <ShieldAlert size={16} strokeWidth={2} />, label: 'Vulnerabilities'   },
+      { to: '/appsec/pipeline', icon: <GitCompareArrows size={16} strokeWidth={2} />, label: 'Vuln Pipeline'     },
+      { to: '/appsec/rag-index', icon: <Database size={16} strokeWidth={2} />,       label: 'RAG Index'           },
+      { to: '/appsec/taint-report', icon: <Waypoints size={16} strokeWidth={2} />,   label: 'Taint Analysis'      },
+      { to: '/appsec/pentest',  icon: <Flame size={16} strokeWidth={2} />,           label: 'Pentest (AI)'        },
+      { to: '/appsec/ai-red',   icon: <Bug size={16} strokeWidth={2} />,             label: 'AI Red Team'         },
     ],
   },
   {
     id: 'risk',
     title: 'Risk & Exposure',
+    icon: <ShieldAlert size={15} strokeWidth={2} className="text-amber-400 shrink-0" />,
     items: [
-      { to: '/asset-graph',       icon: <Network size={16} />,      label: 'Asset Graph'             },
-      { to: '/identity-graph',    icon: <Users size={16} />,        label: 'Identity & Attack Paths' },
-      { to: '/prioritized-risks', icon: <Flame size={16} />,        label: 'Prioritized Risks'       },
-      { to: '/workload-vulns',    icon: <Server size={16} />,       label: 'Workload Vulns'          },
-      { to: '/data-security',     icon: <Database size={16} />,     label: 'Data Security'           },
-      { to: '/iam-escalation',    icon: <ShieldAlert size={16} />,  label: 'IAM Escalation'          },
-      { to: '/risk-register',     icon: <ClipboardList size={16} />,label: 'Risk Register'           },
+      { to: '/asset-graph',       icon: <Network size={16} strokeWidth={2} />,      label: 'Asset Graph'             },
+      { to: '/identity-graph',    icon: <Users size={16} strokeWidth={2} />,        label: 'Identity & Attack Paths' },
+      { to: '/prioritized-risks', icon: <Flame size={16} strokeWidth={2} />,        label: 'Prioritized Risks'       },
+      { to: '/workload-vulns',    icon: <Server size={16} strokeWidth={2} />,       label: 'Workload Vulns'          },
+      { to: '/data-security',     icon: <Database size={16} strokeWidth={2} />,     label: 'Data Security'           },
+      { to: '/iam-escalation',    icon: <ShieldAlert size={16} strokeWidth={2} />,  label: 'IAM Escalation'          },
+      { to: '/risk-register',     icon: <ClipboardList size={16} strokeWidth={2} />,label: 'Risk Register'           },
     ],
   },
   {
     id: 'ops',
     title: 'Operations',
+    icon: <Activity size={15} strokeWidth={2} className="text-emerald-400 shrink-0" />,
     items: [
-      { to: '/reports',           icon: <AlertTriangle size={16} />,label: 'Reports'           },
-      { to: '/integrations',      icon: <Link2 size={16} />,        label: 'Integrations'      },
-      { to: '/alerts',            icon: <Bell size={16} />,         label: 'Alerts'            },
-      { to: '/freeze-windows',    icon: <SnowflakeIcon size={16}/>, label: 'Freeze Windows'    },
-      { to: '/scheduled-reports', icon: <FileText size={16} />,     label: 'Scheduled Reports' },
+      { to: '/reports',           icon: <AlertTriangle size={16} strokeWidth={2} />,label: 'Reports'           },
+      { to: '/integrations',      icon: <Link2 size={16} strokeWidth={2} />,        label: 'Integrations'      },
+      { to: '/alerts',            icon: <Bell size={16} strokeWidth={2} />,         label: 'Alerts'            },
+      { to: '/freeze-windows',    icon: <SnowflakeIcon size={16} strokeWidth={2}/>, label: 'Freeze Windows'    },
+      { to: '/scheduled-reports', icon: <FileText size={16} strokeWidth={2} />,     label: 'Scheduled Reports' },
     ],
   },
 ];
@@ -168,43 +177,53 @@ function getPageTitle(pathname: string): string {
 
 // ─── Nav leaf + collapsible section ─────────────────────────────────────────────
 
-function NavLeaf({ item, end }: { item: NavLeaf; end?: boolean }) {
+// ─── Nav leaf + collapsible section ─────────────────────────────────────────────
+
+function NavLeaf({
+  item, end, isCollapsed,
+}: { item: NavLeaf; end?: boolean; isCollapsed?: boolean }) {
   return (
     <NavLink
       to={item.to}
       end={end}
+      title={isCollapsed ? item.label : undefined}
       className={({ isActive }) =>
         clsx(
-          'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
-          isActive
-            ? 'bg-gradient-to-r from-[#1D4ED8] to-[#2563EB] text-white shadow-lg shadow-blue-900/40'
-            : 'text-[#D8E6FF] hover:text-white hover:bg-white/5',
+          'cca-nav-item',
+          isActive && 'active'
         )
       }
     >
-      {item.icon}
-      <span className="flex-1">{item.label}</span>
+      <span className="shrink-0 text-[#4b9cd3]">{item.icon}</span>
+      {!isCollapsed && <span className="truncate">{item.label}</span>}
     </NavLink>
   );
 }
 
 function NavSectionRow({
-  section, isOpen, onToggle,
-}: { section: NavSection; isOpen: boolean; onToggle: () => void }) {
+  section, isOpen, onToggle, isCollapsed, hasActivePage,
+}: { section: NavSection; isOpen: boolean; onToggle: () => void; isCollapsed?: boolean; hasActivePage?: boolean }) {
   return (
-    <div>
-      <button
-        onClick={onToggle}
-        className="flex items-center w-full px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#8EA6C8] hover:text-[#D8E6FF] transition-colors"
-      >
-        <span className="flex-1 text-left">{section.title}</span>
-        <ChevronRight size={12} className={clsx('transition-transform duration-150 shrink-0', isOpen && 'rotate-90')} />
-      </button>
-      {isOpen && (
-        <div className="space-y-0.5 mb-1">
-          {section.items.map((it) => <NavLeaf key={it.to} item={it} />)}
-        </div>
+    <div
+      className={clsx(
+        'cca-nav-group my-1',
+        isOpen && !isCollapsed && 'expanded',
+        hasActivePage && 'has-active-page'
       )}
+    >
+      <div className="cca-card-header" onClick={onToggle}>
+        <div className="cca-card-header-left">
+          <span className="text-[#4b9cd3]">{section.icon}</span>
+          <span className="cca-card-title">{section.title}</span>
+        </div>
+        <div className="cca-card-chevron">
+          <ChevronRight size={14} className="text-[#0284C7]" />
+        </div>
+      </div>
+
+      <div className="cca-card-body">
+        {section.items.map((it) => <NavLeaf key={it.to} item={it} />)}
+      </div>
     </div>
   );
 }
@@ -215,6 +234,7 @@ export function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const crumb = getBreadcrumb(location.pathname);
+  const [isCollapsed, setIsCollapsed] = useState(true);
 
   // Accordion: one section open at a time, auto-expands the active section on nav.
   const activeSection = sectionForPath(location.pathname);
@@ -224,56 +244,112 @@ export function AppLayout() {
   }, [activeSection]);
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
-      {/* Sidebar */}
-      <aside className="sidebar-ocean relative flex flex-col w-[280px] shrink-0 text-white">
-        {/* Realistic ocean wave photo, faded into the navy gradient */}
-        <div className="sidebar-wave-img" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-64 bg-gradient-to-t from-[#031327]/80 via-[#072245]/25 to-transparent" />
+    <div className="relative flex h-screen bg-gray-50 overflow-hidden">
+      {/* Fixed width spacer rail to preserve main content width & layout stability */}
+      <div className="w-[68px] shrink-0" />
 
-        {/* Logo */}
-        <div className="relative z-10 flex items-center gap-3 px-5 py-5 border-b border-white/10">
-          <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg shadow-blue-900/50">
-            <Hexagon size={20} className="text-white" />
-          </div>
-          <div>
-            <span className="text-white font-bold text-lg leading-none">Cloud Scanner</span>
-            <span className="block text-[#8EA6C8] text-xs mt-1">Security Platform</span>
+      {/* Floating Overlay Sidebar */}
+      <aside
+        onMouseEnter={() => setIsCollapsed(false)}
+        onMouseLeave={() => setIsCollapsed(true)}
+        className={clsx(
+          'sidebar-cca absolute inset-y-0 left-0 flex flex-col text-slate-800 border-r border-[#E1F0FA] bg-white transition-all duration-300 ease-in-out z-40',
+          isCollapsed ? 'w-[68px] is-collapsed shadow-none' : 'w-[245px] shadow-2xl ring-1 ring-black/5',
+        )}
+      >
+        {/* Header & Logo */}
+        <div className="relative z-10 flex items-center justify-center px-1 py-1 border-b border-[#E1F0FA] h-[68px] shrink-0">
+          <div className="flex items-center justify-center w-full h-full overflow-hidden">
+            <img
+              src="/img/logo.png"
+              alt="Logo"
+              className={clsx(
+                'object-contain transition-all duration-200',
+                isCollapsed ? 'h-[44px] w-[44px] object-left' : 'h-full w-full max-w-full scale-[1.45] origin-center'
+              )}
+            />
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="relative z-10 flex-1 px-3 py-4 space-y-0.5 overflow-y-auto no-scrollbar">
-          <NavLeaf item={dashboardItem} end />
-          <div className="my-2 border-t border-white/10" />
-          {navSections.map((section) => (
-            <NavSectionRow
-              key={section.id}
-              section={section}
-              isOpen={openId === section.id}
-              onToggle={() => setOpenId(openId === section.id ? null : section.id)}
-            />
-          ))}
+        <nav className="relative z-10 flex-1 px-2 py-2.5 space-y-1.5 overflow-y-auto no-scrollbar">
+          {/* Dashboard Item */}
+          <div className={clsx('cca-nav-group my-1', (location.pathname === '/dashboard' || location.pathname === '/') && 'has-active-page')}>
+            <NavLink to="/dashboard" className="cca-card-header w-full">
+              <div className="cca-card-header-left">
+                <span className="text-[#4b9cd3]">{dashboardItem.icon}</span>
+                <span className="cca-card-title">{dashboardItem.label}</span>
+              </div>
+            </NavLink>
+          </div>
+
+          {/* Domain Section Groups */}
+          {navSections.map((section) => {
+            const hasActivePage = activeSection === section.id;
+            return (
+              <NavSectionRow
+                key={section.id}
+                section={section}
+                isOpen={openId === section.id}
+                onToggle={() => setOpenId(openId === section.id ? null : section.id)}
+                isCollapsed={isCollapsed}
+                hasActivePage={hasActivePage}
+              />
+            );
+          })}
         </nav>
 
-        {/* Sign Out (profile detail moved to the top bar) */}
-        <div className="relative z-10 px-3 py-4 border-t border-white/10">
-          <button
-            onClick={logout}
-            className="flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm text-[#D8E6FF] hover:text-white hover:bg-white/5 transition-colors duration-150"
-          >
-            <LogOut size={16} />
-            Sign Out
-          </button>
+        {/* User Profile & Sign Out Footer */}
+        <div className="relative z-10 px-3 py-3 border-t border-[#E1F0FA] bg-[#F7FAFD]">
+          {!isCollapsed ? (
+            <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-white border border-[#E1F0FA]">
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                <div className="h-8 w-8 rounded-lg bg-[#4b9cd3] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {user?.email?.[0]?.toUpperCase() ?? 'U'}
+                </div>
+                <div className="truncate leading-tight">
+                  <p className="text-xs font-semibold text-slate-800 truncate max-w-[130px]">
+                    {user?.email ?? 'User'}
+                  </p>
+                  <p className="text-[10px] font-semibold text-[#4b9cd3] uppercase tracking-wider truncate">
+                    {user?.role ?? 'Admin'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={logout}
+                title="Sign Out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-1">
+              <div
+                className="h-8 w-8 rounded-lg bg-[#4b9cd3] flex items-center justify-center text-white text-xs font-bold"
+                title={user?.email ?? 'User'}
+              >
+                {user?.email?.[0]?.toUpperCase() ?? 'U'}
+              </div>
+              <button
+                onClick={logout}
+                title="Sign Out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
       {/* Main Content */}
       <div className="flex flex-col flex-1 overflow-hidden">
         {/* Top Bar */}
-        <header className="flex items-center gap-2 px-6 py-4 bg-white border-b border-gray-200 shrink-0">
+        <header className="flex items-center gap-2 px-6 h-[68px] bg-white border-b border-gray-200 shrink-0">
           {crumb.section && (
-            <div className="flex items-center gap-1 text-gray-400 text-sm">
+            <div className="flex items-center gap-1 text-gray-400 text-sm font-medium">
               <span>{crumb.section}</span>
               <ChevronRight size={14} />
             </div>
@@ -300,3 +376,4 @@ export function AppLayout() {
     </div>
   );
 }
+

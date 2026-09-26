@@ -51,6 +51,7 @@
     "@azure/arm-containerregistry": "^11.0.0",
     "@azure/arm-containerservice": "^20.0.0",
     "@azure/arm-cosmosdb": "^16.0.0",
+    "@azure/arm-databricks": "^4.0.0",
     "@azure/arm-datafactory": "^19.0.0",
     "@azure/arm-eventgrid": "^14.2.0",
     "@azure/arm-eventhub": "^5.2.0",

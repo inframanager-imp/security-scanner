@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, Plus, X, ChevronDown, ChevronUp,
-  ShieldAlert, CheckCircle2, Clock, XCircle, Edit2, Trash2,
+  ShieldAlert, CheckCircle, Clock, XCircle, Edit2, Trash2,
 } from 'lucide-react';
 import { riskRegisterApi, type RiskItem, type RiskStatus, type RiskCategory } from '../api/riskRegister';
 import { Card } from '../components/ui/Card';
@@ -16,7 +16,7 @@ const STATUSES: RiskStatus[]     = ['OPEN', 'ACCEPTED', 'MITIGATED', 'CLOSED'];
 const STATUS_CONFIG: Record<RiskStatus, { label: string; icon: React.ReactNode; classes: string }> = {
   OPEN:      { label: 'Open',      icon: <AlertTriangle size={12} />, classes: 'bg-red-50 text-red-700 ring-red-200'       },
   ACCEPTED:  { label: 'Accepted',  icon: <Clock size={12} />,         classes: 'bg-yellow-50 text-yellow-700 ring-yellow-200' },
-  MITIGATED: { label: 'Mitigated', icon: <CheckCircle2 size={12} />,  classes: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  MITIGATED: { label: 'Mitigated', icon: <CheckCircle size={12} />,   classes: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
   CLOSED:    { label: 'Closed',    icon: <XCircle size={12} />,       classes: 'bg-gray-50 text-gray-500 ring-gray-200'     },
 };
 
