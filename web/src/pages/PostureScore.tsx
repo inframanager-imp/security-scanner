@@ -1,4 +1,3 @@
-import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Shield, RefreshCw, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react';
@@ -263,7 +262,6 @@ export default function PostureScore() {
   });
 
   return (
-    <ComingSoonPopup moduleName="CLOUD SECURITY (POSTURE SCORE)">
       <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -394,6 +392,5 @@ export default function PostureScore() {
         </>
       )}
     </div>
-    </ComingSoonPopup>
   );
 }

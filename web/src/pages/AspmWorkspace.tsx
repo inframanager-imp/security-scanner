@@ -31,7 +31,7 @@ import '../aspm/aspm-theme.css';
 const API = '/api/aspm';
 
 // Set to true to show the Coming Soon popup; set to false when ready to reveal full active ASPM modules
-const SHOW_COMING_SOON = true;
+const SHOW_COMING_SOON = false;
 
 const MODULES: Record<string, { kind: string; scoped: boolean }> = {
   overview: { kind: 'dashboard', scoped: true },

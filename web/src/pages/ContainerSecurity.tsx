@@ -1,4 +1,3 @@
-import { ComingSoonPopup } from '../components/ui/ComingSoonPopup';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -431,7 +430,6 @@ export function ContainerSecurity() {
   });
 
   return (
-    <ComingSoonPopup moduleName="CLOUD SECURITY (CONTAINER SECURITY)">
       <div className="space-y-6">
       {/* Scan modal */}
       {showScanModal && (
@@ -619,7 +617,6 @@ export function ContainerSecurity() {
         </div>
       )}
     </div>
-    </ComingSoonPopup>
   );
 }
 
