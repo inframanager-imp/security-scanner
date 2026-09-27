@@ -17,6 +17,7 @@ import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { collectEvidenceForAccount } from '../services/evidenceService';
 import { buildEvidenceRefreshJobId, EvidenceJobData } from '../services/evidenceJobId';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 export const EVIDENCE_QUEUE = 'evidence-refresh';
 
@@ -45,7 +46,12 @@ export async function enqueueEvidenceRefresh(data: EvidenceJob): Promise<string>
   return job.id ?? jobId;
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processEvidenceJob(job: Job<EvidenceJob>): Promise<void> {
+  return runForTarget(job.data.provider as TargetProvider, job.data.accountId, () => processEvidenceJobUnscoped(job));
+}
+
+async function processEvidenceJobUnscoped(job: Job<EvidenceJob>): Promise<void> {
   const { provider, accountId, frameworkId, triggeredBy } = job.data;
   try {
     logger.info('evidenceWorker.start', { provider, accountId, frameworkId, triggeredBy });

@@ -7,6 +7,7 @@ import * as credentialService from '../services/credentialService';
 import { getIO } from '../socket/index';
 import { ScanEngine } from '../../../src/scanners/engine';
 import type { ScanOptions } from '../../../src/utils/types';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 interface ScanJobData {
   scanId: string;
@@ -15,7 +16,12 @@ interface ScanJobData {
   regions: string[];
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processScanJob(job: Job<ScanJobData>): Promise<void> {
+  return runForTarget('AWS', job.data.accountId, () => processScanJobUnscoped(job));
+}
+
+async function processScanJobUnscoped(job: Job<ScanJobData>): Promise<void> {
   const { scanId, accountId, services, regions } = job.data;
 
   logger.info(`Starting scan job: ${scanId}`, { accountId, services, regions });

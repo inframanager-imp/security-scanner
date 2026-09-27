@@ -10,7 +10,8 @@ interface AuthState {
   login: (data: { user: User; accessToken: string; refreshToken: string }) => void;
   logout: () => void;
   setAccessToken: (token: string) => void;
-  setTokens: (tokens: { accessToken: string; refreshToken: string }) => void;
+  setTokens: (tokens: { accessToken: string; refreshToken: string; user?: User }) => void;
+  setUser: (user: User) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -44,11 +45,14 @@ export const useAuthStore = create<AuthState>()(
         }),
 
       setTokens: (tokens) =>
-        set({
+        set((state) => ({
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
+          user: tokens.user ?? state.user,
           isAuthenticated: true,
-        }),
+        })),
+
+      setUser: (user) => set({ user }),
     }),
     {
       name: 'aws-scanner-auth',

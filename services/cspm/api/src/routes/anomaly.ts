@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../config/database';
 import { authenticate } from '../middleware/authenticate';
 import { getBaselineStats, resetBaselines, seedAwsBaseline, seedAzureBaseline, seedGcpBaseline } from '../services/anomalyBaselineService';
+import { getTenantContext } from '../config/tenantContext';
 
 const router = Router();
 router.use(authenticate);
@@ -75,6 +76,7 @@ router.get('/summary', async (req: Request, res: Response) => {
     if (provider)  where.provider  = provider;
     if (accountId) where.accountId = accountId;
 
+    const orgId = getTenantContext()?.tenantId ?? null; // raw SQL bypasses the tenant extension
     const [byType, bySeverity, byStatus, trend] = await Promise.all([
       prisma.anomalyEvent.groupBy({ by: ['anomalyType'], where, _count: { id: true } }),
       prisma.anomalyEvent.groupBy({ by: ['severity'],    where, _count: { id: true } }),
@@ -86,6 +88,7 @@ router.get('/summary', async (req: Request, res: Response) => {
         WHERE "detectedAt" >= ${since}
           ${provider   ? prisma.$queryRaw`AND provider = ${provider}`   : prisma.$queryRaw``}
           ${accountId  ? prisma.$queryRaw`AND "accountId" = ${accountId}` : prisma.$queryRaw``}
+          ${orgId      ? prisma.$queryRaw`AND "orgId" = ${orgId}`         : prisma.$queryRaw``}
         GROUP BY 1
         ORDER BY 1
       `.catch(() => [] as Array<{ day: string; count: bigint }>),

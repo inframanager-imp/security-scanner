@@ -24,6 +24,7 @@ import { getIO } from '../socket/index';
 import { analyzeEvent, normalizeAwsEvent } from '../services/anomalyEngine';
 import AWSClient from '../../../src/aws/client';
 import { ThreatDetectionScanner } from '../../../src/scanners/threatdetection';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 interface MonitorJobData {
   accountId: string;
@@ -38,7 +39,12 @@ function resourceFingerprint(evidence: unknown): string {
   return 'account-level';
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processMonitorJob(job: Job<MonitorJobData>): Promise<void> {
+  return runForTarget('AWS', job.data.accountId, () => processMonitorJobUnscoped(job));
+}
+
+async function processMonitorJobUnscoped(job: Job<MonitorJobData>): Promise<void> {
   const { accountId } = job.data;
 
   try {

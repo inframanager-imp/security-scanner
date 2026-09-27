@@ -234,7 +234,9 @@ function NavSectionRow({
 // ─── Layout ───────────────────────────────────────────────────────────────────
 
 export function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, switchTenant } = useAuth();
+  const memberships = user?.memberships ?? [];
+  const canSwitch = memberships.length > 1;
   const location = useLocation();
   const crumb = getBreadcrumb(location.pathname);
   const [isCollapsed, setIsCollapsed] = useState(true);
@@ -320,7 +322,23 @@ export function AppLayout() {
                   </p>
                   <p className="text-[10px] font-semibold text-[#4b9cd3] uppercase tracking-wider truncate">
                     {user?.role ?? 'Admin'}
+                    {user?.tenant && !canSwitch && (
+                      <span className="normal-case tracking-normal text-slate-500"> · {user.tenant.name}</span>
+                    )}
                   </p>
+                  {canSwitch && (
+                    <select
+                      aria-label="Switch organization"
+                      title="Switch organization"
+                      value={user?.tenant?.id ?? ''}
+                      onChange={(e) => { if (e.target.value && e.target.value !== user?.tenant?.id) void switchTenant(e.target.value); }}
+                      className="mt-1 w-full max-w-[130px] truncate rounded-md border border-[#E1F0FA] bg-[#F7FAFD] px-1.5 py-0.5 text-[11px] font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#4b9cd3]"
+                    >
+                      {memberships.map((m) => (
+                        <option key={m.tenantId} value={m.tenantId}>{m.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
               <button

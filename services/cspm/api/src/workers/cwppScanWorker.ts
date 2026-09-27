@@ -14,6 +14,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { runCwppScanForAccount } from '../services/cwppService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 export const CWPP_QUEUE = 'cwpp-scans';
 
@@ -44,7 +45,12 @@ export async function enqueueCwppScan(data: CwppJob): Promise<string> {
   return job.id ?? jobId;
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processCwppJob(job: Job<CwppJob>): Promise<void> {
+  return runForTarget(job.data.provider as TargetProvider, job.data.accountId, () => processCwppJobUnscoped(job));
+}
+
+async function processCwppJobUnscoped(job: Job<CwppJob>): Promise<void> {
   const { provider, accountId, triggeredBy } = job.data;
   try {
     logger.info('cwppWorker.start', { provider, accountId, triggeredBy });

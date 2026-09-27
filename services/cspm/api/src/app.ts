@@ -41,6 +41,7 @@ import riskRegisterRouter      from './routes/riskRegister';
 import anomalyRouter           from './routes/anomaly';
 import configSyncWebhookRouter from './routes/configSyncWebhook';
 import auditLogsRouter         from './routes/auditLogs';
+import tenantsRouter           from './routes/tenants';
 import { authenticate }        from './middleware/authenticate';
 import { rbacPolicy }          from './middleware/rbac';
 import { auditLog }            from './middleware/auditLog';
@@ -51,6 +52,8 @@ import { expireStaleApprovals }       from './services/approvalService';
 import { resumeAllConfigSyncJobs }    from './services/configSyncMonitorService';
 import { createConfigSyncWorker }     from './workers/configSyncWorker';
 import { runPeriodicDiscovery }       from './services/inventoryPipeline';
+import { forEachTenant }              from './config/tenantJobs';
+import { runAsSystem }                from './config/tenantContext';
 
 const app = express();
 
@@ -119,6 +122,7 @@ app.use('/api', (req, res, next) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/audit-logs', auditLogsRouter);
+app.use('/api/tenants', tenantsRouter);
 app.use('/api/accounts', accountsRouter);
 app.use('/api/scans', scansRouter);
 app.use('/api/dashboard', dashboardRouter);
@@ -159,7 +163,7 @@ app.use((_req, res) => {
 
 // ─── Config sync: BullMQ worker + resume all READY targets ────────────────────
 createConfigSyncWorker();
-void resumeAllConfigSyncJobs().catch((e) =>
+void runAsSystem(() => resumeAllConfigSyncJobs()).catch((e) =>
   logger.warn('[config-sync] Failed to resume jobs on startup', { error: (e as Error).message })
 );
 
@@ -169,13 +173,15 @@ setInterval(() => {
   _driftScanRunning = true;
   void (async () => {
     try {
-      const baselines = await prisma.configBaseline.findMany({
-        where:  { isActive: true },
-        select: { id: true, provider: true, targetId: true, name: true },
+      await forEachTenant('drift-scan', async () => {
+        const baselines = await prisma.configBaseline.findMany({
+          where:  { isActive: true },
+          select: { id: true, provider: true, targetId: true, name: true },
+        });
+        await Promise.allSettled(
+          baselines.map(b => runDriftForTarget(b.provider, b.targetId))
+        );
       });
-      await Promise.allSettled(
-        baselines.map(b => runDriftForTarget(b.provider, b.targetId))
-      );
     } catch (err) {
       logger.warn('[drift-scan] Periodic drift scan failed', { error: (err as Error).message });
     } finally {
@@ -184,19 +190,19 @@ setInterval(() => {
   })();
 }, 5 * 60 * 1000);
 
-setInterval(() => { void runPostureScoreUpdate(); }, 60 * 1000);
+setInterval(() => { void forEachTenant('posture-score', async () => { await runPostureScoreUpdate(); }); }, 60 * 1000);
 
-setInterval(() => { void processScheduledReports(); }, 60 * 1000);
+setInterval(() => { void forEachTenant('scheduled-reports', async () => { await processScheduledReports(); }); }, 60 * 1000);
 
-setInterval(() => { void expireStaleApprovals(); }, 15 * 60 * 1000);
+setInterval(() => { void forEachTenant('approvals', async () => { await expireStaleApprovals(); }); }, 15 * 60 * 1000);
 
-void runPeriodicDiscovery().catch((e) =>
+void forEachTenant('discovery', async () => { await runPeriodicDiscovery(); }).catch((e) =>
   logger.warn('[discovery] Startup discovery check failed', { error: (e as Error).message })
 );
-setInterval(() => { void runPeriodicDiscovery(); }, 60 * 60 * 1000);
+setInterval(() => { void forEachTenant('discovery', async () => { await runPeriodicDiscovery(); }); }, 60 * 60 * 1000);
 
 setInterval(() => {
-  void (async () => {
+  void runAsSystem(async () => {
     try {
       const targets = await prisma.configSyncRun.groupBy({ by: ['provider', 'targetId'] });
       for (const { provider, targetId } of targets) {
@@ -214,7 +220,7 @@ setInterval(() => {
         }
       }
     } catch { /* non-fatal */ }
-  })();
+  });
 }, 60 * 60 * 1000);
 
 app.use(errorHandler);

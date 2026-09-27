@@ -8,6 +8,7 @@ headers (window.open downloads / SSE in some browsers) — from a `token` query 
 """
 import logging
 import os
+from typing import Optional
 
 import jwt
 from fastapi import HTTPException, Request
@@ -63,3 +64,23 @@ def verify_jwt(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token type")
 
     return payload
+
+
+def current_tenant(request: Request) -> Optional[str]:
+    """FastAPI dependency: the active tenant id for this request.
+
+    Returns the `tid` claim. Returns None only for a platform super admin
+    (`sa` == True) operating in system context, which means "no tenant filter".
+    A regular user whose token carries no `tid` is rejected with 403.
+    Health checks and the local-dev auth bypass behave like system context.
+    """
+    payload = verify_jwt(request)
+    tid = payload.get("tid")
+    if tid:
+        return str(tid)
+    if payload.get("sa") is True:
+        return None
+    # Health check / dev bypass synthetic payloads carry no tenant: treat as system context.
+    if payload.get("sub") in ("healthcheck", "dev") and payload.get("role") in ("SYSTEM", "ADMIN") and "tid" not in payload:
+        return None
+    raise HTTPException(status_code=403, detail="No active tenant")

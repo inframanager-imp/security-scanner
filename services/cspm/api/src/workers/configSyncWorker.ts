@@ -26,6 +26,7 @@ import {
 } from '../services/configSyncMonitorService';
 import { syncConfigChanges, markSyncedReady } from '../services/inventoryPipeline';
 import { runDriftForTarget }                  from '../services/baselineService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 const PROVIDER_WINDOW_HOURS: Record<string, number> = {
   AWS:   6,
@@ -33,7 +34,12 @@ const PROVIDER_WINDOW_HOURS: Record<string, number> = {
   GCP:   6,
 };
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processConfigSyncJob(job: Job<ConfigSyncJobData>): Promise<void> {
+  return runForTarget(job.data.provider as TargetProvider, job.data.targetId, () => processConfigSyncJobUnscoped(job));
+}
+
+async function processConfigSyncJobUnscoped(job: Job<ConfigSyncJobData>): Promise<void> {
   const { provider, targetId } = job.data;
 
   try {

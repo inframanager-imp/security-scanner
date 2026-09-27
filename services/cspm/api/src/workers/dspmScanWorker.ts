@@ -11,6 +11,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { runDspmScanForAccount } from '../services/dspmService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 export const DSPM_QUEUE = 'dspm-scans';
 
@@ -41,7 +42,12 @@ export async function enqueueDspmScan(data: DspmJob): Promise<string> {
   return job.id ?? jobId;
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processDspmJob(job: Job<DspmJob>): Promise<void> {
+  return runForTarget(job.data.provider as TargetProvider, job.data.accountId, () => processDspmJobUnscoped(job));
+}
+
+async function processDspmJobUnscoped(job: Job<DspmJob>): Promise<void> {
   const { provider, accountId, triggeredBy } = job.data;
   try {
     logger.info('dspmWorker.start', { provider, accountId, triggeredBy });

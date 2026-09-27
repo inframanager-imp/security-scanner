@@ -67,7 +67,8 @@ def init_db():
         auth_type TEXT,
         auth_key TEXT,
         auth_val TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        tenant_id TEXT
     );
     """)
 
@@ -207,6 +208,9 @@ def init_db():
     # Vulnerability Pipeline: which branch to checkout (blank = provider default).
     cursor.execute("ALTER TABLE targets ADD COLUMN IF NOT EXISTS branch TEXT;")
     cursor.execute("ALTER TABLE targets ADD COLUMN IF NOT EXISTS last_index_hash TEXT;")
+    # Multi-tenant isolation: every target belongs to a CSPM tenant (NULL = legacy/unassigned).
+    cursor.execute("ALTER TABLE targets ADD COLUMN IF NOT EXISTS tenant_id TEXT;")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_targets_tenant ON targets(tenant_id);")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS code_embeddings (
@@ -259,40 +263,68 @@ def init_db():
 init_db()
 
 # --- TARGETS API helpers ---
-def add_target(name: str, url: str, target_type: str, auth_type: str = "none", auth_key: str = "", auth_val: str = "") -> str:
+def add_target(name: str, url: str, target_type: str, auth_type: str = "none", auth_key: str = "", auth_val: str = "",
+               tenant_id: Optional[str] = None) -> str:
     conn = get_db_connection()
-    # Avoid duplicate onboarding of the same application (same name + url).
-    existing = conn.execute("SELECT id FROM targets WHERE name = %s AND url = %s", (name, url)).fetchone()
+    # Avoid duplicate onboarding of the same application (same name + url) within the same tenant.
+    if tenant_id is None:
+        existing = conn.execute("SELECT id FROM targets WHERE name = %s AND url = %s", (name, url)).fetchone()
+    else:
+        existing = conn.execute(
+            "SELECT id FROM targets WHERE name = %s AND url = %s AND tenant_id = %s", (name, url, tenant_id)
+        ).fetchone()
     if existing:
         conn.close()
         return existing["id"]
     target_id = f"target-{uuid.uuid4().hex[:8]}"
     conn.execute(
-        "INSERT INTO targets (id, name, url, target_type, auth_type, auth_key, auth_val, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-        (target_id, name, url, target_type, auth_type, auth_key, auth_val, datetime.now().isoformat())
+        "INSERT INTO targets (id, name, url, target_type, auth_type, auth_key, auth_val, created_at, tenant_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (target_id, name, url, target_type, auth_type, auth_key, auth_val, datetime.now().isoformat(), tenant_id)
     )
     conn.commit()
     conn.close()
     return target_id
 
-def get_targets_dict() -> Dict[str, str]:
+def _tenant_filter(tenant_id: Optional[str]):
+    """Returns (sql_fragment, params) restricting a targets query to one tenant.
+    tenant_id=None means system context (super admin) => no filtering."""
+    if tenant_id is None:
+        return "", []
+    return " AND tenant_id = %s", [tenant_id]
+
+def get_targets_dict(tenant_id: Optional[str] = None) -> Dict[str, str]:
     conn = get_db_connection()
-    rows = conn.execute("SELECT id, name, url FROM targets ORDER BY created_at DESC").fetchall()
+    where, params = _tenant_filter(tenant_id)
+    rows = conn.execute(f"SELECT id, name, url FROM targets WHERE 1=1{where} ORDER BY created_at DESC", params).fetchall()
     conn.close()
     # Format: {"target-id": "Name (URL)"}
     return {row["id"]: f"{row['name']} ({row['url']})" for row in rows}
 
-def get_targets_list() -> List[Dict[str, Any]]:
+def get_targets_list(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
-    rows = conn.execute("SELECT * FROM targets ORDER BY created_at DESC").fetchall()
+    where, params = _tenant_filter(tenant_id)
+    rows = conn.execute(f"SELECT * FROM targets WHERE 1=1{where} ORDER BY created_at DESC", params).fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
-def get_target(target_id: str) -> Optional[Dict[str, Any]]:
+def get_target(target_id: str, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Returns None when the target does not exist OR belongs to another tenant."""
     conn = get_db_connection()
-    row = conn.execute("SELECT * FROM targets WHERE id = %s", (target_id,)).fetchone()
+    where, params = _tenant_filter(tenant_id)
+    row = conn.execute(f"SELECT * FROM targets WHERE id = %s{where}", [target_id] + params).fetchone()
     conn.close()
     return dict(row) if row else None
+
+def target_belongs_to_tenant(target_id: str, tenant_id: Optional[str]) -> bool:
+    """True when tenant_id is None (system context) or the target is owned by tenant_id."""
+    if tenant_id is None:
+        return True
+    if not target_id:
+        return False
+    conn = get_db_connection()
+    row = conn.execute("SELECT 1 AS ok FROM targets WHERE id = %s AND tenant_id = %s", (target_id, tenant_id)).fetchone()
+    conn.close()
+    return row is not None
 
 def delete_target(target_id: str):
     conn = get_db_connection()
@@ -367,6 +399,13 @@ def add_vulnerability(target_id: str, title: str, severity: str, type_val: str, 
     conn.commit()
     conn.close()
     return row["id"] if row else vuln_id
+
+def get_vulnerability_target(vuln_id: str) -> Optional[str]:
+    """target_id owning a vulnerability row, or None if the row does not exist."""
+    conn = get_db_connection()
+    row = conn.execute("SELECT target_id FROM vulnerabilities WHERE id = %s", (vuln_id,)).fetchone()
+    conn.close()
+    return row["target_id"] if row else None
 
 def update_vulnerability(vuln_id: str, fields: Dict[str, Any]):
     conn = get_db_connection()

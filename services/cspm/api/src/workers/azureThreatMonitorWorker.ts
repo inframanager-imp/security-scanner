@@ -24,6 +24,7 @@ import {
 import AzureClient     from '../../../src/azure/client';
 import { AzureThreatScanner } from '../../../src/azure/scanners/threatScanner';
 import { analyzeEvent, normalizeAzureEvent } from '../services/anomalyEngine';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 interface MonitorJobData {
   subscriptionId: string; // internal DB id
@@ -37,7 +38,12 @@ function evidenceFingerprint(evidence: unknown): string {
   return 'subscription-level';
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processAzureMonitorJob(job: Job<MonitorJobData>): Promise<void> {
+  return runForTarget('AZURE', job.data.subscriptionId, () => processAzureMonitorJobUnscoped(job));
+}
+
+async function processAzureMonitorJobUnscoped(job: Job<MonitorJobData>): Promise<void> {
   const { subscriptionId } = job.data;
 
   try {

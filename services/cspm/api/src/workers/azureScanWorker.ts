@@ -5,6 +5,7 @@ import { prisma }             from '../config/database';
 import { logger }             from '../config/logger';
 import { getIO }              from '../socket/index';
 import { decryptAzureCredentials } from '../services/azureCredentialService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 // AzureScanEngine is lazy-loaded inside the job to avoid loading all ARM SDKs at startup
 
 interface AzureScanJobData {
@@ -17,7 +18,12 @@ export const azureScanQueue = new Queue<AzureScanJobData>('azure-scans', {
   connection: redis,
 });
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processAzureScanJob(job: Job<AzureScanJobData>): Promise<void> {
+  return runForTarget('AZURE', job.data.subscriptionId, () => processAzureScanJobUnscoped(job));
+}
+
+async function processAzureScanJobUnscoped(job: Job<AzureScanJobData>): Promise<void> {
   const { scanId, subscriptionId, services } = job.data;
   logger.info(`Starting Azure scan job: ${scanId}`, { subscriptionId, services });
 

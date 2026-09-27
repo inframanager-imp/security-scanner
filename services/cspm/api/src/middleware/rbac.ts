@@ -41,6 +41,9 @@ export const POLICY_RULES: PolicyRule[] = [
   // ── Audit log: admin only, even for reads ────────────────────────────────
   { methods: '*', path: /^\/audit-logs(\/|$)/, roles: ADMIN_ONLY, description: 'Audit log is admin-only' },
 
+  // ── Tenants: platform/org administration ─────────────────────────────────
+  { methods: MUTATING, path: /^\/tenants(\/|$)/, roles: ADMIN_ONLY, description: 'Manage organizations and members' },
+
   // ── Cloud target onboarding & credentials (AWS / Azure / GCP) ────────────
   { methods: ['POST'], path: /^\/accounts\/setup$/, roles: ADMIN_ONLY, description: 'Initial AWS setup' },
   { methods: ['POST'], path: /^\/(accounts|azure\/subscriptions|gcp\/projects)$/, roles: ADMIN_ONLY, description: 'Onboard a cloud target' },

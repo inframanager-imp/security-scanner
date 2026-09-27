@@ -51,14 +51,59 @@ model User {
   id                 String              @id @default(uuid())
   email              String              @unique
   passwordHash       String
+  /// Legacy global role. Kept for backward compatibility and as the role
+  /// granted when a user is auto-provisioned into a tenant; the effective
+  /// role for API access is TenantMembership.role for the active tenant.
   role               Role                @default(VIEWER)
+  /// Platform operator: may create tenants and act inside any tenant.
+  isSuperAdmin       Boolean             @default(false)
+  /// Tenant selected at last login; used to pick the active tenant.
+  lastTenantId       String?
+  isActive           Boolean             @default(true)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   sessions           Session[]
+  memberships        TenantMembership[]
   accounts           Account[]           @relation("CreatedBy")
   azureSubscriptions AzureSubscription[] @relation("AzureCreatedBy")
   gcpProjects        GcpProject[]        @relation("GcpCreatedBy")
   auditLogs          AuditLog[]
+}
+
+// ─── Multi-tenancy: customer organizations ───────────────────────────────────
+// Every tenant-owned row carries `tenantId`; the Prisma tenant extension in
+// config/database.ts injects it on create and filters it on every read/write
+// from the request's tenant context (config/tenantContext.ts).
+
+model Tenant {
+  id          String   @id @default(uuid())
+  /// URL/CLI-friendly unique handle, e.g. "acme"
+  slug        String   @unique
+  name        String
+  isActive    Boolean  @default(true)
+  /// Free-form settings (branding, feature flags, SSO config later)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships TenantMembership[]
+
+  @@index([isActive])
+}
+
+model TenantMembership {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  role      Role     @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([userId])
 }
 
 model Session {
@@ -72,6 +117,7 @@ model Session {
 
 model Account {
   id           String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name         String
   awsAccountId String
   description  String?
@@ -91,10 +137,12 @@ model Account {
   scans             Scan[]
   configChanges     ConfigChange[]
   resourceInventory ResourceInventory[]
+  @@index([orgId])
 }
 
 model AwsCredential {
   id                       String     @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   accountId                String     @unique
   authMethod               AuthMethod
   encryptedAccessKeyId     String?
@@ -106,10 +154,12 @@ model AwsCredential {
   createdAt                DateTime   @default(now())
   updatedAt                DateTime   @updatedAt
   account                  Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@index([orgId])
 }
 
 model Scan {
   id           String       @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   accountId    String
   status       ScanStatus   @default(QUEUED)
   triggeredBy  String?
@@ -125,10 +175,12 @@ model Scan {
   account      Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
   summary      ScanSummary?
   findings     Finding[]
+  @@index([orgId])
 }
 
 model ScanSummary {
   id       String @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scanId   String @unique
   critical Int    @default(0)
   high     Int    @default(0)
@@ -137,10 +189,12 @@ model ScanSummary {
   info     Int    @default(0)
   total    Int    @default(0)
   scan     Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  @@index([orgId])
 }
 
 model Finding {
   id              String        @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scanId          String
   service         String
   // Stable registry check ID (prowler-compatible), e.g. s3_bucket_default_encryption.
@@ -170,12 +224,14 @@ model Finding {
   @@index([findingStatus])
   @@index([riskScore(sort: Desc)])
   @@index([reachability])
+  @@index([orgId])
 }
 
 // ─── Azure Models ──────────────────────────────────────────────────────────────
 
 model AzureSubscription {
   id             String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name           String
   subscriptionId String
   tenantId       String?
@@ -196,10 +252,12 @@ model AzureSubscription {
   scans             AzureScan[]
   configChanges     ConfigChange[]
   resourceInventory ResourceInventory[]
+  @@index([orgId])
 }
 
 model AzureCredential {
   id                    String            @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   subscriptionId        String            @unique
   authMethod            AzureAuthMethod
   encryptedTenantId     String?
@@ -208,10 +266,12 @@ model AzureCredential {
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
   subscription          AzureSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  @@index([orgId])
 }
 
 model AzureScan {
   id             String            @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   subscriptionId String
   status         ScanStatus        @default(QUEUED)
   jobId          String?           @unique
@@ -225,10 +285,12 @@ model AzureScan {
   subscription   AzureSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   summary        AzureScanSummary?
   findings       AzureFinding[]
+  @@index([orgId])
 }
 
 model AzureScanSummary {
   id       String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scanId   String    @unique
   critical Int       @default(0)
   high     Int       @default(0)
@@ -237,10 +299,12 @@ model AzureScanSummary {
   info     Int       @default(0)
   total    Int       @default(0)
   scan     AzureScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  @@index([orgId])
 }
 
 model AzureFinding {
   id              String        @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scanId          String
   service         String
   severity        Severity
@@ -268,6 +332,7 @@ model AzureFinding {
   @@index([findingStatus])
   @@index([riskScore(sort: Desc)])
   @@index([reachability])
+  @@index([orgId])
 }
 
 // ─── Config Change Tracking ────────────────────────────────────────────────────
@@ -299,6 +364,7 @@ enum ChangeStatus {
 
 model ConfigChange {
   id String @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
 
   // exactly one of these will be set
   awsAccountId String?
@@ -354,10 +420,12 @@ model ConfigChange {
   @@index([category])
   @@index([changeStatus])
   @@index([freezeViolation])
+  @@index([orgId])
 }
 
 model ConfigSyncRun {
   id            String     @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider      String // AWS | AZURE | GCP
   targetId      String // Account.id / AzureSubscription.id / GcpProject.id
   status        ScanStatus @default(QUEUED)
@@ -372,6 +440,7 @@ model ConfigSyncRun {
   updatedAt     DateTime   @updatedAt
 
   @@index([provider, targetId, createdAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── Resource Inventory ────────────────────────────────────────────────────────
@@ -404,6 +473,7 @@ enum ExposureType {
 
 model ResourceInventory {
   id       String @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider String // AWS | AZURE | GCP
 
   // exactly one of these FKs is set
@@ -449,10 +519,12 @@ model ResourceInventory {
   @@index([provider, state])
   @@index([resourceType])
   @@index([lastSeenAt(sort: Desc)])
+  @@index([orgId])
 }
 
 model ResourceSnapshot {
   id          String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   inventoryId String
   configState Json
   changeType  String // CREATED | MODIFIED | DELETED
@@ -462,10 +534,12 @@ model ResourceSnapshot {
   inventory ResourceInventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
 
   @@index([inventoryId, capturedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 model ResourceDependency {
   id            String         @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   fromId        String
   toId          String
   depType       DependencyType @default(OTHER)
@@ -485,10 +559,12 @@ model ResourceDependency {
   @@index([fromId])
   @@index([toId])
   @@index([depType, provider])
+  @@index([orgId])
 }
 
 model ExposurePath {
   id                  String       @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   resourceInventoryId String
   provider            String
   exposureType        ExposureType
@@ -503,6 +579,7 @@ model ExposurePath {
   @@unique([resourceInventoryId, exposureType])
   @@index([provider, exposureType])
   @@index([computedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── GCP Models ────────────────────────────────────────────────────────────────
@@ -514,6 +591,7 @@ enum GcpAuthMethod {
 
 model GcpProject {
   id          String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name        String
   projectId   String   @unique
   description String?
@@ -533,10 +611,12 @@ model GcpProject {
   scans             GcpScan[]
   configChanges     ConfigChange[]
   resourceInventory ResourceInventory[]
+  @@index([orgId])
 }
 
 model GcpCredential {
   id                         String        @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   projectId                  String        @unique
   authMethod                 GcpAuthMethod
   encryptedServiceAccountKey String?
@@ -544,10 +624,12 @@ model GcpCredential {
   createdAt                  DateTime      @default(now())
   updatedAt                  DateTime      @updatedAt
   project                    GcpProject    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([orgId])
 }
 
 model GcpScan {
   id           String          @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   projectId    String
   status       ScanStatus      @default(QUEUED)
   jobId        String?         @unique
@@ -561,10 +643,12 @@ model GcpScan {
   project      GcpProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   summary      GcpScanSummary?
   findings     GcpFinding[]
+  @@index([orgId])
 }
 
 model GcpScanSummary {
   id       String  @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scanId   String  @unique
   critical Int     @default(0)
   high     Int     @default(0)
@@ -573,10 +657,12 @@ model GcpScanSummary {
   info     Int     @default(0)
   total    Int     @default(0)
   scan     GcpScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  @@index([orgId])
 }
 
 model GcpFinding {
   id              String        @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scanId          String
   service         String
   severity        Severity
@@ -602,6 +688,7 @@ model GcpFinding {
   @@index([severity])
   @@index([service])
   @@index([findingStatus])
+  @@index([orgId])
 }
 
 // ─── Alerting ──────────────────────────────────────────────────────────────────
@@ -615,6 +702,7 @@ enum AlertChannel {
 
 model AlertConfig {
   id       String  @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name     String
   isActive Boolean @default(true)
 
@@ -630,10 +718,12 @@ model AlertConfig {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   logs      AlertLog[]
+  @@index([orgId])
 }
 
 model AlertLog {
   id           String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   configId     String
   changeId     String?
   subject      String?
@@ -646,12 +736,14 @@ model AlertLog {
 
   @@index([configId, sentAt(sort: Desc)])
   @@index([status])
+  @@index([orgId])
 }
 
 // ─── Change Freeze Windows ────────────────────────────────────────────────────
 
 model FreezeWindow {
   id          String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name        String
   description String?
   providers   String[]
@@ -667,12 +759,14 @@ model FreezeWindow {
   updatedAt   DateTime  @updatedAt
 
   @@index([isActive])
+  @@index([orgId])
 }
 
 // ─── Risk Posture Score ───────────────────────────────────────────────────────
 
 model PostureScore {
   id               String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider         String
   targetId         String
   score            Int
@@ -685,12 +779,14 @@ model PostureScore {
   calculatedAt     DateTime @default(now())
 
   @@index([provider, targetId, calculatedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── Baseline & Drift Detection ───────────────────────────────────────────────
 
 model ConfigBaseline {
   id             String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider       String
   targetId       String
   name           String
@@ -714,10 +810,12 @@ model ConfigBaseline {
 
   @@index([provider, targetId])
   @@index([isActive])
+  @@index([orgId])
 }
 
 model BaselineSnapshot {
   id           String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   baselineId   String
   nativeId     String
   resourceType String
@@ -730,10 +828,12 @@ model BaselineSnapshot {
 
   @@index([baselineId])
   @@index([nativeId])
+  @@index([orgId])
 }
 
 model DriftResult {
   id              String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   baselineId      String
   firstDetectedAt DateTime  @default(now()) // never changes — set on first detection
   detectedAt      DateTime  @default(now()) // updated on every re-scan
@@ -768,6 +868,7 @@ model DriftResult {
   @@index([driftType])
   @@index([severity])
   @@index([controlDomain])
+  @@index([orgId])
 }
 
 // ─── Remediation Audit Trail (BCDD-F25) ────────────────────────────────────────
@@ -778,6 +879,7 @@ model DriftResult {
 
 model RemediationLog {
   id            String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   driftResultId String
   baselineId    String
   // action: AUTO_REVERT | MANUAL_RESOLVE | GUIDED_PLAN_GENERATED
@@ -792,12 +894,14 @@ model RemediationLog {
 
   @@index([driftResultId, createdAt(sort: Desc)])
   @@index([baselineId, createdAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── Baseline Version History ─────────────────────────────────────────────────
 
 model BaselineVersion {
   id            String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   baselineId    String
   versionNumber Int
   label         String? // e.g. "v3 — Refreshed 2025-04-04 by admin@co.com"
@@ -810,10 +914,12 @@ model BaselineVersion {
 
   @@unique([baselineId, versionNumber])
   @@index([baselineId, capturedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 model BaselineVersionSnapshot {
   id           String  @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   versionId    String
   nativeId     String
   resourceType String
@@ -825,12 +931,14 @@ model BaselineVersionSnapshot {
 
   @@index([versionId])
   @@index([nativeId])
+  @@index([orgId])
 }
 
 // ─── Approval Workflow ─────────────────────────────────────────────────────────
 
 model ApprovalRequest {
   id              String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   action          String // CAPTURE | REFRESH | REVERT
   baselineId      String? // target baseline
   driftId         String? // for REVERT actions
@@ -851,12 +959,14 @@ model ApprovalRequest {
   @@index([status])
   @@index([baselineId])
   @@index([requestedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 model ReportSchedule {
   id         String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name       String
   provider   String?
   targetId   String?
@@ -875,10 +985,12 @@ model ReportSchedule {
   runs ReportRun[]
 
   @@index([isActive, nextRunAt])
+  @@index([orgId])
 }
 
 model ReportRun {
   id           String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   scheduleId   String
   status       String // RUNNING | COMPLETED | FAILED
   startedAt    DateTime  @default(now())
@@ -889,12 +1001,14 @@ model ReportRun {
 
   @@index([scheduleId, startedAt(sort: Desc)])
   @@index([status])
+  @@index([orgId])
 }
 
 // ─── Webhook / ServiceNow / Jira Integrations ─────────────────────────────────
 
 model IntegrationConfig {
   id              String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   name            String
   integrationType String // WEBHOOK | SERVICENOW | JIRA
   isActive        Boolean  @default(true)
@@ -910,10 +1024,12 @@ model IntegrationConfig {
 
   @@index([isActive])
   @@index([integrationType])
+  @@index([orgId])
 }
 
 model IntegrationLog {
   id           String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   configId     String
   changeId     String?
   status       String // SENT | FAILED
@@ -926,12 +1042,14 @@ model IntegrationLog {
 
   @@index([configId, sentAt(sort: Desc)])
   @@index([status])
+  @@index([orgId])
 }
 
 // ─── IAM Privilege Escalation Events ─────────────────────────────────────────
 
 model IamEscalationEvent {
   id              String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider        String
   targetId        String
   changeId        String?
@@ -959,12 +1077,14 @@ model IamEscalationEvent {
   @@index([escalationType])
   @@index([status])
   @@index([severity])
+  @@index([orgId])
 }
 
 // ─── Compliance Evidence (auto-collected + manual) ────────────────────────────
 
 model ComplianceEvidence {
   id                  String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   frameworkId         String // NIST_800_53 | GDPR | FEDRAMP | PCI_DSS | etc.
   controlId           String // e.g. AC-2, GDPR-Art32
   provider            String // AWS | AZURE | GCP
@@ -992,12 +1112,14 @@ model ComplianceEvidence {
   @@index([collectedAt(sort: Desc)])
   @@index([status])
   @@index([nextEvaluationAt])
+  @@index([orgId])
 }
 
 // ─── Risk Register ────────────────────────────────────────────────────────────
 
 model RiskItem {
   id                  String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   title               String
   description         String    @db.Text
   category            String // CONFIGURATION | VULNERABILITY | ACCESS | COMPLIANCE | OPERATIONAL | DATA
@@ -1020,12 +1142,14 @@ model RiskItem {
   @@index([riskScore(sort: Desc)])
   @@index([provider, accountId])
   @@index([category])
+  @@index([orgId])
 }
 
 // ─── ML Anomaly Detection ─────────────────────────────────────────────────────
 
 model AnomalyBaseline {
   id             String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider       String // AWS | AZURE | GCP
   accountId      String // internal account/subscription/project id
   actorId        String // IAM user / service principal / service account / "account"
@@ -1048,10 +1172,12 @@ model AnomalyBaseline {
   @@unique([provider, accountId, actorId, metricKey])
   @@index([provider, accountId])
   @@index([actorId])
+  @@index([orgId])
 }
 
 model AnomalyEvent {
   id              String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider        String // AWS | AZURE | GCP
   accountId       String
   actorId         String
@@ -1076,12 +1202,14 @@ model AnomalyEvent {
   @@index([severity])
   @@index([status])
   @@index([actorId])
+  @@index([orgId])
 }
 
 // ─── CIEM: Principal Permissions & Attack Paths ───────────────────────────────
 
 model PrincipalPermission {
   id             String   @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider       String // AWS | AZURE | GCP
   accountId      String // internal AwsAccount / AzureSubscription / GcpProject id
   principalArn   String
@@ -1099,10 +1227,12 @@ model PrincipalPermission {
   @@index([provider, accountId, principalArn])
   @@index([action])
   @@index([resourceArn])
+  @@index([orgId])
 }
 
 model AttackPath {
   id             String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider       String
   accountId      String
   kind           String // PRIVILEGE_ESCALATION | LATERAL_MOVEMENT | EXTERNAL_TO_ADMIN | DATA_EXFILTRATION
@@ -1128,12 +1258,14 @@ model AttackPath {
   @@index([kind])
   @@index([status])
   @@index([lastSeenAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── CWPP: Workload Vulnerabilities ───────────────────────────────────────────
 
 model WorkloadVulnerability {
   id                  String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider            String
   accountId           String
   resourceInventoryId String
@@ -1161,12 +1293,14 @@ model WorkloadVulnerability {
   @@index([cveId])
   @@index([status])
   @@index([observedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── DSPM: Data Classification ────────────────────────────────────────────────
 
 model DataClassification {
   id                  String    @id @default(uuid())
+  orgId String  @default("") /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   provider            String
   accountId           String
   resourceInventoryId String
@@ -1186,12 +1320,14 @@ model DataClassification {
   @@index([provider, accountId, dataType])
   @@index([confidence])
   @@index([classifiedAt(sort: Desc)])
+  @@index([orgId])
 }
 
 // ─── Audit log: user-action trail (see middleware/auditLog.ts) ─────────────────
 
 model AuditLog {
   id          String   @id @default(uuid())
+  orgId String?      /// Tenant.id (organization); injected + enforced by the Prisma tenant extension
   createdAt   DateTime @default(now())
   userId      String?
   userRole    String?
@@ -1213,4 +1349,5 @@ model AuditLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([action])
   @@index([outcome])
+  @@index([orgId])
 }

@@ -5,10 +5,28 @@ export type FindingStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | 'FALSE_POSITI
 export type AuthMethod = 'ACCESS_KEY' | 'ASSUME_ROLE';
 export type AzureAuthMethod = 'SERVICE_PRINCIPAL' | 'MANAGED_IDENTITY';
 
+export interface TenantSummary {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface TenantMembership {
+  tenantId: string;
+  slug: string;
+  name: string;
+  role: Role;
+}
+
 export interface User {
   id: string;
   email: string;
+  /** Role inside the active tenant. */
   role: Role;
+  isSuperAdmin?: boolean;
+  /** Active tenant (organization); null for a super admin in platform context. */
+  tenant?: TenantSummary | null;
+  memberships?: TenantMembership[];
 }
 
 export type InventoryStatus = 'PENDING' | 'INITIALIZING' | 'READY' | 'FAILED';

@@ -9,6 +9,8 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../config/database';
 import { computePostureScore } from '../services/postureScoreService';
 import { logger } from '../config/logger';
+import { getTenantContext } from '../config/tenantContext';
+import { Prisma } from '@prisma/client';
 
 const router = Router();
 
@@ -69,12 +71,14 @@ router.get('/history', async (req: Request, res: Response) => {
 router.get('/summary', async (_req: Request, res: Response) => {
   try {
     // Latest score per provider+targetId via subquery
+    const orgId = getTenantContext()?.tenantId ?? null; // raw SQL bypasses the tenant extension
     const scores = await prisma.$queryRaw<Array<{
       provider: string; targetId: string; score: number; grade: string; calculatedAt: Date;
     }>>`
       SELECT DISTINCT ON ("provider", "targetId")
         "provider", "targetId", "score", "grade", "calculatedAt"
       FROM "PostureScore"
+      ${orgId ? Prisma.sql`WHERE "orgId" = ${orgId}` : Prisma.empty}
       ORDER BY "provider", "targetId", "calculatedAt" DESC
     `;
 

@@ -15,6 +15,7 @@ import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { buildGraphForAccount } from '../services/graphEnrichmentService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 export const GRAPH_BUILD_QUEUE = 'graph-build';
 
@@ -47,7 +48,12 @@ export async function enqueueGraphBuild(data: GraphBuildJob): Promise<string> {
   return job.id ?? jobId;
 }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processGraphBuildJob(job: Job<GraphBuildJob>): Promise<void> {
+  return runForTarget(job.data.provider as TargetProvider, job.data.accountId, () => processGraphBuildJobUnscoped(job));
+}
+
+async function processGraphBuildJobUnscoped(job: Job<GraphBuildJob>): Promise<void> {
   const { provider, accountId, triggeredBy } = job.data;
   try {
     logger.info('graphBuildWorker.start', { provider, accountId, triggeredBy });

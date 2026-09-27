@@ -36,6 +36,7 @@ import { fetchGcpResourceState }   from '../services/gcpResourceFetch';
 import { syncInventoryFromChange } from '../services/inventorySync';
 import { markSyncedReady }         from '../services/inventoryPipeline';
 import { Severity, ChangeCategory, Prisma } from '@prisma/client';
+import { getTenantContext } from '../config/tenantContext';
 
 const router = Router();
 router.use(authenticate);
@@ -486,12 +487,14 @@ router.get('/stats', async (req: Request, res: Response) => {
       }),
       // 30-day daily timeline
       (() => {
+        const orgId = getTenantContext()?.tenantId ?? null; // raw SQL bypasses the tenant extension
         const col = provider === 'AWS' ? Prisma.sql`"awsAccountId"` : provider === 'AZURE' ? Prisma.sql`"azureSubId"` : Prisma.sql`"gcpProjectId"`;
         return prisma.$queryRaw<{ date: string; severity: string; count: bigint }[]>`
           SELECT DATE("eventTime") as date, severity, COUNT(*) as count
           FROM "ConfigChange"
           WHERE ${col} = ${targetId}
             AND "eventTime" >= NOW() - INTERVAL '30 days'
+            ${orgId ? Prisma.sql`AND "orgId" = ${orgId}` : Prisma.empty}
           GROUP BY DATE("eventTime"), severity
           ORDER BY date ASC
         `;

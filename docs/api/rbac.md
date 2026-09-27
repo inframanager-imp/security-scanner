@@ -8,6 +8,12 @@ expose an endpoint.
 
 ## Roles
 
+Roles are held **per organization** (`TenantMembership.role`); the access
+token carries the role for the active organization. A platform super admin
+(`isSuperAdmin`) is treated as `ADMIN` inside every organization and is the
+only account that can manage organizations at `/api/tenants` (see
+`docs/api/tenants.md`).
+
 | Role | Can read | Can operate | Can administer |
 |---|---|---|---|
 | `VIEWER` | yes | no | no |
@@ -36,6 +42,7 @@ expose an endpoint.
 | Method | Path | Purpose |
 |---|---|---|
 | `*` | `/api/audit-logs/**` | Audit log (reads included) |
+| `POST`,`PATCH`,`DELETE` | `/api/tenants/**` | Organizations and members (super admin for platform-level routes) |
 | `POST` | `/api/accounts/setup` | Initial AWS setup |
 | `POST` | `/api/accounts`, `/api/azure/subscriptions`, `/api/gcp/projects` | Onboard a cloud target |
 | `PUT`, `DELETE` | `/api/{accounts\|azure/subscriptions\|gcp/projects}/:id` | Edit or remove a target |

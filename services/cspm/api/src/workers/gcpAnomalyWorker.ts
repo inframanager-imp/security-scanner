@@ -15,6 +15,7 @@ import { logger }  from '../config/logger';
 import { analyzeEvent, normalizeGcpEvent } from '../services/anomalyEngine';
 import GcpClient   from '../../../src/gcp/client';
 import { decryptGcpCredentials } from '../services/gcpCredentialService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 
 export const GCP_ANOMALY_QUEUE   = 'gcp-anomaly-monitoring';
 export const GCP_CHECK_INTERVAL  = 2 * 60 * 1000; // 2 minutes
@@ -61,7 +62,12 @@ export async function isGcpMonitoring(projectId: string): Promise<boolean> {
 
 interface GcpJobData { projectId: string; }
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processGcpAnomalyJob(job: Job<GcpJobData>): Promise<void> {
+  return runForTarget('GCP', job.data.projectId, () => processGcpAnomalyJobUnscoped(job));
+}
+
+async function processGcpAnomalyJobUnscoped(job: Job<GcpJobData>): Promise<void> {
   const { projectId } = job.data;
 
   try {

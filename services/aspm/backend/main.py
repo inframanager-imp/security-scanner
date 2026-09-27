@@ -16,7 +16,7 @@ import backend.database as db
 import backend.scanners as scanners
 import backend.report_builder as report_builder
 from backend.ai_engine import get_ai_remediation_diff
-from backend.auth import verify_jwt
+from backend.auth import verify_jwt, current_tenant
 
 app = FastAPI(
     title="Aegis Sec ASPM Core Server",
@@ -46,11 +46,43 @@ app.add_middleware(
 def health() -> Dict[str, Any]:
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
+# ----------------- TENANT SCOPING HELPERS -----------------
+
+def _require_target(target_id: Optional[str], tenant_id: Optional[str]) -> Dict[str, Any]:
+    """Returns the target row if it exists and belongs to the current tenant
+    (tenant_id=None == super-admin system context, no filtering). Otherwise 404.
+    Non-existent and cross-tenant targets are indistinguishable to the caller."""
+    target = db.get_target(target_id, tenant_id) if target_id else None
+    if not target:
+        raise HTTPException(status_code=404, detail="Target not found")
+    return target
+
+
+def _check_target(target_id: Optional[str], tenant_id: Optional[str]) -> None:
+    """Cheaper variant of _require_target for endpoints that only need the check."""
+    if not target_id or not db.target_belongs_to_tenant(target_id, tenant_id):
+        raise HTTPException(status_code=404, detail="Target not found")
+
+
+def _allowed_targets(tenant_id: Optional[str]) -> Optional[set]:
+    """Set of target ids visible to the tenant, or None in system context (everything)."""
+    if tenant_id is None:
+        return None
+    return set(db.get_targets_dict(tenant_id).keys())
+
+
+def _scope_rows(rows: List[Dict[str, Any]], tenant_id: Optional[str]) -> List[Dict[str, Any]]:
+    allowed = _allowed_targets(tenant_id)
+    if allowed is None:
+        return rows
+    return [r for r in rows if r.get("target_id") in allowed]
+
+
 # ----------------- TARGETS API (Replacing Tenants) -----------------
 
 @app.get("/api/tenants")
-def get_tenants_compatibility():
-    return db.get_targets_dict()
+def get_tenants_compatibility(tenant_id: Optional[str] = Depends(current_tenant)):
+    return db.get_targets_dict(tenant_id)
 
 def validate_target_inputs(name: str, url: str, target_type: str, auth_type: str):
     valid_types = {"web", "api", "git", "network", "cloud"}
@@ -96,8 +128,8 @@ def normalize_target_url(url: str, target_type: str) -> str:
 
 
 @app.get("/api/targets")
-def list_targets():
-    return db.get_targets_list()
+def list_targets(tenant_id: Optional[str] = Depends(current_tenant)):
+    return db.get_targets_list(tenant_id)
 
 @app.post("/api/targets")
 def create_target(
@@ -106,7 +138,8 @@ def create_target(
     target_type: str = Body(..., embed=True),
     auth_type: str = Body("none", embed=True),
     auth_key: str = Body("", embed=True),
-    auth_val: str = Body("", embed=True)
+    auth_val: str = Body("", embed=True),
+    tenant_id: Optional[str] = Depends(current_tenant),
 ):
     url = url.strip()
     validate_target_inputs(name, url, target_type, auth_type)
@@ -114,14 +147,12 @@ def create_target(
         raise HTTPException(status_code=400, detail="Target URL/IP is required")
     url = normalize_target_url(url, target_type)
 
-    target_id = db.add_target(name, url, target_type, auth_type, auth_key, auth_val)
+    target_id = db.add_target(name, url, target_type, auth_type, auth_key, auth_val, tenant_id=tenant_id)
     return {"status": "success", "target_id": target_id}
 
 @app.delete("/api/targets/{target_id}")
-def remove_target(target_id: str):
-    target = db.get_target(target_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Target not found")
+def remove_target(target_id: str, tenant_id: Optional[str] = Depends(current_tenant)):
+    _require_target(target_id, tenant_id)
     db.delete_target(target_id)
     return {"status": "success"}
 
@@ -135,10 +166,9 @@ def edit_target(
     auth_key: str = Body("", embed=True),
     auth_val: str = Body("", embed=True),
     branch: str = Body("", embed=True),  # Vuln Pipeline: checkout branch, blank = provider default
+    tenant_id: Optional[str] = Depends(current_tenant),
 ):
-    target = db.get_target(target_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Target not found")
+    _require_target(target_id, tenant_id)
     url = url.strip()
     validate_target_inputs(name, url, target_type, auth_type)
     if not url:
@@ -158,11 +188,10 @@ def edit_target(
 
 
 @app.patch("/api/targets/{target_id}/branch")
-def set_target_branch(target_id: str, branch: str = Body(..., embed=True)):
+def set_target_branch(target_id: str, branch: str = Body(..., embed=True), tenant_id: Optional[str] = Depends(current_tenant)):
     """Lightweight endpoint just for the Vuln Pipeline branch picker — avoids
     forcing the UI to resend the full target form just to change one field."""
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+    _require_target(target_id, tenant_id)
     db.update_target(target_id, {"branch": branch})
     return {"status": "success", "branch": branch}
 
@@ -171,9 +200,9 @@ def set_target_branch(target_id: str, branch: str = Body(..., embed=True)):
 # ----------------- DASHBOARD API -----------------
 
 @app.get("/api/dashboard")
-def get_dashboard_summary(tenant_id: str = Query(...)):
+def get_dashboard_summary(tenant_id: str = Query(...), current_tid: Optional[str] = Depends(current_tenant)):
     # tenant_id is treated as target_id
-    target = db.get_target(tenant_id)
+    target = db.get_target(tenant_id, current_tid)
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
         
@@ -193,7 +222,7 @@ def get_dashboard_summary(tenant_id: str = Query(...)):
     total_count = len(vulns)
     compliance_score = int((resolved_count / total_count * 100)) if total_count > 0 else 100
     
-    assets_data = db.get_assets(tenant_id)
+    assets_data = _scoped_assets(tenant_id, current_tid)
     
     # SLA Breaches
     sla_breaches = []
@@ -233,15 +262,29 @@ def get_dashboard_summary(tenant_id: str = Query(...)):
 
 # ----------------- ASSETS & EASM API -----------------
 
+def _scoped_assets(target_id: Optional[str], tenant_id: Optional[str]) -> Dict[str, Any]:
+    """db.get_assets scoped to the tenant. Caller must have validated target_id
+    (if given) via _require_target/_check_target; the consolidated (no target)
+    view is filtered down to the tenant's targets."""
+    if target_id:
+        return db.get_assets(target_id)
+    data = db.get_assets(None)
+    if tenant_id is not None:
+        data["subdomains"] = _scope_rows(data["subdomains"], tenant_id)
+        data["summary"]["subdomains"] = data["summary"]["live_hosts"] = len(data["subdomains"])
+        data["summary"]["open_ports"] = sum(len(sd["ports"]) for sd in data["subdomains"])
+    return data
+
+
 @app.get("/api/assets")
-def get_assets(tenant_id: Optional[str] = Query(None)):
-    return db.get_assets(tenant_id)
+def get_assets(tenant_id: Optional[str] = Query(None), current_tid: Optional[str] = Depends(current_tenant)):
+    if tenant_id:
+        _check_target(tenant_id, current_tid)
+    return _scoped_assets(tenant_id, current_tid)
 
 @app.post("/api/assets/discover")
-async def trigger_easm_discovery(tenant_id: str = Query(...)):
-    target = db.get_target(tenant_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Target not found")
+async def trigger_easm_discovery(tenant_id: str = Query(...), current_tid: Optional[str] = Depends(current_tenant)):
+    target = _require_target(tenant_id, current_tid)
         
     # Run port scan synchronously for simplicity and ease of return
     logs = []
@@ -264,16 +307,29 @@ async def trigger_easm_discovery(tenant_id: str = Query(...)):
 # ----------------- VULNERABILITIES API -----------------
 
 @app.get("/api/vulnerabilities")
-def get_vulnerabilities(tenant_id: Optional[str] = Query(None), severity: Optional[str] = None, type: Optional[str] = None):
-    return db.get_vulnerabilities(tenant_id, severity, type)
+def get_vulnerabilities(tenant_id: Optional[str] = Query(None), severity: Optional[str] = None, type: Optional[str] = None,
+                        current_tid: Optional[str] = Depends(current_tenant)):
+    if tenant_id:
+        _check_target(tenant_id, current_tid)
+        return db.get_vulnerabilities(tenant_id, severity, type)
+    return _scope_rows(db.get_vulnerabilities(None, severity, type), current_tid)
+
+
+def _require_vuln(vuln_id: str, tenant_id: Optional[str]) -> None:
+    owner = db.get_vulnerability_target(vuln_id)
+    if owner is None or not db.target_belongs_to_tenant(owner, tenant_id):
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+
 
 @app.patch("/api/vulnerabilities/{vuln_id}")
-def update_vulnerability_status(vuln_id: str, data: Dict[str, Any] = Body(...)):
+def update_vulnerability_status(vuln_id: str, data: Dict[str, Any] = Body(...), current_tid: Optional[str] = Depends(current_tenant)):
+    _require_vuln(vuln_id, current_tid)
     db.update_vulnerability(vuln_id, data)
     return {"status": "success"}
 
 @app.post("/api/vulnerabilities/{vuln_id}/verify-exploit")
-def trigger_vulnerability_exploit_verify(vuln_id: str):
+def trigger_vulnerability_exploit_verify(vuln_id: str, current_tid: Optional[str] = Depends(current_tenant)):
+    _require_vuln(vuln_id, current_tid)
     res = scanners.verify_exploit_safe(vuln_id)
     db.update_vulnerability(vuln_id, {"pt_verification": res})
     return {"status": "success", "verification": res}
@@ -282,16 +338,19 @@ def trigger_vulnerability_exploit_verify(vuln_id: str):
 # ----------------- API INVENTORY API -----------------
 
 @app.get("/api/api-inventory")
-def get_api_inventory(tenant_id: Optional[str] = Query(None)):
-    return db.get_api_inventory(tenant_id)
+def get_api_inventory(tenant_id: Optional[str] = Query(None), current_tid: Optional[str] = Depends(current_tenant)):
+    if tenant_id:
+        _check_target(tenant_id, current_tid)
+        return db.get_api_inventory(tenant_id)
+    return _scope_rows(db.get_api_inventory(None), current_tid)
 
 
 # ----------------- ATTACK PATHS API -----------------
 
 @app.get("/api/attack-paths")
-def get_attack_paths(tenant_id: str = Query(...)):
+def get_attack_paths(tenant_id: str = Query(...), current_tid: Optional[str] = Depends(current_tenant)):
     # Generate dynamic attack paths based on actual findings!
-    target = db.get_target(tenant_id)
+    target = db.get_target(tenant_id, current_tid)
     if not target:
         return []
         
@@ -437,24 +496,28 @@ def stream_scan_logs(
     type: str = Query("dast"), 
     target: str = Query(""), 
     auth_type: str = Query("none"),
-    tenant_id: Optional[str] = Query(None)
+    tenant_id: Optional[str] = Query(None),
+    current_tid: Optional[str] = Depends(current_tenant),
 ):
     if not target:
         raise HTTPException(status_code=400, detail="Target parameter is required")
-        
+
     # Auto-onboard if target URL is parsed but target ID doesn't exist
     target_id = tenant_id
-    if not target_id:
-        targets = db.get_targets_list()
+    if target_id:
+        _check_target(target_id, current_tid)
+    else:
+        targets = db.get_targets_list(current_tid)
         matched = [t for t in targets if target in t["url"] or t["url"] in target]
         if matched:
             target_id = matched[0]["id"]
         else:
             parsed = scanners.parse_target_url(target)
             target_id = db.add_target(
-                name="Auto-Onboarded Target", 
-                url=parsed["url"], 
-                target_type="web" if type == "dast" else "api"
+                name="Auto-Onboarded Target",
+                url=parsed["url"],
+                target_type="web" if type == "dast" else "api",
+                tenant_id=current_tid,
             )
             
     async def log_generator():
@@ -554,9 +617,9 @@ def _run_pipeline_job(job: "_PipelineJob"):
 
 
 @app.post("/api/pipeline/run")
-def start_pipeline_run(target_id: str = Body(..., embed=True), resume: bool = Body(False, embed=True)):
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+def start_pipeline_run(target_id: str = Body(..., embed=True), resume: bool = Body(False, embed=True),
+                       tenant_id: Optional[str] = Depends(current_tenant)):
+    _require_target(target_id, tenant_id)
     existing = _pipeline_jobs.get(target_id)
     if existing and not existing.done:
         return {"status": "already_running"}
@@ -568,12 +631,13 @@ def start_pipeline_run(target_id: str = Body(..., embed=True), resume: bool = Bo
 
 
 @app.get("/api/pipeline/active")
-def pipeline_active(target_id: str = Query(...)):
+def pipeline_active(target_id: str = Query(...), tenant_id: Optional[str] = Depends(current_tenant)):
+    _check_target(target_id, tenant_id)
     job = _pipeline_jobs.get(target_id)
     return {"running": bool(job and not job.done)}
 
 @app.get("/api/pipeline/embed")
-def pipeline_embed_trigger(target_id: str = Query(...), force: bool = Query(True)):
+def pipeline_embed_trigger(target_id: str = Query(...), force: bool = Query(True), tenant_id: Optional[str] = Depends(current_tenant)):
     """Manually re-run just embed_node for a target, independent of a full
     pipeline run — e.g. to pick up newly-relevant CVE/fix data mid-triage
     without waiting for (or re-running) SAST/secret/SCA/triage too.
@@ -581,9 +645,7 @@ def pipeline_embed_trigger(target_id: str = Query(...), force: bool = Query(True
     normal pipeline run's embed_node applies — this endpoint exists
     specifically for "re-index right now regardless", so defaulting it off
     would defeat the point of a manual trigger."""
-    target = db.get_target(target_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Target not found")
+    target = _require_target(target_id, tenant_id)
 
     def gen():
         lines: List[str] = []
@@ -613,23 +675,21 @@ def pipeline_embed_trigger(target_id: str = Query(...), force: bool = Query(True
 
 
 @app.get("/api/pipeline/embed/history")
-def pipeline_embed_history(target_id: str = Query(...), limit: int = Query(20)):
+def pipeline_embed_history(target_id: str = Query(...), limit: int = Query(20), tenant_id: Optional[str] = Depends(current_tenant)):
     """Past manual RAG-index runs for this target, newest first — mirrors
     /api/pipeline/history's shape so the frontend can render the same
     Executions-list pattern used by the Vulnerability Pipeline."""
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+    _check_target(target_id, tenant_id)
     runs = db.get_scan_logs(target_id, scan_type="RAG_EMBED", limit=limit)
     return [{"id": r["id"], "status": r["status"], "created_at": r["created_at"], "logs": r["logs"]} for r in runs]
 
 
 @app.get("/api/pipeline/history")
-def pipeline_history(target_id: str = Query(...), limit: int = Query(20)):
+def pipeline_history(target_id: str = Query(...), limit: int = Query(20), tenant_id: Optional[str] = Depends(current_tenant)):
     """Past VULN_PIPELINE runs for this target, newest first, with logs
     already grouped by stage — so the UI can restore a run's stepper state
     (or list history to pick from) without replaying the live SSE stream."""
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+    _check_target(target_id, tenant_id)
     runs = db.get_scan_logs(target_id, scan_type="VULN_PIPELINE", limit=limit)
     out = []
     for run in runs:
@@ -664,27 +724,25 @@ def pipeline_history(target_id: str = Query(...), limit: int = Query(20)):
 
 
 @app.get("/api/pipeline/taint-report")
-def pipeline_taint_report(target_id: str = Query(...)):
+def pipeline_taint_report(target_id: str = Query(...), tenant_id: Optional[str] = Depends(current_tenant)):
     """Phase 1 taint-tracking infrastructure output (parse + call graph +
     source/sink/sanitizer tags) — read-only diagnostic, NOT findings. See
     scanners.run_taint_report / services/aspm/backend/taint/ for the
     phased roadmap. Python-only for now."""
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+    _check_target(target_id, tenant_id)
     return scanners.run_taint_report(target_id)
 
 
 @app.get("/api/pipeline/attack-chains")
-def pipeline_attack_chains(target_id: str = Query(...)):
+def pipeline_attack_chains(target_id: str = Query(...), tenant_id: Optional[str] = Depends(current_tenant)):
     """Computed on-demand from the target's current open findings — not
     persisted, not a pipeline stage. See scanners.synthesize_attack_chains."""
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+    _check_target(target_id, tenant_id)
     return scanners.synthesize_attack_chains(target_id)
 
 
 @app.get("/api/pipeline/stream")
-def stream_pipeline_logs(target_id: str = Query(...), after: int = Query(0)):
+def stream_pipeline_logs(target_id: str = Query(...), after: int = Query(0), tenant_id: Optional[str] = Depends(current_tenant)):
     """Tails the background job for target_id — does NOT start one (see
     POST /pipeline/run). `after` lets a reconnecting client resume from where
     it left off instead of replaying the whole buffer (triage can run for a
@@ -695,8 +753,7 @@ def stream_pipeline_logs(target_id: str = Query(...), after: int = Query(0)):
     like the pipeline restarting even though it was just replaying history).
     A periodic keepalive comment below also reduces how often that drop
     happens in the first place."""
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="Target not found")
+    _check_target(target_id, tenant_id)
 
     async def log_generator():
         job = _pipeline_jobs.get(target_id)
@@ -724,10 +781,13 @@ def stream_pipeline_logs(target_id: str = Query(...), after: int = Query(0)):
 # ----------------- AI PENTEST LOGS STREAM -----------------
 
 @app.get("/api/pentest/stream")
-def stream_pentest_logs(target: str = Query(""), tenant_id: Optional[str] = Query(None)):
+def stream_pentest_logs(target: str = Query(""), tenant_id: Optional[str] = Query(None),
+                        current_tid: Optional[str] = Depends(current_tenant)):
     target_id = tenant_id
-    if not target_id and target:
-        targets = db.get_targets_list()
+    if target_id:
+        _check_target(target_id, current_tid)
+    elif target:
+        targets = db.get_targets_list(current_tid)
         matched = [t for t in targets if target in t["url"] or t["url"] in target]
         if matched:
             target_id = matched[0]["id"]
@@ -821,7 +881,7 @@ def list_ai_security_models(provider: str = Query(...), api_key: Optional[str] =
 
 
 @app.post("/api/ai-security/redteam/stream")
-def llm_redteam_stream(payload: Dict[str, Any] = Body(...)):
+def llm_redteam_stream(payload: Dict[str, Any] = Body(...), tenant_id: Optional[str] = Depends(current_tenant)):
     """Live LLM red-team: probes a real OpenAI-compatible LLM endpoint and streams
     progress (SSE). Findings are inserted against the chosen target_id."""
     target_id = payload.get("target_id")
@@ -831,8 +891,7 @@ def llm_redteam_stream(payload: Dict[str, Any] = Body(...)):
     provider = payload.get("provider", "openai")
     if not target_id or not endpoint:
         raise HTTPException(status_code=400, detail="target_id and endpoint are required")
-    if not db.get_target(target_id):
-        raise HTTPException(status_code=404, detail="target_id not found")
+    _check_target(target_id, tenant_id)
 
     def gen():
         try:
@@ -871,7 +930,8 @@ def test_prompt_injection(prompt: str = Body(..., embed=True)):
 # ----------------- COMPLIANCE MATRIX API -----------------
 
 @app.get("/api/compliance/matrix")
-def get_compliance_matrix(tenant_id: str = Query(...)):
+def get_compliance_matrix(tenant_id: str = Query(...), current_tid: Optional[str] = Depends(current_tenant)):
+    _check_target(tenant_id, current_tid)
     vulns = db.get_vulnerabilities(tenant_id)
     matrix = []
     for v in vulns:
@@ -1027,14 +1087,13 @@ def get_vulnerability_details(cwe: str, title: str, description: str, remediatio
 @app.get("/api/reports/summary")
 def get_reports_summary(
     tenant_id: Optional[str] = Query(None),
-    report_type: Optional[str] = Query(None)
+    report_type: Optional[str] = Query(None),
+    current_tid: Optional[str] = Depends(current_tenant),
 ):
     if tenant_id:
-        target = db.get_target(tenant_id)
-        if not target:
-            raise HTTPException(status_code=404, detail="Target not found")
-        
-    vulns = db.get_vulnerabilities(tenant_id)
+        _require_target(tenant_id, current_tid)
+
+    vulns = _scope_rows(db.get_vulnerabilities(tenant_id), current_tid)
     if report_type:
         rt_upper = report_type.upper()
         if rt_upper in ["SAST", "SCA"]:
@@ -1042,7 +1101,7 @@ def get_reports_summary(
         elif rt_upper == "DAST":
             vulns = [v for v in vulns if v["type"].upper() in ("DAST", "API")]
 
-    assets_data = db.get_assets(tenant_id)
+    assets_data = _scoped_assets(tenant_id, current_tid)
 
     # 1. Qualys MITRE ATT&CK Matrix Calculation
     mitre_stages = {
@@ -1199,6 +1258,7 @@ def export_executive_report(
     tenant_id: Optional[str] = Query(None),
     report_type: Optional[str] = Query(None),
     format: Optional[str] = Query(None, description="Set to 'html' to preview as HTML instead of PDF"),
+    current_tid: Optional[str] = Depends(current_tenant),
 ):
     """Render a professional security report (PDF) for a target or the whole estate.
 
@@ -1208,13 +1268,11 @@ def export_executive_report(
     which is also used as a graceful fallback if the PDF engine is unavailable.
     """
     if tenant_id:
-        target = db.get_target(tenant_id)
-        if not target:
-            raise HTTPException(status_code=404, detail="Target not found")
+        target = _require_target(tenant_id, current_tid)
     else:
         target = {"name": "Consolidated Scope", "url": "All Targets"}
 
-    vulns = db.get_vulnerabilities(tenant_id)
+    vulns = _scope_rows(db.get_vulnerabilities(tenant_id), current_tid)
     if report_type:
         rt_upper = report_type.upper()
         if rt_upper in ("SAST", "SCA"):
@@ -1222,8 +1280,8 @@ def export_executive_report(
         elif rt_upper == "DAST":
             vulns = [v for v in vulns if (v.get("type") or "").upper() in ("DAST", "API")]
 
-    assets_data = db.get_assets(tenant_id)
-    summary = get_reports_summary(tenant_id, report_type)
+    assets_data = _scoped_assets(tenant_id, current_tid)
+    summary = get_reports_summary(tenant_id, report_type, current_tid)
 
     last_scan_at = None
     if tenant_id:
@@ -1453,8 +1511,13 @@ def list_scan_jobs(
     tenant_id: Optional[str] = Query(None),
     scan_type: Optional[str] = Query(None),
     limit: Optional[int] = Query(None),
+    current_tid: Optional[str] = Depends(current_tenant),
 ):
-    jobs = db.get_scan_jobs(tenant_id)
+    if tenant_id:
+        _check_target(tenant_id, current_tid)
+        jobs = db.get_scan_jobs(tenant_id)
+    else:
+        jobs = _scope_rows(db.get_scan_jobs(None), current_tid)
     if scan_type:
         scan_types = [t.strip().upper() for t in scan_type.split(",")]
         jobs = [j for j in jobs if j["scan_type"].upper() in scan_types]
@@ -1466,19 +1529,22 @@ def list_scan_jobs(
 def create_scan_job(
     tenant_id: str = Body(..., embed=True),
     scan_type: str = Body("DAST", embed=True),
-    openapi_spec: Optional[str] = Body(None, embed=True)
+    openapi_spec: Optional[str] = Body(None, embed=True),
+    current_tid: Optional[str] = Depends(current_tenant),
 ):
-    target = db.get_target(tenant_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Target not found")
+    target = _require_target(tenant_id, current_tid)
     job_id = db.add_scan_job(tenant_id, target["url"], scan_type, openapi_spec)
     return {"status": "success", "job_id": job_id}
 
-@app.post("/api/scans/jobs/{job_id}/start")
-def start_scan_job(job_id: str):
+def _require_job(job_id: str, tenant_id: Optional[str]) -> Dict[str, Any]:
     job = db.get_scan_job(job_id)
-    if not job:
+    if not job or not db.target_belongs_to_tenant(job["target_id"], tenant_id):
         raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+@app.post("/api/scans/jobs/{job_id}/start")
+def start_scan_job(job_id: str, tenant_id: Optional[str] = Depends(current_tenant)):
+    job = _require_job(job_id, tenant_id)
         
     if job["status"] == "Scanning":
         return {"status": "already_running"}
@@ -1493,20 +1559,16 @@ def start_scan_job(job_id: str):
     return {"status": "success"}
 
 @app.post("/api/scans/jobs/{job_id}/stop")
-def stop_scan_job(job_id: str):
-    job = db.get_scan_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def stop_scan_job(job_id: str, tenant_id: Optional[str] = Depends(current_tenant)):
+    job = _require_job(job_id, tenant_id)
     
     db.update_scan_job(job_id, {"status": "Stopped"})
     active_scans.pop(job_id, None)
     return {"status": "success"}
 
 @app.delete("/api/scans/jobs/{job_id}")
-def remove_scan_job(job_id: str):
-    job = db.get_scan_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def remove_scan_job(job_id: str, tenant_id: Optional[str] = Depends(current_tenant)):
+    job = _require_job(job_id, tenant_id)
     
     if job["status"] == "Scanning":
         db.update_scan_job(job_id, {"status": "Stopped"})

@@ -5,6 +5,7 @@ import { prisma }             from '../config/database';
 import { logger }             from '../config/logger';
 import { getIO }              from '../socket/index';
 import { decryptGcpCredentials } from '../services/gcpCredentialService';
+import { runForTarget, type TargetProvider } from '../config/tenantJobs';
 // GcpScanEngine is lazy-loaded inside the job to avoid loading googleapis at startup
 
 interface GcpScanJobData {
@@ -17,7 +18,12 @@ export const gcpScanQueue = new Queue<GcpScanJobData>('gcp-scans', {
   connection: redis,
 });
 
+/** Runs the job inside the tenant that owns the target so every query is org-scoped. */
 async function processGcpScanJob(job: Job<GcpScanJobData>): Promise<void> {
+  return runForTarget('GCP', job.data.projectId, () => processGcpScanJobUnscoped(job));
+}
+
+async function processGcpScanJobUnscoped(job: Job<GcpScanJobData>): Promise<void> {
   const { scanId, projectId, services } = job.data;
   logger.info(`Starting GCP scan job: ${scanId}`, { projectId, services });
 

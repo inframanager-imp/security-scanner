@@ -158,6 +158,7 @@ router.post('/:id/test', async (req: Request, res: Response) => {
     // Synthetic ConfigChange for testing
     const testChange = {
       id:            'test-' + Date.now(),
+      orgId:         cfg.orgId,
       provider:      (cfg.providers[0] as string | undefined) ?? 'AWS',
       awsAccountId:  null,
       azureSubId:    null,

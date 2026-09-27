@@ -39,9 +39,10 @@ export async function refreshAccessToken(): Promise<string | null> {
       return null;
     }
 
-    const json = await response.json() as { data: { accessToken: string; refreshToken: string } } | { accessToken: string; refreshToken: string };
+    type RefreshPayload = { accessToken: string; refreshToken: string; user?: import('../types').User };
+    const json = await response.json() as { data: RefreshPayload } | RefreshPayload;
     const data = 'data' in json ? json.data : json;
-    setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+    setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken, user: data.user });
     return data.accessToken;
   } catch {
     logout();
