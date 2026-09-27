@@ -6,6 +6,7 @@ JWT_ACCESS_SECRET, so the single unified login authorizes /api/aspm/* too.
 Token is read from the Authorization: Bearer header, or — for links that can't set
 headers (window.open downloads / SSE in some browsers) — from a `token` query param.
 """
+import logging
 import os
 
 import jwt
@@ -13,7 +14,19 @@ from fastapi import HTTPException, Request
 
 JWT_ACCESS_SECRET = os.environ.get("JWT_ACCESS_SECRET", "")
 # Allow turning auth off for local/dev runs without the gateway (default: on).
-AUTH_REQUIRED = os.environ.get("ASPM_AUTH_REQUIRED", "true").lower() != "false"
+# Hard rule: the bypass is refused in production so a stray env var can never
+# expose the service. APP_ENV / NODE_ENV = production => auth is always on.
+_ENV = (os.environ.get("APP_ENV") or os.environ.get("NODE_ENV") or "development").lower()
+_BYPASS_REQUESTED = os.environ.get("ASPM_AUTH_REQUIRED", "true").lower() == "false"
+AUTH_REQUIRED = not (_BYPASS_REQUESTED and _ENV != "production")
+if _BYPASS_REQUESTED and _ENV == "production":
+    logging.getLogger(__name__).error(
+        "ASPM_AUTH_REQUIRED=false ignored because APP_ENV/NODE_ENV is production; auth stays enforced"
+    )
+elif not AUTH_REQUIRED:
+    logging.getLogger(__name__).warning(
+        "AUTH BYPASS ACTIVE: ASPM_AUTH_REQUIRED=false - every request is treated as ADMIN. Never use outside local dev."
+    )
 
 
 def _extract_token(request: Request) -> str | None:

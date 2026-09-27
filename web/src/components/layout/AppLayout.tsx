@@ -40,6 +40,8 @@ interface NavLeaf {
   to: string;
   icon: ReactNode;
   label: string;
+  /** Only rendered for ADMIN users (mirrors the API's rbac policy). */
+  adminOnly?: boolean;
 }
 
 interface NavSection {
@@ -113,6 +115,7 @@ const navSections: NavSection[] = [
       { to: '/alerts',            icon: <Bell size={16} strokeWidth={2} />,         label: 'Alerts'            },
       { to: '/freeze-windows',    icon: <SnowflakeIcon size={16} strokeWidth={2}/>, label: 'Freeze Windows'    },
       { to: '/scheduled-reports', icon: <FileText size={16} strokeWidth={2} />,     label: 'Scheduled Reports' },
+      { to: '/audit-logs',        icon: <ScrollText size={16} strokeWidth={2} />,   label: 'Audit Log', adminOnly: true },
     ],
   },
 ];
@@ -284,7 +287,11 @@ export function AppLayout() {
           </div>
 
           {/* Domain Section Groups */}
-          {navSections.map((section) => {
+          {navSections.map((rawSection) => {
+            const section = {
+              ...rawSection,
+              items: rawSection.items.filter((it) => !it.adminOnly || user?.role === 'ADMIN'),
+            };
             const hasActivePage = activeSection === section.id;
             return (
               <NavSectionRow

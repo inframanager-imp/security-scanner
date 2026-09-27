@@ -58,6 +58,7 @@ model User {
   accounts           Account[]           @relation("CreatedBy")
   azureSubscriptions AzureSubscription[] @relation("AzureCreatedBy")
   gcpProjects        GcpProject[]        @relation("GcpCreatedBy")
+  auditLogs          AuditLog[]
 }
 
 model Session {
@@ -1185,4 +1186,31 @@ model DataClassification {
   @@index([provider, accountId, dataType])
   @@index([confidence])
   @@index([classifiedAt(sort: Desc)])
+}
+
+// ─── Audit log: user-action trail (see middleware/auditLog.ts) ─────────────────
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  userId      String?
+  userRole    String?
+  actorEmail  String? // login attempts: email supplied, before a user is resolved
+  action      String // "accounts.create", "approvals.approve", "auth.login" ...
+  method      String
+  path        String
+  query       String?
+  statusCode  Int
+  outcome     String // SUCCESS | FAILED | DENIED
+  ip          String?
+  userAgent   String?
+  requestBody String? // JSON, secrets redacted, truncated
+  durationMs  Int?
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action])
+  @@index([outcome])
 }

@@ -25,6 +25,7 @@ import FreezeWindows           from './pages/FreezeWindows';
 import PostureScore            from './pages/PostureScore';
 import BaselineDrift           from './pages/BaselineDrift';
 import ScheduledReports        from './pages/ScheduledReports';
+import AuditLogs               from './pages/AuditLogs';
 import Integrations            from './pages/Integrations';
 import IamEscalation           from './pages/IamEscalation';
 import { RiskRegister }        from './pages/RiskRegister';
@@ -96,6 +97,7 @@ export default function App() {
         <Route path="posture-score" element={<PostureScore />} />
         <Route path="baselines" element={<BaselineDrift />} />
         <Route path="scheduled-reports" element={<ScheduledReports />} />
+        <Route path="audit-logs"        element={<AuditLogs />} />
         <Route path="integrations" element={<IntegrationsHub />} />
         <Route path="iam-escalation" element={<IamEscalation />} />
         <Route path="risk-register"      element={<RiskRegister />} />

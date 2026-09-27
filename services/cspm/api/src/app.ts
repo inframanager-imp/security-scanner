@@ -40,6 +40,10 @@ import iamUsersRouter          from './routes/iamUsers';
 import riskRegisterRouter      from './routes/riskRegister';
 import anomalyRouter           from './routes/anomaly';
 import configSyncWebhookRouter from './routes/configSyncWebhook';
+import auditLogsRouter         from './routes/auditLogs';
+import { authenticate }        from './middleware/authenticate';
+import { rbacPolicy }          from './middleware/rbac';
+import { auditLog }            from './middleware/auditLog';
 import { runPostureScoreUpdate }      from './services/postureScoreService';
 import { processScheduledReports }    from './services/reportService';
 import { runDriftForTarget }          from './services/baselineService';
@@ -98,7 +102,23 @@ app.get('/api/health', (_req, res) => {
   res.json({ data: { status: 'ok', timestamp: new Date().toISOString() } });
 });
 
+// ─── Security gate for every /api route ──────────────────────────────────────
+// 1. auditLog   records state-changing and denied requests (runs first so
+//               failed logins and 401/403s are captured too).
+// 2. authenticate + rbacPolicy are applied centrally so a router that forgets
+//               `router.use(authenticate)` can never expose an endpoint.
+// Public exceptions: health, login/refresh, and the secret-protected
+// config-sync webhook (it authenticates with its own per-target secret).
+const PUBLIC_API_PATHS = [/^\/auth\/(login|refresh|logout)$/, /^\/config-sync\/webhook\//];
+
+app.use('/api', auditLog);
+app.use('/api', (req, res, next) => {
+  if (PUBLIC_API_PATHS.some((re) => re.test(req.path))) return next();
+  return authenticate(req, res, () => rbacPolicy(req, res, next));
+});
+
 app.use('/api/auth', authRouter);
+app.use('/api/audit-logs', auditLogsRouter);
 app.use('/api/accounts', accountsRouter);
 app.use('/api/scans', scansRouter);
 app.use('/api/dashboard', dashboardRouter);
